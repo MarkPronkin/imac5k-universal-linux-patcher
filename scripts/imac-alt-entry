@@ -24,6 +24,11 @@
 # cmdline of the default entry in /boot/limine.conf).
 #
 set -euo pipefail
+if ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); then
+    echo "This helper is for Omarchy/Limine, not Fedora GRUB." >&2
+    exit 1
+fi
+
 
 KREL="$(uname -r)"
 ESP=/boot

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); then
+    echo "This hook is for Omarchy/Limine, not Fedora GRUB." >&2
+    exit 1
+fi
 #
 # 95-limine-esp-hygiene — install to /etc/boot/hooks/post.d/
 #

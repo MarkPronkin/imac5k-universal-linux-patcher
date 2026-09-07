@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# Fedora's kernel source, kernel-devel ABI, dracut initramfs and GRUB/BLS.
+# Build as the desktop user; only --install and --restore need root.
+set -Eeuo pipefail
+export PATH="/usr/sbin:/sbin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/platform.sh"
+KREL=$(uname -r)
+KSERIES=$(cut -d. -f1-2 <<< "$KREL")
+WORK=${IMAC5K_WORK:-${HOME}/.cache/kernel-5k-build/fedora-${KREL}}
+BUILD=/usr/lib/modules/${KREL}/build
+DEST=/usr/lib/modules/${KREL}/updates/imac5k/amdgpu.ko.xz
+STATE=/var/lib/imac-patcher/5k-${KREL}
+DEPMOD_CONF=/etc/depmod.d/imac5k-${KREL}.conf
+INITRD=/boot/initramfs-${KREL}.img
+KERNEL=/boot/vmlinuz-${KREL}
+say() { printf '==> %s\n' "$*"; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID == 0 ]] || die "Use sudo for $1."; }
+need_tools() {
+    local t missing=()
+    for t in "$@"; do command -v "$t" >/dev/null || missing+=("$t"); done
+    ((${#missing[@]} == 0)) || die "Missing tools: ${missing[*]}. See docs/fedora-kde.md for DNF dependencies."
+}
+check_signing() {
+    local enforced=0 status
+    [[ $(cat /sys/kernel/security/lockdown 2>/dev/null || true) == *'[integrity]'* ||
+       $(cat /sys/kernel/security/lockdown 2>/dev/null || true) == *'[confidentiality]'* ]] && enforced=1
+    status=$(mokutil --sb-state 2>/dev/null || true)
+    [[ $status == *'SecureBoot enabled'* ]] && enforced=1
+    if ((enforced)) || [[ -n ${IMAC5K_SIGN_KEY:-}${IMAC5K_SIGN_CERT:-} ]]; then
+        [[ -f ${IMAC5K_SIGN_KEY:-} && -f ${IMAC5K_SIGN_CERT:-} ]] ||
+            die "Module signing required: provide IMAC5K_SIGN_KEY and IMAC5K_SIGN_CERT (an enrolled DER certificate). See docs/fedora-kde.md."
+        [[ -x $BUILD/scripts/sign-file ]] || die "Missing kernel-devel sign-file."
+        mokutil --test-key "$IMAC5K_SIGN_CERT" >/dev/null || die "Signing certificate is not enrolled. Enroll it and reboot first."
+    fi
+}
+check() {
+    [[ $KSERIES == 7.1 || $KSERIES == 7.2 ]] || die "5K patches support kernel series 7.1 and 7.2; ${KREL} needs a patch port."
+    need_tools gcc make ld strip bc pahole flex bison patch xz curl tar rpm rpmbuild koji python3 modinfo depmod dracut grubby mokutil
+    # --nodeps skips the spec's BuildRequires, including Python RPM macros.
+    # An undefined macro reaches /bin/sh literally and fails as "fg: no job control".
+    [[ $(rpm --eval '%{defined py3_shebang_fix}') == 1 ]] ||
+        die "Missing Python RPM macros: sudo dnf install python3-rpm-macros"
+    [[ -f $BUILD/Module.symvers && -f $BUILD/.config ]] ||
+        die "Install matching development files: sudo dnf install kernel-devel-${KREL}"
+    [[ $(make -s -C "$BUILD" kernelrelease) == "$KREL" ]] || die "kernel-devel release does not match ${KREL}."
+    check_signing
+    say "Fedora ${KREL}: build prerequisites present."
+}
+build_module() {
+    [[ $EUID != 0 ]] || die "Build as your normal user: scripts/fedora-imac5k --build (or run imac-patcher)."
+    check
+    local srpm nvr top src stack_hash stamp f
+    local patches=()
+    case ${IMAC5K_STACK:-lean} in
+        lean) patches=(imac5k-lean-core-7.2.x.patch imac5k-stitch-layer-7.x.patch) ;;
+        verbose) patches=(imac5k-amdgpu-7.2.2.patch 5k-early-modeset.patch 5k-genlock-deterministic.patch 5k-genlock-settle-resync.patch 5k-latch-clear.patch 5k-latch-clear-going-down-only.patch) ;;
+        *) die "IMAC5K_STACK must be lean or verbose." ;;
+    esac
+    for f in "${!patches[@]}"; do patches[$f]="${SCRIPT_DIR}/../patches/${patches[$f]}"; done
+    # Separate trees for different patch contents: never apply a new stack over an old one.
+    stack_hash=$(sha256sum "${patches[@]}" | sha256sum | cut -c1-16)
+    mkdir -p "$WORK"
+    WORK=$(realpath "$WORK")
+    python3 - "$WORK" <<'PY'
+import shutil, sys
+if shutil.disk_usage(sys.argv[1]).free < 10 * 1024**3:
+    sys.exit("At least 10 GiB free in IMAC5K_WORK is required for Fedora source preparation/build.")
+PY
+    srpm=$(rpm -q --qf '%{SOURCERPM}' "kernel-core-${KREL}")
+    [[ $srpm == kernel-*.src.rpm && $srpm != */* ]] || die "Cannot identify Fedora source RPM for ${KREL}."
+    nvr=${srpm%.src.rpm}
+    top=$WORK/rpm-${stack_hash}
+    stamp=$top/source-path
+    if [[ ! -f $stamp ]]; then
+        mkdir -p "$top" "$WORK/downloads"
+        if [[ ! -f $WORK/downloads/$srpm ]]; then
+            say "Downloading exact Fedora source package ${srpm} from Koji"
+            (cd "$WORK/downloads"; koji download-build --arch=src "$nvr")
+        fi
+        rpm -i --define "_topdir $top" "$WORK/downloads/$srpm"
+        say "Preparing Fedora source (including Fedora patches)"
+        rpmbuild -bp --nodeps --target "$(uname -m)" --without debug --without debuginfo \
+            --define "_topdir $top" "$top/SPECS/kernel.spec"
+        local candidates=()
+        mapfile -t candidates < <(find "$top/BUILD" -path '*/drivers/gpu/drm/amd/amdgpu/Makefile')
+        ((${#candidates[@]} == 1)) || die "Expected one prepared Fedora kernel tree under $top/BUILD."
+        src=${candidates[0]%/drivers/gpu/drm/amd/amdgpu/Makefile}
+        for f in "${patches[@]}"; do
+            say "Applying $(basename "$f")"
+            patch --directory "$src" -p1 --batch --forward --fuzz=0 --dry-run < "$f"
+            patch --directory "$src" -p1 --batch --forward --fuzz=0 < "$f"
+        done
+        printf '%s\n' "$src" > "$stamp"
+    fi
+    src=$(cat "$stamp")
+    [[ -f $src/drivers/gpu/drm/amd/amdgpu/Makefile ]] || die "Cached source missing; remove $stamp and retry."
+    say "Building amdgpu against Fedora's exact kernel-devel config and symbol versions"
+    # amdgpu_trace.h uses ../../drivers/... relative to include/trace. Fedora's
+    # kernel-devel omits that source header, so resolve it in the prepared tree.
+    make -C "$BUILD" -j"${IMAC5K_JOBS:-$(nproc)}" M="$src/drivers/gpu/drm/amd/amdgpu" \
+        "CFLAGS_amdgpu_trace_points.o=-I$src/include/trace" modules
+    local module=$src/drivers/gpu/drm/amd/amdgpu/amdgpu.ko
+    validate_module "$module"
+    install -m644 "$module" "$WORK/amdgpu.ko"
+    say "Built: $WORK/amdgpu.ko"
+}
+validate_module() {
+    local module=$1 expected actual
+    [[ -f $module ]] || die "Module not found: $module"
+    expected=$(modinfo -k "$KREL" -F vermagic amdgpu)
+    actual=$(modinfo -F vermagic "$module")
+    [[ ${actual%% *} == "$KREL" && $actual == "$expected" ]] || die "Module vermagic does not match the running Fedora kernel."
+    local params
+    params=$(modinfo -F parm "$module")
+    [[ $params == *'tiled_stitch:'* ]] || die "Module lacks the tiled_stitch parameter."
+}
+check_kernel_can_decompress() {
+    # xz --list --robot prints the check type in field 7 of the "file" line.
+    local check
+    check=$(xz --list --robot "$1" | awk -F'\t' '$1 == "file" { print $7 }')
+    [[ $check == CRC32 ]] ||
+        die "Compressed module uses ${check:-an unknown} integrity check; the kernel XZ decoder only accepts CRC32."
+}
+managed_args() {
+    # grubby quotes the args line. Only save the display arguments we change.
+    grubby --info "$KERNEL" | python3 -c '
+import shlex, sys
+for line in sys.stdin:
+    if line.startswith("args="):
+        args = shlex.split(line.partition("=")[2])[0]
+        print(" ".join(x for x in shlex.split(args) if x.startswith(("amdgpu.tiled_stitch=", "video=eDP-1:"))))
+        break
+else:
+    sys.exit("grubby did not return kernel arguments")'
+}
+restore_args() {
+    local current old
+    current=$(managed_args)
+    old=$(cat "$STATE/display-args")
+    [[ -z $current ]] || grubby --update-kernel "$KERNEL" --remove-args "$current"
+    [[ -z $old ]] || grubby --update-kernel "$KERNEL" --args "$old"
+    return 0
+}
+restore_module() {
+    need_root --restore
+    need_tools grubby dracut depmod
+    [[ -f $STATE/display-args && -f $STATE/initramfs.stock ]] || die "No complete 5K backup for ${KREL}. Boot the patched kernel before restoring it."
+    rm -f "$DEST" "$DEPMOD_CONF"
+    depmod "$KREL"
+    restore_args
+    # Restore a bootable stock image first, even if the subsequent rebuild fails.
+    cp "$STATE/initramfs.stock" "$INITRD"
+    dracut --force "$INITRD" "$KREL"
+    rm -f "$STATE/installed"
+    say "Stock amdgpu and original display arguments restored for ${KREL}. Reboot."
+}
+rollback_install() {
+    trap - ERR
+    set +e
+    echo "Install failed; reverting this kernel to the saved stock module and initramfs." >&2
+    rm -f "$DEST" "$DEPMOD_CONF"
+    depmod "$KREL"
+    restore_args
+    cp "$STATE/initramfs.stock" "$INITRD"
+    rm -f "$STATE/installed"
+    exit 1
+}
+install_module() {
+    need_root --install
+    [[ $KSERIES == 7.1 || $KSERIES == 7.2 ]] || die "5K installation supports kernel series 7.1 and 7.2 only."
+    need_tools modinfo depmod dracut grubby xz strip mokutil
+    validate_module "$1"
+    check_signing
+    [[ -f $INITRD && -f $KERNEL ]] || die "Expected Fedora kernel/initramfs under /boot."
+    local current tmp
+    current=$(managed_args)
+    if [[ ! -f $STATE/installed ]]; then
+        [[ ! -e $DEST && ! -e $DEPMOD_CONF ]] || die "Unmanaged imac5k module/config already exists."
+        mkdir -p "$STATE"
+        cp "$INITRD" "$STATE/initramfs.stock"
+        printf '%s\n' "$current" > "$STATE/display-args"
+    fi
+    [[ -f $STATE/initramfs.stock ]] || die "Stock initramfs backup is missing."
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    cp "$1" "$tmp/amdgpu.ko"
+    strip --strip-debug "$tmp/amdgpu.ko"
+    if [[ -n ${IMAC5K_SIGN_KEY:-} ]]; then
+        "$BUILD/scripts/sign-file" sha256 "$IMAC5K_SIGN_KEY" "$IMAC5K_SIGN_CERT" "$tmp/amdgpu.ko"
+    fi
+    # The kernel decompresses modules itself (CONFIG_MODULE_DECOMPRESS) and its
+    # XZ decoder rejects any check type above CRC32 with XZ_OPTIONS_ERROR unless
+    # CONFIG_XZ_DEC_ANY_CHECK is set, which Fedora does not set. Plain "xz"
+    # defaults to CRC64, so finit_module() fails as "decompression failed with
+    # status 6" / EINVAL before it ever reads the module name. Match the flags
+    # the kernel uses for its own modules in scripts/Makefile.modinst.
+    xz --check=crc32 --lzma2=dict=1MiB -c "$tmp/amdgpu.ko" > "$tmp/amdgpu.ko.xz"
+    check_kernel_can_decompress "$tmp/amdgpu.ko.xz"
+    trap rollback_install ERR
+    mkdir -p "$(dirname "$DEST")" "$(dirname "$DEPMOD_CONF")"
+    install -m644 "$tmp/amdgpu.ko.xz" "$DEST"
+    printf 'override amdgpu %s updates/imac5k\n' "$KREL" > "$DEPMOD_CONF"
+    depmod "$KREL"
+    [[ $(realpath "$(modinfo -k "$KREL" -n amdgpu)") == "$(realpath "$DEST")" ]] || { false; }
+    dracut --force --add-drivers amdgpu "$INITRD" "$KREL"
+    [[ -z $current ]] || grubby --update-kernel "$KERNEL" --remove-args "$current"
+    grubby --update-kernel "$KERNEL" --args amdgpu.tiled_stitch=1
+    touch "$STATE/installed"
+    trap - ERR
+    rm -rf "$tmp"
+    trap - EXIT
+    say "Installed for ${KREL}. Reboot, then run scripts/verify.sh."
+    say "Recovery: choose another Fedora kernel in GRUB, or use --restore while running ${KREL}."
+}
+# Functions may be sourced by the offline integration tests.
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
+
+case ${1:-} in
+    --help|-h)
+        echo "Usage: $0 [--check | --build | --install MODULE | --restore]"
+        echo "No arguments: build as your user, then install through sudo."
+        exit 0 ;;
+    ''|--check|--build|--restore) (($# <= 1)) || die "Unexpected arguments." ;;
+    --install) (($# == 2)) || die "--install requires a module path." ;;
+    *) die "Unknown option: $1" ;;
+esac
+imac_is_fedora || die "This backend requires Fedora."
+imac_is_atomic && die "Fedora Kinoite/Atomic is not supported by this mutable-kernel installer."
+[[ $(cat /sys/class/dmi/id/product_name) == iMac18,3 ]] || die "This driver targets iMac18,3 only."
+case ${1:-} in
+    --check) check ;;
+    --build) build_module ;;
+    --install) install_module "$2" ;;
+    --restore) restore_module ;;
+    '')
+        build_module
+        sudo --preserve-env=IMAC5K_SIGN_KEY,IMAC5K_SIGN_CERT "$0" --install "$WORK/amdgpu.ko"
+        ;;
+esac

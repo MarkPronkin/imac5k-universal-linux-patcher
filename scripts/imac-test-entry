@@ -33,6 +33,11 @@
 #   imac-test-entry status       What each entry currently boots.
 #
 set -euo pipefail
+if ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); then
+    echo "This helper is for Omarchy/Limine, not Fedora GRUB." >&2
+    exit 1
+fi
+
 
 KREL="$(uname -r)"
 MODDIR="/usr/lib/modules/${KREL}/kernel/drivers/gpu/drm/amd/amdgpu"

@@ -28,6 +28,11 @@ set -euo pipefail
 
 PATCH_KVER_SUPPORTED="7.1 7.2"   # kernel series this patch is verified to apply to
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/platform.sh"
+if imac_is_fedora; then
+    exec "${SCRIPT_DIR}/fedora-imac5k" "$@"
+fi
+imac_require_limine
 # Which stack to build. "lean" (default since 2026-09-07): the lean core (the
 # upstream candidate) plus the stitch layer -- same features as the verbose
 # stack minus its logging. "verbose": the original full-stack patch plus the

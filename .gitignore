@@ -2,4 +2,4 @@
 *.bak
 *.log
 hardware-private/
-
+__pycache__/
