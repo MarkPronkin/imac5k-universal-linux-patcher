@@ -14,6 +14,17 @@ cd omarchy-imac18-3-patch
 
 The patcher shows you what's applied, what isn't, and lets you pick. Nothing is applied without asking.
 
+### 🐧 Distributions
+
+The patcher detects which of these it's running on and uses the matching backend — same menu, same module names, same `--apply`/`--remove` commands.
+
+| | Packages | Kernel source | Boot / initramfs | Display control | Hardware-tested |
+|---|---|---|---|---|---|
+| **Omarchy / Arch** | pacman | kernel.org tarball | Limine + mkinitcpio | Hyprland | ✅ this is where the patches were developed and verified |
+| **Fedora KDE** | DNF | matching Fedora source RPM | GRUB/BLS + dracut | KScreen (Plasma Wayland) | ⚠️ build, install and restore verified; display/audio behaviour not yet confirmed on hardware |
+
+Fedora specifics — dependencies, Secure Boot signing, recovery, and how the backend is wired in — are in the **[Fedora KDE guide](docs/fedora-kde.md)**. Fedora Kinoite/Atomic is not supported.
+
 ---
 
 ## 🔧 What it fixes
@@ -51,6 +62,8 @@ Install it without a second kernel — only the `amdgpu` module is rebuilt for y
 
 You don't need to supply any files — the patch ships in this repo, and the installer downloads the matching kernel source from kernel.org itself. What you do need:
 
+The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md).
+
 - 🛠️ **Build tools and kernel headers** — `base-devel bc pahole linux-headers`. The patcher checks for these up front and offers to install anything missing, rather than failing part-way through a compile.
 - 💾 **About 8 GB of disk** for the kernel source tree.
 - ⏱️ **20–40 minutes** for the first build. Re-runs (e.g. after a kernel update) reuse the tree and are much faster.
@@ -73,6 +86,8 @@ Then, optionally, the tone fix. The codec and amplifier do no processing whatsoe
 ---
 
 ## 🎨 Colour
+
+On KDE Plasma Wayland, `./scripts/imac-patcher --apply color` selects the panel's EDID colour profile through KScreen, and `--remove color` puts your previous selection back. The setting below is the Hyprland equivalent.
 
 The panel is wide-gamut Display P3. Hyprland's default `srgb` mode doesn't gamut-map for it, so everything looks oversaturated. In `~/.config/hypr/monitors.lua`:
 
@@ -107,9 +122,11 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 
 - Apple iMac18,3 (2017 27" 5K). The patcher refuses to run on other hardware.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
-- Omarchy is what this is developed and tested against. The audio, EQ and colour pieces are largely distribution-agnostic; the boot-related pieces assume Limine.
+- Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, EQ and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
 
 ## 🛟 Safety
+
+On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery) — the Limine specifics below are Omarchy's.
 
 Every patch backs up what it replaces and can be reversed. Boot-related changes print their recovery steps *before* running. A new `amdgpu` build never has to replace the working one to be tried: `scripts/imac-alt-entry add <name> <module>` boots it from its own hash-pinned Limine entry with the default untouched (see [`patches/README.md`](patches/README.md)). If a boot change ever goes wrong: boot the Limine snapshot entry, restore `/etc/default/limine.backup`, re-run `limine-mkinitcpio`, reboot.
 

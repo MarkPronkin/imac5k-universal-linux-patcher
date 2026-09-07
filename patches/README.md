@@ -19,6 +19,11 @@ Boot parameter once installed: `amdgpu.tiled_stitch=1`
 
 ## Installing without a second kernel
 
+**On Fedora KDE**, run `../scripts/imac-patcher --apply 5k` as your normal user
+instead. The Fedora backend builds from the matching Fedora source RPM and
+installs a module override through dracut and grubby; the Limine test-entry
+workflow below is Omarchy-only. See [the Fedora guide](../docs/fedora-kde.md).
+
 ```bash
 sudo ../scripts/patch-imac5k-amdgpu.sh          # build + swap the amdgpu module
 sudo ../scripts/patch-imac5k-amdgpu.sh --restore  # undo everything
@@ -31,6 +36,14 @@ Since 2026-09-07 the installer builds the **lean pair** (`imac5k-lean-core-7.2.x
 + `imac5k-stitch-layer-7.x.patch`). The verbose stack (full-stack patch + the
 five `5k-*.patch` increments) is still available: `IMAC5K_STACK=verbose sudo
 ../scripts/patch-imac5k-amdgpu.sh`.
+
+### Fedora 7.1.13 context
+
+The lean pair also applies to Fedora `7.1.13-200.fc44`. Six hunks used to anchor
+on adjacent 7.2-only firmware, HDMI, IRQ and atomic-commit code; they now anchor
+on insertion points that are stable across both series. **The driver code the
+patches add is unchanged** — only the surrounding match context moved. Both
+patches apply in sequence at `--fuzz=0` to 7.2.x and to that Fedora source.
 
 ## Lean mainline candidate: `imac5k-lean-core-7.2.x.patch`
 
@@ -68,8 +81,10 @@ erik2's single-display stitch (`amdgpu.tiled_stitch`, slave tile non-desktop)
 as a layer that applies **on top of** the lean core, plus the two
 stitch-specific boot fixes: the early modeset before Plymouth (full-width
 disk-password prompt) and the settle-and-resync after tiled commits.
-**+1038 code / +276 comment lines, 10 files.** Needed only for compositors without tile
-support — Hyprland. Upstream will not take this layer.
+**+1038 code / +276 comment lines, 10 files.** Both installers ship it, so a
+compositor sees one output whether or not it supports DRM tiling — Hyprland has
+no tile support, and it keeps KWin from having to stitch the halves itself.
+Upstream will not take this layer.
 
 ```bash
 patch -p1 < patches/imac5k-lean-core-7.2.x.patch     # core (+ genlock + reboot handoff)
