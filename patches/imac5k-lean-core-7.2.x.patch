@@ -106,10 +106,7 @@ diff -ruN -x '.*' pristine7.2.2/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.
  
  static void amdgpu_dm_backlight_set_level(struct amdgpu_display_manager *dm,
  					 int bl_idx,
-@@ -2040,6 +2041,44 @@
- 			   msecs_to_jiffies(dm->hdmi_frl_status_polling_delay_ms));
- }
- 
+@@ -2043,3 +2044,41 @@
 +/* True when a link on this device is wired as an Apple 5K tile pair. */
 +bool amdgpu_dm_has_apple_tiled_panel(struct amdgpu_device *adev)
 +{
@@ -378,9 +375,7 @@ diff -ruN -x '.*' pristine7.2.2/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_
  	default:
  		return;
  	}
-@@ -196,6 +252,7 @@
- 	}
- 
+@@ -198,4 +254,5 @@
  	apply_edid_quirks(link, edid_buf, edid_caps);
 +	dm_helpers_wire_tiled_peer(link, &edid_caps->panel_patch);
  
