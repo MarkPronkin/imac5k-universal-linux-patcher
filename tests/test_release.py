@@ -7,6 +7,7 @@ launcher symlink, rollback pruning and uninstall, all inside a temp HOME.
 from functools import partialmethod
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import os
 import subprocess
 import tarfile
 import tempfile
@@ -19,6 +20,13 @@ INSTALL = REPO / "install.sh"
 MAKE_RELEASE = REPO / "scripts/make-release.sh"
 VERSION = "9.9.9-test"
 
+# Creating a tag or a stash writes a git object, which needs an identity the
+# machine may not have -- a CI runner has none. Supply one rather than depend
+# on the ambient config.
+GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@invalid",
+           "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@invalid"}
+
+
 # Test the working tree, not the last commit: `git stash create` snapshots
 # tracked changes into a dangling commit without touching the index or the
 # working tree, and make-release.sh can archive that like any other ref. It is
@@ -26,7 +34,7 @@ VERSION = "9.9.9-test"
 # that is new *and* untracked is not in a stash commit -- git add it.
 def worktree_ref():
     ref = subprocess.run(["git", "stash", "create"], cwd=REPO, check=True,
-                         text=True, capture_output=True).stdout.strip()
+                         text=True, capture_output=True, env=GIT_ENV).stdout.strip()
     return ref or "HEAD"
 
 
@@ -110,7 +118,8 @@ class ReleaseTests(unittest.TestCase):
         # the tag rather than the commit it points at -- and the tarball then
         # gets a mangled timestamp and a checksum nobody else can reproduce.
         tag = "_test-make-release"
-        subprocess.run(["git", "tag", "-a", tag, "-m", "temp"], cwd=REPO, check=True)
+        subprocess.run(["git", "tag", "-a", tag, "-m", "temp"], cwd=REPO, check=True,
+                       env=GIT_ENV)
         self.addCleanup(subprocess.run, ["git", "tag", "-d", tag],
                         cwd=REPO, capture_output=True)
         from_tag, from_commit = self.tmp / "tag", self.tmp / "commit"
