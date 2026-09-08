@@ -49,6 +49,17 @@ class EqTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # The module picks its installer from what is on PATH, so the runner's
+        # own distribution must not decide which branch a test takes: a CI
+        # machine with neither pacman nor dnf reaches the "install them
+        # yourself" message and never prompts at all.
+        self.stub("sudo", 'exec "$@"')
+        self.stub("pacman", 'echo "PACMAN: $*"; exit 0')
+
+    def stub(self, name, body):
+        path = self.bin / name
+        path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+        path.chmod(0o755)
 
     def stub_pactl(self, four_channel_profile=True, active=STEREO, sinks=""):
         """A pactl that remembers the profile it was told to select, so the
