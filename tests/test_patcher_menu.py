@@ -8,7 +8,7 @@ PATCHER = Path(__file__).resolve().parents[1] / "scripts/imac-patcher"
 
 
 class MenuTests(unittest.TestCase):
-    def run_menu(self, answer):
+    def run_menu(self, answer, picks="1\n2\n"):
         source = PATCHER.read_text()
         confirm = next(line for line in source.splitlines() if line.startswith("confirm(){"))
         interactive = source[source.index("# ── interactive"):]
@@ -32,7 +32,7 @@ run_module() {
 '''
         return subprocess.run(
             ["bash", "-c", mocks + confirm + "\n" + interactive],
-            input="2\n1\n" + answer, text=True, capture_output=True, timeout=5,
+            input="2\n" + picks + answer, text=True, capture_output=True, timeout=5,
         )
 
     def test_selected_patch_and_installer_receive_user_input(self):
@@ -49,6 +49,29 @@ run_module() {
     def test_missing_confirmation_does_not_start_build(self):
         result = self.run_menu("")
         self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("BUILD_STARTED", result.stdout)
+
+    def test_marking_a_patch_shows_it_as_selected(self):
+        # Mark patch 1, then leave: the redrawn list carries the mark.
+        result = self.run_menu("", picks="1\n3\n")
+        self.assertIn("[x] 5k", result.stdout)
+        self.assertNotIn("BUILD_STARTED", result.stdout)
+
+    def test_exit_patcher_leaves_without_building(self):
+        result = self.run_menu("", picks="3\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("BUILD_STARTED", result.stdout)
+
+    def test_installing_nothing_builds_nothing(self):
+        result = self.run_menu("", picks="2\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing selected", result.stdout)
+        self.assertNotIn("BUILD_STARTED", result.stdout)
+
+    def test_marking_twice_clears_the_selection(self):
+        result = self.run_menu("", picks="1\n1\n2\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing selected", result.stdout)
         self.assertNotIn("BUILD_STARTED", result.stdout)
 
 

@@ -513,6 +513,91 @@ case "${1:-}" in
 esac
 
 # ── interactive ────────────────────────────────────────────────────────────
+# The patch picker: every unapplied patch on its own row, Enter marks the one
+# under the cursor, and the two rows below the list act on the marks. PICKED
+# comes back holding the indexes that were marked; the return code says whether
+# the user asked to install (0) or to leave (1).
+PICK_INSTALL='Install selected'
+PICK_EXIT='Exit patcher'
+PICKED=()
+MARKED=()
+
+pick_count() { local m c=0; for m in "${MARKED[@]}"; do ((c += m)); done; printf '%d' "$c"; }
+pick_collect() { local i; PICKED=(); for i in "${!MARKED[@]}"; do ((MARKED[i])) && PICKED+=("$i"); done; return 0; }
+
+pick_render() {   # $1 = cursor row, $2 = notice line, rest = patch rows
+    local cur=$1 notice=$2; shift 2
+    local rows=("$@") n=$# i arrow mark
+    printf '  Enter marks a patch · ↑/↓ or j/k moves · q leaves\n'
+    printf '  \033[0;33m%s\033[0m\n\n' "$notice"
+    for ((i = 0; i < n; i++)); do
+        arrow='   '; ((i == cur)) && arrow=$'\033[1;36m ❯ \033[0m'
+        mark='[ ]'; ((MARKED[i])) && mark=$'\033[1;32m[✓]\033[0m'
+        printf '%s%s %s\n' "$arrow" "$mark" "${rows[i]}"
+    done
+    echo
+    arrow='   '; ((cur == n))     && arrow=$'\033[1;36m ❯ \033[0m'
+    printf '%s%s (%s)\n' "$arrow" "$PICK_INSTALL" "$(pick_count)"
+    arrow='   '; ((cur == n + 1)) && arrow=$'\033[1;36m ❯ \033[0m'
+    printf '%s%s\n' "$arrow" "$PICK_EXIT"
+}
+
+pick_done() { printf '\033[?25h'; exec 3<&-; }   # cursor back, terminal closed
+
+pick_tui() {   # arrow-key picker; keys come off the terminal so stdin stays
+    local rows=("$@") n=$# cur=0 notice='' lines key rest
+    lines=$((n + 6))                        # what pick_render just drew
+    # Keystrokes come off the terminal directly, so whatever a module later
+    # reads from stdin is still waiting there for it.
+    exec 3</dev/tty 2>/dev/null || exec 3<&0
+    printf '\033[?25l'
+    while :; do
+        pick_render "$cur" "$notice" "${rows[@]}"
+        notice=''
+        IFS= read -rsn1 -u 3 key || key=q
+        [[ $key == $'\e' ]] && { read -rsn2 -t 0.05 -u 3 rest; key+=$rest; }
+        case "$key" in
+            $'\e[A'|k) ((cur = cur > 0 ? cur - 1 : n + 1)) ;;
+            $'\e[B'|j) ((cur = cur < n + 1 ? cur + 1 : 0)) ;;
+            ''|' ')
+                if ((cur < n)); then
+                    MARKED[cur]=$((1 - MARKED[cur]))
+                elif ((cur == n)); then
+                    if (($(pick_count))); then pick_done; pick_collect; return 0; fi
+                    notice='nothing marked yet — press Enter on a patch first'
+                else
+                    pick_done; PICKED=(); return 1
+                fi ;;
+            q) pick_done; PICKED=(); return 1 ;;
+        esac
+        printf '\033[%dA\033[J' "$lines"
+    done
+}
+
+pick_plain() {   # same choices, numbered, for a pipe or a dumb terminal
+    local rows=("$@") n=$# i ans
+    while :; do
+        echo
+        for ((i = 0; i < n; i++)); do
+            printf '  %2d) %s %s\n' "$((i + 1))" \
+                "$( ((MARKED[i])) && printf '[x]' || printf '[ ]')" "${rows[i]}"
+        done
+        printf '  %2d) %s (%s)\n' "$((n + 1))" "$PICK_INSTALL" "$(pick_count)"
+        printf '  %2d) %s\n'      "$((n + 2))" "$PICK_EXIT"
+        read -rp '  select: ' ans || { PICKED=(); return 1; }
+        [[ $ans =~ ^[0-9]+$ ]] || continue
+        if   ((ans >= 1 && ans <= n)); then MARKED[ans - 1]=$((1 - MARKED[ans - 1]))
+        elif ((ans == n + 1)); then pick_collect; return 0
+        elif ((ans == n + 2)); then PICKED=(); return 1; fi
+    done
+}
+
+pick_patches() {   # $@ = rows to offer; fills PICKED with the chosen indexes
+    local i; MARKED=(); PICKED=()
+    for ((i = 0; i < $#; i++)); do MARKED[i]=0; done
+    if [[ -t 0 && -t 1 ]]; then pick_tui "$@"; else pick_plain "$@"; fi
+}
+
 show_status
 echo
 if ((HAVE_GUM)); then
@@ -528,20 +613,19 @@ case "$sel" in
             run_module apply "$m"
         done ;;
     "Choose patches to apply")
-        avail=(); for m in "${MODULES[@]}"; do
+        ids=(); avail=(); for m in "${MODULES[@]}"; do
             st=$("mod_${m}_detect"); [[ $st == applied || $st == n/a ]] && continue
+            ids+=("$m")
             avail+=("${m} — $("mod_${m}_title")$([[ $("mod_${m}_tier") == boot ]] && echo '  [boot]')")
         done
         (( ${#avail[@]} )) || { say "everything applicable is already applied"; exit 0; }
-        if ((HAVE_GUM)); then picks=$(gum choose --no-limit "${avail[@]}"); else
-            select p in "${avail[@]}"; do picks=$p; break; done; fi
-        # Read the selection separately so module prompts and installers keep
-        # the terminal on stdin (a redirected while loop gives them its EOF).
-        mapfile -t selected_patches <<<"$picks"
+        # The picker gathers the whole selection before anything runs, so module
+        # prompts and installers keep the terminal on stdin for themselves.
+        pick_patches "${avail[@]}" || exit 0
+        (( ${#PICKED[@]} )) || { say "nothing selected"; exit 0; }
         result=0
-        for line in "${selected_patches[@]}"; do
-            [[ -n $line ]] || continue
-            run_module apply "${line%% *}" || result=1
+        for i in "${PICKED[@]}"; do
+            run_module apply "${ids[i]}" || result=1
         done
         exit "$result" ;;
     "Remove a patch")
