@@ -7,10 +7,15 @@
 Apple's 2017 iMac hardware has several things stock Linux gets wrong or doesn't support at all. This repo is a patcher that fixes them, one command at a time, with every change reversible.
 
 ```bash
-git clone https://github.com/ahmadtv/omarchy-imac18-3-patch
-cd omarchy-imac18-3-patch
+git clone https://github.com/MarkPronkin/imac5k-universal-linux-patcher
+cd imac5k-universal-linux-patcher
 ./scripts/imac-patcher
 ```
+
+> This is an independent continuation of
+> [ahmadtv/omarchy-imac18-3-patch](https://github.com/ahmadtv/omarchy-imac18-3-patch),
+> not a drop-in replacement for it. It adds the Fedora KDE backend and the
+> post-commit DP link recovery described below. See [Credits](#-credits).
 
 The patcher shows you what's applied, what isn't, and lets you pick. Nothing is applied without asking.
 
@@ -135,5 +140,9 @@ Every patch backs up what it replaces and can be reversed. Boot-related changes 
 Open items, root causes and rejected approaches are tracked in [`TODO.md`](TODO.md).
 
 ## 🙏 Credits
+
+This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://github.com/ahmadtv/omarchy-imac18-3-patch)** by Ahmad Al-Awadi, which is where the patcher, the 5K stitch work and the original Omarchy backend come from. It is MIT licensed, and that copyright is retained in [`LICENSE`](LICENSE) alongside the one for the changes made here. The full commit history of the original is preserved in this repository, so `git log` attributes every one of those commits to its author.
+
+Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
 
 Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio).
