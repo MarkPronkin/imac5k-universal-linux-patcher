@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-
 imac-patcher
 ```
 
-That fetches the latest release (~130 KB), checks it against the published SHA-256, unpacks it under `~/.local/share/imac5k-patcher/`, and links `imac-patcher` into `~/.local/bin`. It installs the tool and stops there — nothing is patched until you run it and choose.
+That fetches the latest release (including prereleases), checks it against the published SHA-256, unpacks it under `~/.local/share/imac5k-patcher/`, and links `imac-patcher` into `~/.local/bin`. It installs the tool and stops there — nothing is patched until you run it and choose.
 
 Prefer to read before you run, or want to work on the patches themselves? Clone instead — the patcher runs the same either way:
 
@@ -26,7 +26,54 @@ cd imac5k-universal-linux-patcher
 > not a drop-in replacement for it. It adds the Fedora KDE backend and the
 > post-commit DP link recovery described below. See [Credits](#-credits).
 
-The patcher shows you what's applied, what isn't, and lets you pick. Nothing is applied without asking.
+The interactive menu shows each module's state and lets you select changes.
+Direct `--apply` and `--remove` commands request those changes immediately;
+individual modules may also prompt for dependencies or a graphics build.
+
+## Using the patcher
+
+Run as your **desktop user**, inside your desktop session. The patcher invokes
+`sudo` for system changes. In a clone, use `./scripts/imac-patcher` wherever the
+examples below use `imac-patcher`.
+
+```bash
+imac-patcher --help             # commands, module IDs and exit codes
+imac-patcher --status           # inspect all modules
+imac-patcher                   # choose patches interactively
+imac-patcher --apply eq color   # apply named modules in this order
+imac-patcher --remove eq        # undo one module
+```
+
+| Status | Meaning |
+|---|---|
+| `applied` | The module's current checks pass |
+| `not-applied` | The module does not detect its changes |
+| `partial` | Some changes are present, but a required file, running driver, or setting is missing; a reboot or re-apply may be needed |
+| `n/a` | The module is unavailable for the detected hardware, desktop, or platform; the command skips it |
+
+The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
+`--apply safe` and `--remove safe` select the modules currently in the `safe`
+tier. Use `safe` by itself. It can include **`suspend`, which disables sleep**;
+select individual modules if sleep works on your machine. Suspend moves to the
+`boot` tier while cleanup of an old `idle=poll` setting is needed.
+
+Commands check all arguments before running any module. Exit status is `0` for
+success or a skipped operation, `1` for a failed operation, and `2` for invalid
+arguments. A batch continues after a module fails and returns `1` if any failed.
+Successful installation can still require a reboot; check `--status` afterwards.
+
+`--force` can appear before or after a command. It bypasses the launcher model
+gate only; each module still checks its own compatibility. `--help` and
+`--version` are available on any machine without creating runtime directories
+or checking package dependencies.
+
+For prerequisites, see [Dependencies](DEPENDENCIES.md). For changes to the
+project itself, see the [development guide](docs/development.md).
+
+Startup confirms `Core dependencies: ready` or offers to install missing core
+tools. It also lists missing module prerequisites before the menu, including
+audio and graphics build tools; optional module dependencies are handled when
+you choose the module. Prompts remain visible when input is piped.
 
 ## Compatibility
 
@@ -100,7 +147,9 @@ Install it without a second kernel — only the `amdgpu` module is rebuilt for y
 
 **Read [`patches/README.md`](patches/README.md) first.** The patch is verified against kernel **7.1.x and 7.2.x only** and the installer refuses anything else, because a mis-applied patch means a broken GPU module.
 
-You don't need to supply any files — the patch ships in this repo, and the installer downloads the matching kernel source from kernel.org itself. What you do need:
+You don't need to supply source files — the patch ships in this repo. On
+Omarchy, the installer downloads the matching kernel source from kernel.org;
+Fedora uses its matching source RPM.
 
 The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md).
 
@@ -114,11 +163,13 @@ Re-run it after any kernel update — the patched module is built for one specif
 
 ## 🔊 Audio
 
-The CS8409 codec needs an out-of-tree driver — the in-kernel one doesn't recognise a speaker output on this board at all:
+On iMac18,3, the CS8409 codec needs an out-of-tree driver — the in-kernel one
+doesn't recognise a speaker output on this board. Install it through the patcher
+so it selects the distribution backend and checks the prerequisites:
 
 ```bash
-git clone https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
-cd imac18-3-cs8409-linux-audio && sudo ./install-imac18-3.sh && sudo reboot
+./scripts/imac-patcher --apply audio
+# Reboot before testing audio or applying speaker tuning.
 ```
 
 Then, optionally, the speaker tuning:
@@ -210,11 +261,22 @@ Uninstalling removes the tool, **not the patches** — those outlive it, so reve
 
 On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery) — the Limine specifics below are Omarchy's.
 
-Every patch backs up what it replaces and can be reversed. Boot-related changes print their recovery steps *before* running. A new `amdgpu` build never has to replace the working one to be tried: `scripts/imac-alt-entry add <name> <module>` boots it from its own hash-pinned Limine entry with the default untouched (see [`patches/README.md`](patches/README.md)). If a boot change ever goes wrong: boot the Limine snapshot entry, restore `/etc/default/limine.backup`, re-run `limine-mkinitcpio`, reboot.
+Use `--remove` to reverse an applied module, following its recovery instructions
+where manual steps are needed. Boot-related changes print their recovery steps
+*before* running. A new `amdgpu` build can be tried through
+`scripts/imac-alt-entry add <name> <module>`, which boots it from its own
+hash-pinned Limine entry while preserving the default (see
+[`patches/README.md`](patches/README.md)). If a boot change goes wrong, boot the
+Limine snapshot entry, restore `/etc/default/limine.backup`, re-run
+`limine-mkinitcpio`, and reboot.
 
 ## 🧭 How this was worked out
 
-Open items, root causes and rejected approaches are tracked in [`TODO.md`](TODO.md).
+Start with the [development guide](docs/development.md) for the code layout,
+offline checks, module contract, and release workflow. Open items, root causes
+and rejected approaches are tracked in
+[`TODO.md`](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/blob/main/TODO.md),
+which is included in repository checkouts, but omitted from release installs.
 
 ## 🙏 Credits
 

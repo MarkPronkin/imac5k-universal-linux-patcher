@@ -10,8 +10,6 @@ PATCHER = ROOT / "scripts/imac-patcher"
 
 # Two cards as pactl prints them: the HDMI one first, so picking the card by
 # "offers a 4.0 profile" is doing real work rather than taking the first.
-# Two cards as pactl prints them: the HDMI one first, so picking the card by
-# "offers a 4.0 profile" is doing real work rather than taking the first.
 FOUR_CHANNEL = "output:analog-surround-40+input:analog-stereo"
 STEREO = "output:analog-stereo+input:analog-stereo"
 PACTL_CARDS = """Card #51
@@ -277,7 +275,7 @@ cat "$EQ_VOLUME_STATE"
         self.stub_pactl(active=FOUR_CHANNEL)
         source = PATCHER.read_text()
         start = source.index("run_module() {")
-        driver = source[start:source.index('\ncase "${1:-}" in', start)]
+        driver = source[start:source.index('\ncase "$ACTION" in', start)]
         result = self.run_eq(driver + '''
 mod_eq_detect() { echo applied; }
 mod_eq_apply() { echo UNEXPECTED-REINSTALL; return 1; }

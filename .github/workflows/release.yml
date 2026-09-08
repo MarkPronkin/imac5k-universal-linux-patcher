@@ -18,8 +18,14 @@ jobs:
         with:
           fetch-depth: 0        # make-release.sh archives a git ref
 
-      - name: Run the offline test suite
-        run: python3 -m unittest discover -s tests
+      - name: Check syntax and run offline tests
+        run: ./scripts/check.sh
+
+      - name: Install isolated startup test runner
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Require isolated startup tests
+        run: sudo env IMAC5K_REQUIRE_STARTUP_TESTS=1 python3 -m unittest discover -s tests -p 'test_startup.py' -v
 
       - name: Build the release tarball
         id: build

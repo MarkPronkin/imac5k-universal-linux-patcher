@@ -94,8 +94,16 @@ build; Fedora's source preparation adds to both compared with the Arch path.
 Output is cached under `~/.cache/kernel-5k-build/fedora-$(uname -r)/`, and a
 change to the patch stack gets its own tree — a new stack is never applied on
 top of an old one. `IMAC5K_WORK` moves the cache, `IMAC5K_JOBS` caps compile
-parallelism, and `IMAC5K_STACK=verbose` selects the older verbose stack instead
-of the default lean pair.
+parallelism, and `IMAC5K_STACK=verbose` selects the older verbose stack.
+The default lean stack applies these four patches in order:
+
+1. `imac5k-lean-core-7.2.x.patch`
+2. `imac5k-stitch-layer-7.x.patch`
+3. `5k-going-down-stop-resync.patch`
+4. `5k-post-commit-link-recovery.patch`
+
+The last two add shutdown handling and post-commit link recovery. See the
+[patch guide](../patches/README.md) for their purpose and validation history.
 
 You can build without installing, and install separately:
 
@@ -271,7 +279,7 @@ scripts/imac-patcher
   └─ source lib/kde.sh      if KDE      → overrides color
 ```
 
-### New files
+### Components
 
 | File | Role |
 |---|---|
@@ -281,28 +289,27 @@ scripts/imac-patcher
 | `scripts/fedora-imac5k` | The Fedora graphics installer: `--check`, `--build`, `--install MODULE`, `--restore`. Builds as your user; only install and restore need root. Its functions are sourceable so the tests can drive them |
 | `scripts/kde-display.py` | KScreen wrapper: reads the panel's colour profile source, applies EDID, restores the saved selection, and reports whether 5120×2880 is the *active* mode |
 | `tests/test_fedora.py` | Offline tests for the installer and the display helper |
-| `tests/test_patcher_menu.py` | Drives the real interactive menu with mock modules |
-| `docs/fedora-kde.md` | This guide |
+| `tests/test_patcher_cli.py`, `tests/test_patcher_driver.py`, `tests/test_patcher_menu.py` | Exercise command validation, state probes, batch errors and the interactive menu with mock modules |
 
-### Changed files
+`scripts/patch-imac5k-amdgpu.sh` dispatches to `fedora-imac5k` on Fedora.
+The Limine entry and ESP helpers require an Omarchy/Limine setup and refuse to
+run on Fedora.
 
-| File | Change |
-|---|---|
-| `scripts/imac-patcher` | Sources `lib/platform.sh` and, conditionally, the two backends. Also: propagates module failures into the exit status instead of always exiting `0`, and reads the menu selection with `mapfile` so module prompts and child installers keep the terminal on stdin (a redirected `while read` loop handed them its own EOF) |
-| `scripts/patch-imac5k-amdgpu.sh` | On Fedora, `exec`s `fedora-imac5k`; otherwise asserts Limine as before |
-| `scripts/imac-alt-entry`, `scripts/imac-test-entry`, `scripts/95-limine-esp-hygiene` | Refuse to run on Fedora with a pointer to the supported path, rather than acting on a bootloader that is not there |
-| `scripts/verify.sh` | Reports KDE output state via `kscreen-doctor` when on KDE and Hyprland otherwise, and adds the checks needed to diagnose a failed graphics install: installed vs loaded module, vermagic, `tiled_stitch`, bound DRM driver, GL renderer (llvmpipe means no acceleration), audio/DKMS state. Optional tools are probed before use |
-| `patches/imac5k-lean-core-7.2.x.patch`, `patches/imac5k-stitch-layer-7.x.patch` | Match context adjusted so both apply to Fedora `7.1.13-200.fc44` as well as 7.2.x. **No change to the driver code they add** — six hunks anchored on adjacent 7.2-only firmware, HDMI, IRQ and atomic-commit code were re-anchored on stable insertion points |
-| `README.md`, `patches/README.md` | Document the two supported platforms and point here |
+The launcher captures status once for the display and menu, then checks live
+state again before each action. It collects the complete menu selection before
+running modules, so module prompts and child installers retain their input.
+Both direct commands and interactive batches return a failure status if any
+selected module fails. See the [development guide](development.md) for the full
+module contract and release workflow.
 
 ### Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+./scripts/check.sh -v
 ```
 
-Everything runs offline against temporary directories and mock boot tools — no
-root, no package installation, and nothing on the host is touched. Covered:
+Run this from a repository checkout. Checks run offline against temporary
+directories and mock boot tools, without root or package installation. Covered:
 rejection of a module whose vermagic does not match, install and restore round
 trip, rollback when dracut fails, preservation of unrelated GRUB arguments,
 active-vs-available mode detection, KDE colour save/restore round trip, and the

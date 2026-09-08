@@ -9,7 +9,7 @@
 #   mod_<id>_remove                  undo it
 #
 # Tiers:
-#   safe   fully reversible, no boot risk       (pre-selected)
+#   safe   included by the "safe" batch selector
 #   boot   touches boot config or GPU driver    (flagged, prints recovery first)
 #
 # Usage:
@@ -19,9 +19,23 @@
 #   imac-patcher --remove <id..> remove named modules
 #   imac-patcher --version       print the installed release version
 #   imac-patcher upgrade         install the newest release of this tool
+#   imac-patcher --help          show commands and module IDs
 #
 set -uo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
+
+# These are needed to locate the release and reach the full dependency gate.
+# Report them using Bash builtins, before an absent readlink/cat can turn into
+# an empty path or an "unknown" model with the original error hidden.
+bootstrap_missing=()
+for bootstrap_tool in readlink dirname cat uname; do
+    command -v "$bootstrap_tool" >/dev/null || bootstrap_missing+=("$bootstrap_tool")
+done
+if ((${#bootstrap_missing[@]})); then
+    printf 'Missing launcher tools: %s\nInstall coreutils with your distribution package manager, then re-run imac-patcher.\n' \
+        "${bootstrap_missing[*]}" >&2
+    exit 1
+fi
 
 # readlink -f, not plain dirname: a release install is reached through a
 # ~/.local/bin symlink, and the modules load their libs, patches and configs
@@ -33,7 +47,9 @@ INSTALLER_5K="${SCRIPT_DIR}/patch-imac5k-amdgpu.sh"
 LOGDIR="${HOME}/.local/state/imac-patcher"
 CACHE="${HOME}/.cache/imac-patcher"
 KREL="$(uname -r)"
-KSERIES="$(uname -r | cut -d. -f1-2)"
+# Fedora release strings contain more dots after the first two components.
+KSERIES="${KREL#*.}"
+KSERIES="${KREL%%.*}.${KSERIES%%.*}"
 SUPPORTED_5K_SERIES="7.1 7.2"
 LIMINE_DEFAULT=/etc/default/limine
 LIMINE_DROPIN_DIR=/etc/limine-entry-tool.d
@@ -46,23 +62,85 @@ SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-
 # module now only blocks sleep and cleans these leftovers up.
 NO_CSTATES_PARAM='idle=poll'
 NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
-mkdir -p "$LOGDIR" "$CACHE"
-
 MODULES=(audio eq color suspend boot 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;31m!!\033[0m %s\n' "$*"; }
 hdr()  { if ((HAVE_GUM)); then gum style --border rounded --padding "0 2" --bold "$*"; else printf '\n== %s ==\n' "$*"; fi; }
-# gum draws its prompt on stderr (which is what lets `gum choose` be piped),
-# and answers a prompt it could not draw with the same exit status as "no".
-# So it is used only when stderr is a terminal; anything else gets the plain
-# prompt, which cannot silently turn into a refusal nobody was asked for.
+# gum needs an interactive input and an output terminal. Print the plain prompt
+# explicitly: Bash's read -p silently omits it when stdin is a pipe.
 confirm(){
     local a
-    if ((HAVE_GUM)) && [[ -t 2 ]]; then gum confirm "$1"; return; fi
-    read -rp "$1 [y/N] " a; [[ $a == [yY]* ]]
+    if ((HAVE_GUM)) && [[ -t 0 && -t 2 ]]; then gum confirm "$1"; return; fi
+    printf '%s [y/N] ' "$1" >&2
+    IFS= read -r a || { printf '\nNo confirmation received.\n' >&2; return 1; }
+    [[ $a == [yY]* ]]
 }
+
+# ── command-line arguments ────────────────────────────────────────────────
+usage() {
+    cat <<'USAGE'
+Usage: imac-patcher [--force] [COMMAND]
+
+  (no command)          open the interactive menu
+  --status              show the state of every module
+  --apply <id...|safe>   apply modules, or all modules currently in the safe tier
+  --remove <id...|safe>  remove modules, or all modules currently in the safe tier
+  --version             show the installed release or checkout version
+  upgrade               install the newest release of the tool
+  -h, --help            show this help
+
+Module IDs: audio eq color suspend boot 5k
+  suspend blocks sleep; it does not repair suspend or hibernate.
+
+--force may appear anywhere. It bypasses only the Retina 5K model gate;
+individual module compatibility checks still apply. Run as your desktop user.
+Use safe on its own, or name one or more module IDs. Module prompts still apply.
+Exit status: 0 = success/skip, 1 = operation failed, 2 = invalid arguments.
+USAGE
+}
+
+module_exists() {
+    local id
+    for id in "${MODULES[@]}"; do
+        [[ $1 == "$id" ]] && return 0
+    done
+    return 1
+}
+
+parse_args() {
+    ACTION=interactive
+    FORCE=0
+    REQUESTED_MODULES=()
+    local arg command_seen=0
+    for arg in "$@"; do
+        case "$arg" in
+            --force) FORCE=1 ;;
+            -h|--help|--status|--version|--apply|--remove|upgrade)
+                (( command_seen == 0 )) || { warn "choose only one command" >&2; return 2; }
+                command_seen=1
+                ACTION=${arg#--}
+                [[ $arg == -h ]] && ACTION=help ;;
+            *)
+                if [[ $ACTION != apply && $ACTION != remove ]]; then
+                    warn "unexpected argument: $arg (try --help)" >&2; return 2
+                fi
+                if [[ $arg != safe ]] && ! module_exists "$arg"; then
+                    warn "unknown module: $arg (ids: ${MODULES[*]})" >&2; return 2
+                fi
+                REQUESTED_MODULES+=("$arg") ;;
+        esac
+    done
+    if [[ $ACTION == apply || $ACTION == remove ]]; then
+        ((${#REQUESTED_MODULES[@]})) || { warn "--${ACTION} needs module IDs or safe" >&2; return 2; }
+        if [[ " ${REQUESTED_MODULES[*]} " == *" safe "* ]] && ((${#REQUESTED_MODULES[@]} > 1)); then
+            warn "use safe on its own, without other module IDs" >&2; return 2
+        fi
+    fi
+    return 0
+}
+parse_args "$@" || exit "$?"
 
 # ── version and upgrade ───────────────────────────────────────────────────
 PROJECT_REPO=MarkPronkin/imac5k-universal-linux-patcher
@@ -114,26 +192,23 @@ imac_upgrade() {
     (( rc == 0 )) && say "patches already applied stay applied — check with: imac-patcher --status"
     return "$rc"
 }
-case "${1:-}" in
-    --version) imac_version; exit 0 ;;
+case "$ACTION" in
+    help)      usage; exit 0 ;;
+    version)   imac_version; exit 0 ;;
     upgrade)   imac_upgrade; exit ;;
 esac
 
 # ── hardware gate ──────────────────────────────────────────────────────────
 product="$(imac_product_name)"
-if ! imac_is_retina5k "$product" && [[ " $* " != *" --force "* ]]; then
+if ! imac_is_retina5k "$product" && (( ${FORCE:-0} == 0 )); then
     echo "This tool targets Retina 5K iMacs (detected: ${product}). Refusing. Use --force to override." >&2
     exit 1
 fi
 
 # ── core dependencies ──────────────────────────────────────────────────────
 #
-# Per-module dependencies stay with their module -- the 5K build wants a
-# toolchain and eight spare gigabytes, audio wants DKMS, and neither is worth
-# installing to read a status listing. What follows is only what the patcher
-# and the helper scripts it drives reach for on *every* run, checked once at
-# startup so a missing basic is a prompt here rather than a "command not
-# found" three modules deep, halfway through an install.
+# Core tools are required to run the patcher. The status display also lists
+# missing module tools; their full install/build preflights run when selected.
 #
 # "<command> <package>" pairs; the two package sets agree on these names.
 CORE_DEPS=(
@@ -141,22 +216,31 @@ CORE_DEPS=(
     "sed sed"
     "awk gawk"           # the 5K helpers parse with awk
     "find findutils"
-    "install coreutils"
-    "sudo sudo"          # every module needs root at some point
+    "sudo sudo"
 )
+# Check commands, not just one representative of the coreutils package: a
+# minimal PATH or partial installation can expose install but omit mkdir/head.
+for core_tool in readlink dirname cat uname mkdir install head tail cut sort tr \
+                 cp mv rm ln mktemp date df du nproc tee touch sync sha256sum \
+                 basename realpath seq sleep; do
+    CORE_DEPS+=("$core_tool coreutils")
+done
 
 core_deps_check() {
     local entry cmd pkg missing=() packages=()
     for entry in "${CORE_DEPS[@]}"; do
         read -r cmd pkg <<<"$entry"
         command -v "$cmd" >/dev/null && continue
-        missing+=("$cmd"); packages+=("$pkg")
+        missing+=("$cmd")
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
     done
-    ((${#missing[@]})) || return 0
+    ((${#missing[@]})) || { say "Core dependencies: ready"; return 0; }
 
     warn "missing: ${missing[*]}"
     local installer=()
-    if   command -v pacman >/dev/null; then installer=(sudo pacman -S --needed --noconfirm)
+    if imac_is_fedora; then
+        command -v dnf >/dev/null && installer=(sudo dnf install -y)
+    elif command -v pacman >/dev/null; then installer=(sudo pacman -S --needed --noconfirm)
     elif command -v dnf    >/dev/null; then installer=(sudo dnf install -y)
     fi
     # Without sudo there is no way to run the package manager either, so say so
@@ -167,13 +251,15 @@ core_deps_check() {
     fi
     say "the patcher needs these packages: ${packages[*]}"
     confirm "Install them now?" || { warn "cannot run without: ${missing[*]}"; return 1; }
-    "${installer[@]}" "${packages[@]}" || return 1
+    "${installer[@]}" "${packages[@]}" || { warn "dependency installation failed — cannot continue"; return 1; }
+    hash -r
     for cmd in "${missing[@]}"; do
         command -v "$cmd" >/dev/null || { warn "${cmd} is still missing after the install"; return 1; }
     done
-    say "dependencies installed"
+    say "Core dependencies installed and verified"
 }
 core_deps_check || exit 1
+mkdir -p "$LOGDIR" "$CACHE" || exit 1
 
 # ═══════════════════════ module: audio ═════════════════════════════════════
 AUDIO_REPO=https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
@@ -905,6 +991,10 @@ if imac_is_fedora; then source "${SCRIPT_DIR}/lib/fedora.sh"; fi
 if imac_is_kde; then source "${SCRIPT_DIR}/lib/kde.sh"; fi
 
 # ── generic driver ─────────────────────────────────────────────────────────
+# One snapshot for the status display and its following menu. Actions always
+# probe again in run_module: applying audio can change EQ's live prerequisites.
+declare -A MODULE_STATES=() MODULE_TIERS=()
+
 state_label() {
     case "$1" in
         applied)     printf '\033[1;32m✓ applied\033[0m' ;;
@@ -915,23 +1005,74 @@ state_label() {
 }
 show_status() {
     hdr "imac-patcher — ${product}, kernel ${KREL}"
-    local m st tier
+    local m st tier badge
+    MODULE_STATES=(); MODULE_TIERS=()
     for m in "${MODULES[@]}"; do
         st="$("mod_${m}_detect")"; tier="$("mod_${m}_tier")"
+        MODULE_STATES[$m]=$st; MODULE_TIERS[$m]=$tier
+        badge=''; [[ $tier == boot ]] && badge=$'\033[0;33m[boot]\033[0m'
         printf '  %-32s %-22b %s\n' "$("mod_${m}_title")" "$(state_label "$st")" \
-            "$([[ $tier == boot ]] && printf '\033[0;33m[boot]\033[0m')"
+            "$badge"
     done
     echo
     printf '  ids: %s\n' "${MODULES[*]}"
-    eq_prereq_note
+    startup_deps_note
+    eq_prereq_note "${MODULE_STATES[eq]:-n/a}"
+}
+
+startup_deps_note() {
+    # This audit must not depend on a module's successful detection: absent
+    # pactl/python3 can make detection return n/a or nothing at all.
+    local id tool reported=0 fedora=0 kde=0 tools=() missing=()
+    imac_is_fedora && fedora=1
+    imac_is_kde && kde=1
+    for id in "${MODULES[@]}"; do
+        [[ ${MODULE_STATES[$id]} == applied ]] && continue
+        tools=(); missing=()
+        case "$id" in
+            audio)
+                imac_audio_supported || continue
+                tools=(dkms modinfo lsmod wget git gcc make patch)
+                ((fedora)) && tools+=(dracut mokutil)
+                [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files") ;;
+            eq) tools=(pactl pw-cli wpctl curl systemctl) ;;
+            color)
+                if ((kde)); then tools=(python3 kscreen-doctor)
+                elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
+            suspend)
+                tools=(systemctl)
+                ((fedora)) && tools+=(grubby) ;;
+            boot)
+                ((fedora)) && continue
+                [[ -f $LIMINE_DEFAULT ]] || continue
+                tools=(objcopy limine-mkinitcpio) ;;
+            5k)
+                [[ ${MODULE_STATES[$id]} == n/a ]] && continue
+                tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod)
+                if ((fedora)); then tools+=(rpm rpmbuild koji python3 dracut grubby mokutil)
+                else tools+=(zstd cpio limine-mkinitcpio); fi
+                [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files") ;;
+        esac
+        for tool in "${tools[@]}"; do
+            command -v "$tool" >/dev/null || missing+=("$tool")
+        done
+        ((${#missing[@]})) || continue
+        printf '  %s missing dependencies: %s\n' "$id" "${missing[*]}"
+        reported=1
+    done
+    if ((reported)); then
+        printf '  Package names and setup: %s/DEPENDENCIES.md\n' "$REPO_DIR"
+        printf '  Module dependencies are checked again when applying a patch.\n'
+    fi
+    return 0
 }
 
 # The startup gate covers what every run needs. These belong to one optional
 # patch and one of them is a source build, so they are reported here rather
 # than installed at launch on machines that will never apply it; the module
 # offers to install them at the point where they are actually needed.
-eq_prereq_note() {
-    [[ $(mod_eq_detect) == applied ]] && return 0
+eq_prereq_note() {   # $1 = EQ state from the current status snapshot
+    [[ $1 == applied || $1 == n/a ]] && return 0
     local missing=()
     eq_have_lv2 lsp-plugins.lv2 || missing+=(lsp-plugins-lv2)
     eq_have_lv2 bankstown.lv2   || missing+=("bankstown(AUR)")
@@ -964,20 +1105,35 @@ run_module() {   # $1 = apply|remove, $2 = id
     fi
 }
 
-case "${1:-}" in
-    --status) show_status; exit 0 ;;
-    --apply|--remove)
-        action="${1#--}"; shift
-        [[ ${1:-} == safe ]] && { set -- ; for m in "${MODULES[@]}"; do [[ $("mod_${m}_tier") == safe ]] && set -- "$@" "$m"; done; }
-        (( $# )) || { echo "usage: $0 --${action} <id...|safe>   ids: ${MODULES[*]}" >&2; exit 2; }
-        result=0
-        for id in "$@"; do
-            [[ " ${MODULES[*]} " == *" $id "* ]] || { warn "unknown module: $id"; result=1; continue; }
-            run_module "$action" "$id" || result=1
-        done
-        exit "$result" ;;
-    --force|"") ;;
-    *) echo "usage: $0 [--status | --apply <id...|safe> | --remove <id...|safe> | --version | upgrade]"; exit 2 ;;
+run_modules() {   # $1 = apply|remove, remaining arguments = validated module IDs
+    local action=$1 id result=0
+    shift
+    for id in "$@"; do
+        run_module "$action" "$id" || result=1
+    done
+    return "$result"
+}
+
+run_safe_modules() {
+    local action=$1 m result=0
+    for m in "${MODULES[@]}"; do
+        # A tier can change with boot config, so check it immediately before
+        # the action instead of reusing the menu's snapshot.
+        [[ $("mod_${m}_tier") == safe ]] || continue
+        run_module "$action" "$m" || result=1
+    done
+    return "$result"
+}
+
+case "$ACTION" in
+    status) show_status; exit 0 ;;
+    apply|remove)
+        if [[ ${REQUESTED_MODULES[0]} == safe ]]; then
+            run_safe_modules "$ACTION"
+        else
+            run_modules "$ACTION" "${REQUESTED_MODULES[@]}"
+        fi
+        exit "$?" ;;
 esac
 
 # ── interactive ────────────────────────────────────────────────────────────
@@ -1048,7 +1204,7 @@ pick_tui() {   # arrow-key picker; keys come off the terminal so stdin stays
 }
 
 pick_plain() {   # same choices, numbered, for a pipe or a dumb terminal
-    local rows=("$@") n=$# i ans
+    local rows=("$@") n=$# i ans last=$(($# + 2))
     while :; do
         echo
         for ((i = 0; i < n; i++)); do
@@ -1059,6 +1215,10 @@ pick_plain() {   # same choices, numbered, for a pipe or a dumb terminal
         printf '  %2d) %s\n'      "$((n + 2))" "$PICK_EXIT"
         read -rp '  select: ' ans || { PICKED=(); return 1; }
         [[ $ans =~ ^[0-9]+$ ]] || continue
+        # Strip leading zeros before arithmetic (Bash otherwise reads octal),
+        # and reject oversized input before it can overflow into a valid row.
+        ans=${ans#"${ans%%[!0]*}"}
+        [[ -n $ans && ${#ans} -le ${#last} ]] || continue
         if   ((ans >= 1 && ans <= n)); then MARKED[ans - 1]=$((1 - MARKED[ans - 1]))
         elif ((ans == n + 1)); then pick_collect; return 0
         elif ((ans == n + 2)); then PICKED=(); return 1; fi
@@ -1073,41 +1233,42 @@ pick_patches() {   # $@ = rows to offer; fills PICKED with the chosen indexes
 
 show_status
 echo
+sel=''
 if ((HAVE_GUM)); then
-    sel=$(gum choose "Apply all safe patches" "Choose patches to apply" "Remove a patch" "Quit")
+    sel=$(gum choose "Apply all safe patches" "Choose patches to apply" "Remove a patch" "Quit") || exit 0
 else
     select sel in "Apply all safe patches" "Choose patches to apply" "Remove a patch" "Quit"; do break; done
 fi
 case "$sel" in
     "Apply all safe patches")
-        for m in "${MODULES[@]}"; do
-            [[ $("mod_${m}_tier") == safe ]] || continue
-            [[ $("mod_${m}_detect") == applied ]] && continue
-            run_module apply "$m"
-        done ;;
+        run_safe_modules apply
+        exit "$?" ;;
     "Choose patches to apply")
         ids=(); avail=(); for m in "${MODULES[@]}"; do
-            st=$("mod_${m}_detect"); [[ $st == applied || $st == n/a ]] && continue
+            st=${MODULE_STATES[$m]}; [[ $st == applied || $st == n/a ]] && continue
             ids+=("$m")
-            avail+=("${m} — $("mod_${m}_title")$([[ $("mod_${m}_tier") == boot ]] && echo '  [boot]')")
+            avail+=("${m} — $("mod_${m}_title")$([[ ${MODULE_TIERS[$m]} == boot ]] && echo '  [boot]')")
         done
         (( ${#avail[@]} )) || { say "everything applicable is already applied"; exit 0; }
         # The picker gathers the whole selection before anything runs, so module
         # prompts and installers keep the terminal on stdin for themselves.
         pick_patches "${avail[@]}" || exit 0
         (( ${#PICKED[@]} )) || { say "nothing selected"; exit 0; }
-        result=0
+        selected=()
         for i in "${PICKED[@]}"; do
-            run_module apply "${ids[i]}" || result=1
+            selected+=("${ids[i]}")
         done
-        exit "$result" ;;
+        run_modules apply "${selected[@]}"
+        exit "$?" ;;
     "Remove a patch")
         avail=(); for m in "${MODULES[@]}"; do
-            [[ $("mod_${m}_detect") =~ ^(applied|partial)$ ]] && avail+=("${m} — $("mod_${m}_title")")
+            [[ ${MODULE_STATES[$m]} =~ ^(applied|partial)$ ]] && avail+=("${m} — $("mod_${m}_title")")
         done
         (( ${#avail[@]} )) || { say "nothing to remove"; exit 0; }
-        if ((HAVE_GUM)); then pick=$(gum choose "${avail[@]}"); else
+        pick=''
+        if ((HAVE_GUM)); then pick=$(gum choose "${avail[@]}") || exit 0; else
             select p in "${avail[@]}"; do pick=$p; break; done; fi
-        [[ -n ${pick:-} ]] && run_module remove "${pick%% *}" ;;
+        [[ -n $pick ]] || exit 0
+        run_module remove "${pick%% *}" ;;
     *) exit 0 ;;
 esac

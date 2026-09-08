@@ -4,12 +4,12 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash
 #
-# Downloads a release tarball -- not the whole repository, which carries ~50k
-# lines of development notes the tool never reads -- verifies its checksum,
+# Downloads a release tarball without the repository's development notes or
+# tests, verifies its checksum,
 # unpacks it under ~/.local/share, and links `imac-patcher` into ~/.local/bin.
 #
-# It installs the patcher. It applies nothing: the patcher itself asks before
-# touching anything, and this script hands you back to it.
+# It installs the patcher without applying patches. Run the patcher's menu or
+# request specific changes with --apply afterwards.
 #
 # Options (also settable in the environment, for `curl ... | bash`):
 #   --version <tag>   install a specific release      IMAC5K_VERSION=v0.1.0-alpha

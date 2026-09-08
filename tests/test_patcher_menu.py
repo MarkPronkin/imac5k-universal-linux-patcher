@@ -21,15 +21,21 @@ def shell_function(source, name):
     return "\n".join(lines[start:end + 1])
 
 
+def driver():
+    source = PATCHER.read_text()
+    start = source.index("# ── generic driver")
+    return source[start:source.index('\ncase "$ACTION" in', start)]
+
+
 class MenuTests(unittest.TestCase):
-    def run_menu(self, answer, picks="1\n2\n"):
+    def run_menu(self, answer, picks="1\n2\n", choice="2\n", extra=""):
         source = PATCHER.read_text()
         confirm = shell_function(source, "confirm")
         interactive = source[source.index("# ── interactive"):]
         mocks = self.mocks()
         return subprocess.run(
-            ["bash", "-c", mocks + confirm + "\n" + interactive],
-            input="2\n" + picks + answer, text=True, capture_output=True, timeout=5,
+            ["bash", "-c", driver() + mocks + confirm + "\n" + extra + "\n" + interactive],
+            input=choice + picks + answer, text=True, capture_output=True, timeout=5,
         )
 
     @staticmethod
@@ -38,9 +44,12 @@ class MenuTests(unittest.TestCase):
 set -uo pipefail
 HAVE_GUM=0
 MODULES=(5k)
-show_status() { :; }
+product=iMac18,3
+KREL=test
+hdr() { :; }
+startup_deps_note() { :; }
 say() { printf '%s\n' "$*"; }
-mod_5k_detect() { echo not-applied; }
+mod_5k_detect() { echo PROBE_5K >&2; echo not-applied; }
 mod_5k_title() { echo 'Native 5K display'; }
 mod_5k_tier() { echo boot; }
 run_module() {
@@ -80,9 +89,13 @@ run_module() {
             stdin=slave, stdout=slave, stderr=subprocess.PIPE, text=True,
             preexec_fn=become_session_leader)
         os.close(slave)
-        errors = proc.stderr.read()
-        proc.wait(timeout=10)
-        os.close(master)
+        try:
+            _, errors = proc.communicate(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+            os.close(master)
         self.assertEqual(proc.returncode, 0, "the shell had no controlling terminal")
         self.assertIn("MARKER", errors)
 
@@ -115,6 +128,49 @@ run_module() {
 
     def test_marking_twice_clears_the_selection(self):
         result = self.run_menu("", picks="1\n1\n2\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing selected", result.stdout)
+        self.assertNotIn("BUILD_STARTED", result.stdout)
+
+    def test_picker_reuses_status_probes(self):
+        result = self.run_menu("", picks="3\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count("PROBE_5K"), 1)
+
+    def test_remove_menu_reuses_status_probes(self):
+        result = self.run_menu("", choice="3\n", picks="", extra='''
+mod_5k_detect() { echo PROBE_5K >&2; echo applied; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count("PROBE_5K"), 1)
+
+    def test_safe_batch_retains_failure_after_a_later_success(self):
+        result = self.run_menu("", choice="1\n", picks="", extra='''
+MODULES=(audio color 5k)
+mod_audio_title() { echo Audio; }
+mod_audio_tier() { echo safe; }
+mod_audio_detect() { echo not-applied; }
+mod_color_title() { echo Color; }
+mod_color_tier() { echo safe; }
+mod_color_detect() { echo not-applied; }
+run_module() { echo "RUN $*"; [[ $2 != audio ]]; }
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("RUN apply audio\nRUN apply color", result.stdout)
+        self.assertNotIn("RUN apply 5k", result.stdout)
+
+    def test_eof_exits_without_an_unbound_variable(self):
+        result = self.run_menu("", choice="", picks="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unbound variable", result.stderr)
+
+    def test_plain_picker_accepts_leading_zeros(self):
+        result = self.run_menu("y\ninstaller-input\n", picks="0001\n0002\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("INSTALLER_INPUT_OK", result.stdout)
+
+    def test_plain_picker_ignores_numbers_that_would_overflow(self):
+        result = self.run_menu("", picks="18446744073709551617\n2\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("nothing selected", result.stdout)
         self.assertNotIn("BUILD_STARTED", result.stdout)
