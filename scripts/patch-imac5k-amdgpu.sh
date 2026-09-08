@@ -27,7 +27,7 @@
 set -euo pipefail
 
 PATCH_KVER_SUPPORTED="7.1 7.2"   # kernel series this patch is verified to apply to
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 source "${SCRIPT_DIR}/lib/platform.sh"
 if imac_is_fedora; then
     exec "${SCRIPT_DIR}/fedora-imac5k" "$@"

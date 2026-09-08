@@ -3,7 +3,7 @@
 # Build as the desktop user; only --install and --restore need root.
 set -Eeuo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 source "${SCRIPT_DIR}/lib/platform.sh"
 KREL=$(uname -r)
 KSERIES=$(cut -d. -f1-2 <<< "$KREL")
