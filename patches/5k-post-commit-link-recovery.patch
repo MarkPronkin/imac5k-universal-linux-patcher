@@ -22,7 +22,10 @@ installed.
 Validated on hardware 2026-09-08 (first boot off this build came up at a
 correct 5120x2880 with no VT or DPMS cycle) and promoted to the default
 install stacks. The going-down hunk anchors only on context the verbose
-stack and the lean pair share, so it applies on top of either.
+stack and the lean pair share, so it applies on top of either. Tile
+identification uses the stitch layer's amdgpu_dm_link_is_tiled_stitch_*
+helpers rather than a panel-patch helper, whose name differs between the
+two stacks.
 
 Every line of the sequence carries one tag, so a single
 `journalctl -k -b 0 | grep 'APPLE5K: link-health'` reads the whole story of a
@@ -153,7 +156,7 @@ the arming line.
 +			continue;
 +		if (amdgpu_dm_link_is_tiled_stitch_root(link))
 +			root = link;
-+		else if (dc_link_has_tiled_slave_panel_patch(link))
++		else if (amdgpu_dm_link_is_tiled_stitch_slave(link))
 +			slave = link;
 +	}
 +	if (!root || !slave || root->tiled_peer != slave || slave->tiled_peer != root) {
