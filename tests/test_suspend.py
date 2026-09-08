@@ -1,4 +1,4 @@
-"""Suspend module: sleep without C-states, hibernation masked off.
+"""Suspend module: all four sleep targets masked, retired idle=poll cleaned up.
 
 The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers; the
 Fedora override with a stubbed grubby. Nothing touches the host.
@@ -14,7 +14,12 @@ PATCHER = (ROOT / "scripts/imac-patcher").read_text()
 FEDORA = (ROOT / "scripts/lib/fedora.sh").read_text()
 
 CONSTS = "\n".join(line for line in PATCHER.splitlines()
-                   if re.match(r"^(SLEEP_TARGETS|HIBERNATE_TARGETS|NO_CSTATES_PARAM)=", line))
+                   if re.match(r"^(SLEEP_TARGETS|NO_CSTATES_PARAM)=", line))
+
+MASK_ALL = ("SYSTEMCTL mask suspend.target hibernate.target"
+            " hybrid-sleep.target suspend-then-hibernate.target")
+UNMASK_ALL = ("SYSTEMCTL unmask suspend.target hibernate.target"
+              " hybrid-sleep.target suspend-then-hibernate.target")
 
 
 def omarchy_module():
@@ -24,7 +29,7 @@ def omarchy_module():
 
 
 def fedora_module():
-    start = FEDORA.index("mod_suspend_desc()")
+    start = FEDORA.index("mod_suspend_tier()")
     end = FEDORA.index("mod_audio_apply()", start)
     return FEDORA[start:end]
 
@@ -34,8 +39,11 @@ set -uo pipefail
 say() { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*"; }
 systemctl() { printf 'SYSTEMCTL %s\n' "$*"; }
-boot_config_has() { return "${BOOT_CONF_HAS:-1}"; }
-grep() { return "${LIVE_HAS_PARAM:-1}"; }
+# Mirror the real helper: the parameter can sit in either file.
+boot_config_has() { grep -qs -- "$1" "$LIMINE_DEFAULT" "$LIMINE_DROPIN_DIR"/*.conf; }
+sync_boot_files() { printf 'SYNC_BOOT\n'; }
+verify_cmdline() { printf 'VERIFY present=%s absent=%s\n' "${1:-}" "${2:-}"; }
+sudo() { "$@"; }
 '''
 
 
@@ -46,6 +54,8 @@ class OmarchySuspendTests(unittest.TestCase):
 LIMINE_DEFAULT={tmp}/limine-default
 LIMINE_DROPIN_DIR={tmp}/dropins
 NO_CSTATES_DROPIN={tmp}/dropins/imac5k-no-cstates.conf
+mkdir -p "$LIMINE_DROPIN_DIR"
+touch "$LIMINE_DEFAULT"
 {env}
 ''' + omarchy_module()
         result = subprocess.run(["bash", "-c", prelude + code],
@@ -53,7 +63,32 @@ NO_CSTATES_DROPIN={tmp}/dropins/imac5k-no-cstates.conf
         result.tmp = tmp
         return result
 
-    def test_applied_state_detects_applied(self):
+    def test_all_masked_detects_applied(self):
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='systemctl() { echo masked; }\n')
+        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+
+    def test_stale_idle_poll_dropin_detects_partial(self):
+        # All four targets masked, but the retired drop-in is still there.
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() { echo masked; }
+printf 'KERNEL_CMDLINE[default]+=" idle=poll"\n' > "$NO_CSTATES_DROPIN"
+''')
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_stale_idle_poll_in_limine_default_detects_partial(self):
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() { echo masked; }
+printf 'KERNEL_CMDLINE[default]="quiet idle=poll"\n' > "$LIMINE_DEFAULT"
+''')
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_some_masked_detects_partial(self):
         result = self.run_module(
             "mod_suspend_detect",
             env='''
@@ -63,16 +98,7 @@ systemctl() {
         *) echo masked ;;
     esac
 }
-boot_config_has() { return 0; }
-grep() { return 0; }
 ''')
-        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
-
-    def test_old_block_everything_state_detects_partial(self):
-        # All four targets masked, no kernel parameter: the pre-change behaviour.
-        result = self.run_module(
-            "mod_suspend_detect",
-            env='systemctl() { echo masked; }\n')
         self.assertEqual(result.stdout.strip(), "partial", result.stderr)
 
     def test_untouched_system_detects_not_applied(self):
@@ -81,80 +107,121 @@ grep() { return 0; }
             env='systemctl() { echo static; }\n')
         self.assertEqual(result.stdout.strip(), "not-applied", result.stderr)
 
-    def test_applied_but_not_yet_rebooted_detects_partial(self):
-        result = self.run_module(
-            "mod_suspend_detect",
-            env='''
-systemctl() {
-    case "$2" in
-        suspend.target) echo static ;;
-        *) echo masked ;;
-    esac
-}
-boot_config_has() { return 0; }
-grep() { return 1; }
-''')
-        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+    def test_apply_masks_all_four(self):
+        result = self.run_module("mod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(MASK_ALL, result.stdout)
+        # No stale idle=poll: boot config stays untouched.
+        self.assertNotIn("SYNC_BOOT", result.stdout)
 
-    def test_apply_masks_only_hibernation_and_adds_idle_poll(self):
+    def test_apply_cleans_stale_dropin_and_rebuilds(self):
         result = self.run_module('''
-sudo() { "$@"; }
-sync_boot_files() { return 0; }
-verify_cmdline() { return 0; }
+printf 'KERNEL_CMDLINE[default]+=" idle=poll"\n' > "$NO_CSTATES_DROPIN"
 mod_suspend_apply
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SYSTEMCTL mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target",
-                      result.stdout)
-        self.assertIn("SYSTEMCTL unmask suspend.target", result.stdout)
-        # The mask line must name exactly the three hibernation targets.
-        self.assertNotIn("suspend.target hibernate", result.stdout)
-        dropin = Path(result.tmp) / "dropins/imac5k-no-cstates.conf"
-        self.assertIn('KERNEL_CMDLINE[default]+=" idle=poll"', dropin.read_text())
+        self.assertIn(MASK_ALL, result.stdout)
+        self.assertFalse((Path(result.tmp) / "dropins/imac5k-no-cstates.conf").exists())
+        self.assertIn("SYNC_BOOT", result.stdout)
+        self.assertIn("VERIFY present= absent=idle=poll", result.stdout)
 
-    def test_remove_unmasks_everything_and_drops_idle_poll(self):
+    def test_apply_strips_idle_poll_from_limine_default(self):
         result = self.run_module('''
-sudo() { "$@"; }
-sync_boot_files() { return 0; }
-verify_cmdline() { [[ -z $1 && $2 == idle=poll ]]; }
-mkdir -p "$LIMINE_DROPIN_DIR"
+printf 'KERNEL_CMDLINE[default]="quiet idle=poll"\n' > "$LIMINE_DEFAULT"
+mod_suspend_apply
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        default = (Path(result.tmp) / "limine-default").read_text()
+        self.assertNotIn("idle=poll", default)
+        self.assertTrue(list(Path(result.tmp).glob("limine-default.backup-cstates-*")))
+        self.assertIn("SYNC_BOOT", result.stdout)
+
+    def test_remove_unmasks_all_four_and_cleans_stale_dropin(self):
+        result = self.run_module('''
 printf 'KERNEL_CMDLINE[default]+=" idle=poll"\n' > "$NO_CSTATES_DROPIN"
-touch "$LIMINE_DEFAULT"
 mod_suspend_remove
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SYSTEMCTL unmask suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target",
-                      result.stdout)
+        self.assertIn(UNMASK_ALL, result.stdout)
         self.assertFalse((Path(result.tmp) / "dropins/imac5k-no-cstates.conf").exists())
+        self.assertIn("SYNC_BOOT", result.stdout)
+
+    def test_remove_without_stale_config_touches_no_boot_files(self):
+        result = self.run_module("mod_suspend_remove")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(UNMASK_ALL, result.stdout)
+        self.assertNotIn("SYNC_BOOT", result.stdout)
+
+    def test_tier_safe_on_clean_system(self):
+        result = self.run_module("mod_suspend_tier")
+        self.assertEqual(result.stdout.strip(), "safe", result.stderr)
+
+    def test_tier_boot_while_stale_dropin_remains(self):
+        result = self.run_module(
+            "mod_suspend_tier",
+            env='printf \'KERNEL_CMDLINE[default]+=" idle=poll"\n\' > "$NO_CSTATES_DROPIN"\n')
+        self.assertEqual(result.stdout.strip(), "boot", result.stderr)
+
+    def test_tier_boot_while_stale_limine_default_remains(self):
+        result = self.run_module(
+            "mod_suspend_tier",
+            env='printf \'KERNEL_CMDLINE[default]="quiet idle=poll"\n\' > "$LIMINE_DEFAULT"\n')
+        self.assertEqual(result.stdout.strip(), "boot", result.stderr)
 
 
 class FedoraSuspendTests(unittest.TestCase):
-    def run_module(self, code):
-        prelude = STUBS + CONSTS + '''
+    def run_module(self, code, grubby_has_arg=False):
+        arg_line = 'echo \'args="idle=poll"\'' if grubby_has_arg else ':'
+        prelude = STUBS + CONSTS + f'''
 KREL=7.2.2-test
-fedora_mutable() { return 0; }
-sudo() { "$@"; }
-grubby() { printf 'GRUBBY %s\n' "$*"; }
+fedora_mutable() {{ return 0; }}
+unset -f boot_config_has sync_boot_files verify_cmdline
+grubby() {{
+    if [[ $1 == --info ]]; then {arg_line}; else printf 'GRUBBY %s\n' "$*"; fi
+}}
 ''' + fedora_module()
         return subprocess.run(["bash", "-c", prelude + code],
                               text=True, capture_output=True, timeout=10)
 
-    def test_apply_adds_idle_poll_and_keeps_suspend_unmasked(self):
+    def test_all_masked_detects_applied(self):
+        result = self.run_module(
+            "systemctl() { echo masked; }; mod_suspend_detect")
+        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+
+    def test_stale_idle_poll_arg_detects_partial(self):
+        result = self.run_module(
+            "systemctl() { echo masked; }; mod_suspend_detect",
+            grubby_has_arg=True)
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_apply_masks_all_four_without_stale_arg(self):
         result = self.run_module("mod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SYSTEMCTL mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target",
-                      result.stdout)
-        self.assertIn("SYSTEMCTL unmask suspend.target", result.stdout)
-        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --args idle=poll",
-                      result.stdout)
+        self.assertIn(MASK_ALL, result.stdout)
+        self.assertNotIn("--update-kernel", result.stdout)
 
-    def test_remove_restores_everything(self):
-        result = self.run_module("mod_suspend_remove")
+    def test_apply_removes_stale_idle_poll_arg(self):
+        result = self.run_module("mod_suspend_apply", grubby_has_arg=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SYSTEMCTL unmask suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target",
-                      result.stdout)
+        self.assertIn(MASK_ALL, result.stdout)
         self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --remove-args idle=poll",
                       result.stdout)
+        self.assertNotIn("--args idle=poll", result.stdout)
+
+    def test_remove_unmasks_all_four_and_removes_stale_arg(self):
+        result = self.run_module("mod_suspend_remove", grubby_has_arg=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(UNMASK_ALL, result.stdout)
+        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --remove-args idle=poll",
+                      result.stdout)
+
+    def test_tier_safe_on_clean_system(self):
+        result = self.run_module("mod_suspend_tier")
+        self.assertEqual(result.stdout.strip(), "safe", result.stderr)
+
+    def test_tier_boot_while_stale_grub_arg_remains(self):
+        result = self.run_module("mod_suspend_tier", grubby_has_arg=True)
+        self.assertEqual(result.stdout.strip(), "boot", result.stderr)
 
 
 if __name__ == "__main__":

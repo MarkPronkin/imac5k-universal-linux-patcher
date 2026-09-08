@@ -231,12 +231,11 @@ touched. KScreen has to be reachable from the current Plasma Wayland session.
 No Hyprland config is written and no live KWin configuration file is
 overwritten.
 
-**Sleep** follows the same policy as the upstream project: suspend works with
-the CPUs kept out of idle C-states, so grubby adds `idle=poll` to the current
-kernel's GRUB entry, while the hibernation targets
-(`hibernate.target hybrid-sleep.target suspend-then-hibernate.target`) stay
-masked — hibernation is not rescued by this. Reboot to pick up the kernel
-argument. `--remove suspend` lifts the masks and removes the argument.
+**Sleep** uses the same systemd target masks as the upstream project. If you
+want KDE's Power Management UI to reflect the change, disable automatic sleep
+there as well. If the retired `idle=poll` variant left the argument on the
+current kernel's GRUB entry, applying or removing the module strips it with
+grubby. `--remove suspend` lifts the masks.
 
 ---
 

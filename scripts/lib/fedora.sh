@@ -20,35 +20,40 @@ fedora_deps() {
 mod_boot_detect() { echo n/a; }
 mod_boot_apply() { warn "Limine boot repair does not apply to Fedora GRUB."; return 1; }
 mod_boot_remove() { mod_boot_apply; }
-# Same policy as the Omarchy suspend module — sleep runs with the CPUs out of
-# idle C-states, hibernation stays masked off — but the kernel argument goes
-# through grubby and the current kernel's BLS entry instead of a Limine drop-in.
-mod_suspend_desc()  { echo "Suspend hard-hangs this machine once the CPUs enter idle C-states, but works with them off (verified on iMac18,3). Adds idle=poll to this kernel's GRUB entry — sleep then works, at higher idle power use. Hibernation is not rescued by this, so it stays masked off. Leave this off if sleep works on your model."; }
+# Same policy as the Omarchy suspend module — every sleep target masked off —
+# plus migration for the retired idle=poll variant: grubby strips the argument
+# from the current kernel's BLS entry.
+mod_suspend_tier() {
+    # Boot tier only while the retired argument is on the GRUB entry.
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && echo boot || echo safe
+}
+mod_suspend_desc()  { echo "Suspend and hibernate hard-hang this machine, every time — recovery is a hard power-cycle, and idle=poll does not rescue it. Masks all four sleep targets so nothing triggers them. Also removes the retired idle=poll argument from this kernel's GRUB entry if present. Leave this off if sleep works on your model."; }
 mod_suspend_detect() {
     local masked=0
-    for t in "${HIBERNATE_TARGETS[@]}"; do
+    for t in "${SLEEP_TARGETS[@]}"; do
         [[ "$(systemctl is-enabled "$t" 2>/dev/null)" == masked ]] && (( masked++ ))
     done
-    local suspend_off=0 conf=0 live=0
-    [[ "$(systemctl is-enabled suspend.target 2>/dev/null)" == masked ]] && suspend_off=1
-    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && conf=1
-    grep -q "$NO_CSTATES_PARAM" /proc/cmdline 2>/dev/null && live=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_off && conf && live )); then echo applied
-    elif (( masked || suspend_off || conf || live )); then echo partial
+    local stale=0
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && stale=1
+    if (( masked == ${#SLEEP_TARGETS[@]} && ! stale )); then echo applied
+    elif (( masked || stale )); then echo partial
     else echo not-applied; fi
+}
+fedora_suspend_drop_no_cstates() {
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" || return 0
+    sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$NO_CSTATES_PARAM" || return 1
+    say "removed stale ${NO_CSTATES_PARAM} from the GRUB entry"
 }
 mod_suspend_apply() {
     fedora_mutable || return 1
-    sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
-    sudo systemctl unmask suspend.target || return 1
-    sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --args "$NO_CSTATES_PARAM" || return 1
-    say "reboot to activate — suspend then works; hibernation stays disabled"
+    sudo systemctl mask "${SLEEP_TARGETS[@]}" || return 1
+    fedora_suspend_drop_no_cstates
 }
 mod_suspend_remove() {
     fedora_mutable || return 1
     sudo systemctl unmask "${SLEEP_TARGETS[@]}"
-    sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$NO_CSTATES_PARAM"
-    say "sleep and hibernation re-enabled; reboot to restore idle C-states"
+    fedora_suspend_drop_no_cstates
+    say "sleep re-enabled"
 }
 mod_audio_apply() {
     fedora_mutable || return 1

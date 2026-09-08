@@ -34,9 +34,9 @@ Read both tables together: a patch needs a compatible model **and** distribution
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns are the patcher's six modules; the suspend module repairs sleep by keeping the CPUs out of idle C-states, and disables hibernation.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns are the patcher's six modules; the suspend module **disables sleep**, rather than repairing it.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Sleep fix (`suspend`) | Boot repair (`boot`) |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|---|---|
 | iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
 | iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
@@ -47,19 +47,19 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout, and the sleep fix needs a supported boot backend (Limine on Omarchy, GRUB/grubby on Fedora). Leave the sleep fix unselected if suspend works on your model.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Leave block-sleep unselected if suspend works on your model.
 
 ### 🐧 Distributions
 
 Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Sleep fix (`suspend`) | Boot repair (`boot`) |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
-| **Arch Linux** | Conditional: Omarchy/Limine setup | Untested: pacman backend | Untested: PipeWire + plugins | Conditional: KDE or Omarchy Hyprland config | Conditional: Omarchy/Limine layout | Conditional: Omarchy/Limine layout |
+| **Arch Linux** | Conditional: Omarchy/Limine setup | Untested: pacman backend | Untested: PipeWire + plugins | Conditional: KDE or Omarchy Hyprland config | Untested: systemd | Conditional: Omarchy/Limine layout |
 | **Omarchy** | **Verified** | **Verified** | **Verified** | **Verified: Hyprland** | **Verified workaround** | **Verified** |
-| **Fedora** | **Build-tested: GRUB/dracut** | Untested: DNF/DKMS backend | Conditional: Bankstown built manually | Untested: KDE Wayland | Untested: systemd + grubby | N/A: GRUB backend |
-| **Debian** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Unsupported: no boot backend | Unsupported |
-| **Ubuntu** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Unsupported: no boot backend | Unsupported |
+| **Fedora** | **Build-tested: GRUB/dracut** | Untested: DNF/DKMS backend | Conditional: Bankstown built manually | Untested: KDE Wayland | Untested: systemd | N/A: GRUB backend |
+| **Debian** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
+| **Ubuntu** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
 
 Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
@@ -75,7 +75,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
-| 😴 **Suspend** | Hard-hangs the machine once the CPUs enter idle C-states (Apple firmware ACPI issue). | ⚠️ Sleeps with C-states off; hibernate stays masked — see below |
+| 😴 **Suspend** | Hard-hangs the machine every time (Apple firmware ACPI issue). | ⚠️ Masked off — see below |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -157,17 +157,15 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm =
 
 ## 😴 Suspend — read this before you try it
 
-Suspend **hard-hangs this machine once the CPUs enter idle C-states**. This is an Apple firmware ACPI issue; the display override and GPU power states were each ruled out by testing, and recovery from a hang is a hard power-cycle. Keeping the CPUs out of idle C-states avoids the hang — sleep then works (verified on iMac18,3).
+Suspend and hibernate **hard-hang this machine, every time**. This is an Apple firmware ACPI issue, not something a kernel parameter fixes; sleep mode, the display override, GPU power states and `idle=poll` were each ruled out by testing. Recovery is a hard power-cycle.
 
-The patcher adds `idle=poll` to the kernel command line and rebuilds the boot image, so suspend no longer enters C-states. Hibernation is **not** rescued by this and stays masked off:
+The patcher masks the sleep targets so nothing triggers them by accident:
 
 ```bash
-sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
-# plus: KERNEL_CMDLINE[default]+=" idle=poll" in /etc/limine-entry-tool.d/imac5k-no-cstates.conf
-# (Fedora: grubby adds idle=poll to the kernel's GRUB entry instead)
+sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ```
 
-`idle=poll` raises idle power use — that is the price of sleep on this machine. `--remove suspend` restores the stock command line and unmasks every sleep target.
+An earlier release tried `idle=poll` instead; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
 ---
 
