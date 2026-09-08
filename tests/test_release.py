@@ -19,14 +19,33 @@ INSTALL = REPO / "install.sh"
 MAKE_RELEASE = REPO / "scripts/make-release.sh"
 VERSION = "9.9.9-test"
 
+# Test the working tree, not the last commit: `git stash create` snapshots
+# tracked changes into a dangling commit without touching the index or the
+# working tree, and make-release.sh can archive that like any other ref. It is
+# computed once, so the reproducibility test builds the same ref twice. A file
+# that is new *and* untracked is not in a stash commit -- git add it.
+def worktree_ref():
+    ref = subprocess.run(["git", "stash", "create"], cwd=REPO, check=True,
+                         text=True, capture_output=True).stdout.strip()
+    return ref or "HEAD"
 
-def build_release(dist, ref=None):
-    subprocess.run([MAKE_RELEASE, VERSION, *([ref] if ref else [])],
+
+REF = None
+
+
+def build_release(dist, ref=None, version=VERSION):
+    global REF
+    if REF is None:
+        REF = worktree_ref()
+    subprocess.run([MAKE_RELEASE, version, ref or REF],
                    cwd=REPO, check=True, capture_output=True)
     built = REPO / "dist"
     dist.mkdir(parents=True, exist_ok=True)
-    for name in (f"imac5k-patcher-{VERSION}.tar.gz", "SHA256SUMS"):
-        (dist / name).write_bytes((built / name).read_bytes())
+    (dist / f"imac5k-patcher-{version}.tar.gz").write_bytes(
+        (built / f"imac5k-patcher-{version}.tar.gz").read_bytes())
+    # One SHA256SUMS covers every release the fake server offers.
+    with (dist / "SHA256SUMS").open("a") as sums:
+        sums.write((built / "SHA256SUMS").read_text())
 
 
 class ReleaseTests(unittest.TestCase):
@@ -50,14 +69,26 @@ class ReleaseTests(unittest.TestCase):
         self.share = self.home / ".local/share"
         self.bin = self.home / ".local/bin"
 
-    def install(self, *args):
-        env = {
+    def env(self):
+        url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        return {
             "PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
             "XDG_DATA_HOME": str(self.share),
-            "IMAC5K_BASE_URL": "http://127.0.0.1:%d" % self.server.server_address[1],
+            "IMAC5K_BASE_URL": url, "IMAC5K_API_URL": f"{url}/releases",
         }
+
+    def install(self, *args):
         return subprocess.run(["bash", str(INSTALL), "--version", VERSION, *args],
-                              env=env, text=True, capture_output=True, timeout=120)
+                              env=self.env(), text=True, capture_output=True, timeout=120)
+
+    def publish(self, version):
+        """Offer `version` from the fake server, as the newest release."""
+        build_release(self.dist, version=version)
+        (self.dist / "releases").write_text('[{"tag_name": "v%s"}]' % version)
+
+    def upgrade(self):
+        return subprocess.run([str(self.bin / "imac-patcher"), "upgrade"],
+                              env=self.env(), text=True, capture_output=True, timeout=120)
 
     def test_tarball_holds_the_runtime_tree_and_no_dev_state(self):
         with tarfile.open(self.dist / f"imac5k-patcher-{VERSION}.tar.gz") as tar:
@@ -84,7 +115,9 @@ class ReleaseTests(unittest.TestCase):
                         cwd=REPO, capture_output=True)
         from_tag, from_commit = self.tmp / "tag", self.tmp / "commit"
         build_release(from_tag, tag)
-        build_release(from_commit, "HEAD")
+        build_release(from_commit, subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, check=True,
+            text=True, capture_output=True).stdout.strip())
         name = f"imac5k-patcher-{VERSION}.tar.gz"
         self.assertEqual((from_tag / name).read_bytes(), (from_commit / name).read_bytes())
 
@@ -98,6 +131,35 @@ class ReleaseTests(unittest.TestCase):
         version = subprocess.run([str(launcher), "--version"], text=True,
                                  capture_output=True, timeout=30)
         self.assertEqual(version.stdout.strip(), VERSION, version.stderr)
+
+    def test_upgrade_installs_a_newer_release_over_the_running_one(self):
+        self.install()
+        newer = "9.9.10-test"
+        self.publish(newer)
+        result = self.upgrade()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn(f"{VERSION} \u2192 {newer}", result.stdout)
+        # The launcher must now reach the new version -- the installer replaced
+        # the very tree the upgrading script was reading itself from.
+        version = subprocess.run([str(self.bin / "imac-patcher"), "--version"],
+                                 env=self.env(), text=True, capture_output=True, timeout=30)
+        self.assertEqual(version.stdout.strip(), newer, version.stderr)
+
+    def test_upgrade_on_the_newest_release_changes_nothing(self):
+        self.install()
+        self.publish(VERSION)
+        before = (self.share / f"imac5k-patcher/versions/{VERSION}").stat().st_mtime
+        result = self.upgrade()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already on the newest release", result.stdout)
+        self.assertEqual((self.share / f"imac5k-patcher/versions/{VERSION}").stat().st_mtime, before)
+
+    def test_upgrade_refuses_to_touch_a_git_checkout(self):
+        result = subprocess.run([str(REPO / "scripts/imac-patcher"), "upgrade"],
+                                env=self.env(), text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("git checkout", result.stdout)
+        self.assertIn("git -C", result.stdout)
 
     def test_a_tampered_tarball_is_refused(self):
         sums = self.dist / "SHA256SUMS"

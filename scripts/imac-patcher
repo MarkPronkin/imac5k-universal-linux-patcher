@@ -18,6 +18,7 @@
 #   imac-patcher --apply  <id..> apply named modules (or "safe" for all safe ones)
 #   imac-patcher --remove <id..> remove named modules
 #   imac-patcher --version       print the installed release version
+#   imac-patcher upgrade         install the newest release of this tool
 #
 set -uo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
@@ -52,14 +53,60 @@ warn() { printf '\033[1;31m!!\033[0m %s\n' "$*"; }
 hdr()  { if ((HAVE_GUM)); then gum style --border rounded --padding "0 2" --bold "$*"; else printf '\n== %s ==\n' "$*"; fi; }
 confirm(){ if ((HAVE_GUM)); then gum confirm "$1"; else read -rp "$1 [y/N] " a; [[ $a == [yY]* ]]; fi; }
 
-# ── version ───────────────────────────────────────────────────────────────
+# ── version and upgrade ───────────────────────────────────────────────────
+PROJECT_REPO=MarkPronkin/imac5k-universal-linux-patcher
+RELEASES_API="${IMAC5K_API_URL:-https://api.github.com/repos/${PROJECT_REPO}/releases}"
+
 # A release tarball carries a VERSION file; a git checkout does not, so fall
 # back to describing the checkout.
 imac_version() {
     if [[ -r "${REPO_DIR}/VERSION" ]]; then cat "${REPO_DIR}/VERSION"
     else git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || echo unknown; fi
 }
-[[ ${1:-} == --version ]] && { imac_version; exit 0; }
+imac_latest_release() {
+    # Newest release including pre-releases, which /releases/latest hides.
+    curl -fsSL -H 'Accept: application/vnd.github+json' "${RELEASES_API}?per_page=1" \
+        | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+}
+imac_upgrade() {
+    # Upgrading means replacing the tree this script is running from, which only
+    # makes sense for a release install; a checkout is upgraded by git.
+    if [[ ! -r "${REPO_DIR}/VERSION" ]]; then
+        warn "this is a git checkout, not a release install"
+        say  "upgrade it with:  git -C ${REPO_DIR} pull"
+        return 1
+    fi
+    command -v curl >/dev/null || { warn "curl is needed to check for a new release"; return 1; }
+    local current latest installer
+    current="$(imac_version)"
+    say "installed ${current} — checking for a newer release"
+    latest="$(imac_latest_release)"
+    [[ -n $latest ]] || { warn "could not reach ${RELEASES_API} — try again later"; return 1; }
+    if [[ ${latest#v} == "$current" ]]; then
+        say "already on the newest release (${current})"
+        return 0
+    fi
+    say "upgrading ${current} → ${latest#v}"
+    # Run the installer from a copy: it replaces the directory this script and
+    # that installer both live in. The tarball it fetches carries the installer
+    # for the next upgrade, so each release bootstraps the one after it.
+    installer="$(mktemp)" || return 1
+    if [[ -r "${REPO_DIR}/install.sh" ]]; then
+        cat "${REPO_DIR}/install.sh" > "$installer"
+    else
+        curl -fsSL "https://raw.githubusercontent.com/${PROJECT_REPO}/main/install.sh" -o "$installer" \
+            || { warn "could not download the installer"; rm -f "$installer"; return 1; }
+    fi
+    bash "$installer" --version "$latest"; local rc=$?
+    rm -f "$installer"
+    (( rc == 0 )) && say "patches already applied stay applied — check with: imac-patcher --status"
+    return "$rc"
+}
+case "${1:-}" in
+    --version) imac_version; exit 0 ;;
+    upgrade)   imac_upgrade; exit ;;
+esac
 
 # ── hardware gate ──────────────────────────────────────────────────────────
 product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo unknown)"
@@ -522,7 +569,7 @@ case "${1:-}" in
         done
         exit "$result" ;;
     --force|"") ;;
-    *) echo "usage: $0 [--status | --apply <id...|safe> | --remove <id...|safe> | --version]"; exit 2 ;;
+    *) echo "usage: $0 [--status | --apply <id...|safe> | --remove <id...|safe> | --version | upgrade]"; exit 2 ;;
 esac
 
 # ── interactive ────────────────────────────────────────────────────────────

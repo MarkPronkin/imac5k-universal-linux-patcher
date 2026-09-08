@@ -17,8 +17,8 @@
 #   --no-verify       skip the checksum check         IMAC5K_NO_VERIFY=1
 #   --uninstall       remove an installed copy
 #
-# IMAC5K_BASE_URL overrides where the assets are fetched from, for a mirror or
-# for a local dry run.
+# IMAC5K_BASE_URL overrides where the assets are fetched from, and
+# IMAC5K_API_URL where releases are listed, for a mirror or a local dry run.
 #
 set -euo pipefail
 
@@ -67,7 +67,7 @@ install.sh -- install the iMac18,3 patcher from a published release.
   --no-verify       skip the checksum check      (env IMAC5K_NO_VERIFY)
   --uninstall       remove an installed copy
 
-IMAC5K_BASE_URL fetches the assets from a mirror instead of the release page.
+IMAC5K_BASE_URL and IMAC5K_API_URL point at a mirror instead of GitHub.
 Installs the patcher only; it applies nothing on its own.
 USAGE
 }
@@ -97,7 +97,7 @@ resolve_version() {
         # Newest release including pre-releases; /releases/latest hides those,
         # and every 0.x tag here is one.
         json="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
-                "https://api.github.com/repos/${REPO}/releases?per_page=1")" \
+                "${IMAC5K_API_URL:-https://api.github.com/repos/${REPO}/releases}?per_page=1")" \
             || die "could not reach the GitHub API -- pass --version <tag> to install a known release"
         VERSION="$(printf '%s' "$json" \
                    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \

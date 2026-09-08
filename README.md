@@ -140,12 +140,15 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 
 ## 📦 Updating and removing the tool
 
-Re-running the install command pulls the newest release; the previous two are kept under `~/.local/share/imac5k-patcher/versions/`, so a rollback is one symlink:
+The tool updates itself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash
-imac-patcher --version
+imac-patcher upgrade
 ```
+
+It checks for a newer release, installs it if there is one, and says so if there isn't. The previous two versions stay under `~/.local/share/imac5k-patcher/versions/`, so a rollback is one symlink. Re-running the install command does the same thing. (A git checkout is upgraded with `git pull` — `upgrade` will tell you so rather than overwrite it.)
+
+Upgrading replaces the tool, not the patches: whatever you had applied stays applied. If a release changes a patch you're running, re-apply it to pick the new one up — `imac-patcher --status` shows where you stand.
 
 Pin a specific release, or take the tool back off the machine:
 

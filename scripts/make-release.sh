@@ -10,7 +10,9 @@
 #
 # The tarball carries only what the patcher needs at runtime -- scripts, the
 # patch stack, the config templates and the docs -- not TODO.md, notes/ or
-# tests/, which are development state and dwarf the rest.
+# tests/, which are development state and dwarf the rest. install.sh rides
+# along so `imac-patcher upgrade` can run it without fetching it first, which
+# makes each release carry the installer for the one after it.
 #
 # Content comes from a git ref (HEAD by default), never the dirty working tree,
 # so a tarball always corresponds to a commit. Ordering, ownership, timestamps
@@ -28,7 +30,7 @@ cd "$REPO_DIR"
 
 # Paths the installed tool actually reads. Keep in sync with install.sh's sanity
 # check, which fails the install if scripts/imac-patcher is missing.
-PATHS=(scripts patches configs docs README.md DEPENDENCIES.md LICENSE)
+PATHS=(install.sh scripts patches configs docs README.md DEPENDENCIES.md LICENSE)
 
 DIST="${REPO_DIR}/dist"
 PREFIX="${NAME}-${VERSION}"
