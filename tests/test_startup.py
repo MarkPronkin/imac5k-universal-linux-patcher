@@ -30,6 +30,15 @@ class StartupTests(unittest.TestCase):
         )
         if probe.returncode:
             cls.unavailable("bubblewrap user namespaces unavailable: " + probe.stderr.strip())
+        # The sandbox maps only the calling user, so a checkout owned by another
+        # user is unreadable inside it — the root-run CI job cannot traverse the
+        # runner-owned home. Launch an unmodified copy of the checkout that this
+        # user owns instead.
+        checkout = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(checkout.cleanup)
+        cls.repo = Path(checkout.name) / "repo"
+        shutil.copytree(ROOT, cls.repo,
+                        ignore=shutil.ignore_patterns(".git", "dist", "__pycache__", "hardware-private"))
 
     @staticmethod
     def unavailable(reason):
@@ -41,11 +50,6 @@ class StartupTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        # A root-run CI test enters a user namespace that cannot traverse the
-        # runner's private home. Mount the unchanged checkout under our own
-        # temporary directory instead of relying on its host parent permissions.
-        self.sandbox_repo = self.root / "repo"
-        self.sandbox_repo.mkdir()
         self.available = self.root / "tools"
         self.available.mkdir()
         self.commands = {"bash", "env", "grep", "sed", "awk", "find", *COREUTILS}
@@ -100,7 +104,7 @@ done
         commands = self.commands - set(missing)
         if not both_managers:
             commands -= {"pacman"} if fedora else {"dnf"}
-        launcher = self.sandbox_repo / "scripts/imac-patcher"
+        launcher = self.repo / "scripts/imac-patcher"
         if symlink:
             link = self.root / "launcher"
             link.symlink_to(launcher)
@@ -115,7 +119,6 @@ esac''')
             commands.add("gum")
         cmd = [BWRAP, "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
                "--bind", str(self.root), str(self.root), "--tmpfs", "/usr/bin",
-               "--ro-bind", str(ROOT), str(self.sandbox_repo),
                "--ro-bind", str(self.available), str(self.available),
                "--ro-bind", str(self.sys), "/sys", "--ro-bind", str(self.os_release), "/etc/os-release"]
         if Path("/usr/sbin").resolve() != Path("/usr/bin").resolve():
