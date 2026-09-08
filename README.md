@@ -294,3 +294,10 @@ This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://githu
 Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
 
 Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1 and fetched from that repository at apply time rather than vendored here.
+
+### Contributors
+
+- **Mark Pronkin** ([@MarkPronkin](https://github.com/MarkPronkin)) — maintainer of this fork: the genlock and warm-reboot latch-clear fixes, the first verified iMac18,3 5K result, the Fedora KDE backend, and the module-based patcher, installer and releases.
+- **Ahmad Al-Awadi** ([@ahmadtv](https://github.com/ahmadtv)) — the original patcher, the 5K stitch work and the first Omarchy backend, carried forward here.
+
+The upstream display, audio and tuning work this builds on is credited above; `git log` and the [contributors graph](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/graphs/contributors) carry the full record.
