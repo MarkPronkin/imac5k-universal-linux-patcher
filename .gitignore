@@ -3,3 +3,4 @@
 *.log
 hardware-private/
 __pycache__/
+dist/
