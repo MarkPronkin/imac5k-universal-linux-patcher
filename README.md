@@ -107,7 +107,9 @@ It needs two LV2 plugin sets — `lsp-plugins-lv2` and `bankstown` (AUR) — and
 
 While the tuning is installed, the raw 4.0 device is hidden from sound pickers (a WirePlumber rule marks it internal, so the chain still feeds it but nothing offers it): selected directly it plays the tweeter half of the crossover and sounds thin. `--remove eq` puts the card profile, the default sink and that device back.
 
-**On loudness.** This is a corrective tuning, not a loudness profile — expect it to be somewhat quieter than stock at the same slider position. The woofer path runs about 8 dB down with a compressor and limiter, two bands are notched, the impulse responses flatten the speakers' peaks, and the crossover stops all four drivers reproducing everything at once. Flat costs level on these speakers.
+**On loudness.** The hidden hardware output is set to **100% (0 dB)**; use **iMac Speakers** to control listening volume. Before raising the hardware level, the installer lowers the visible slider to 45% if it is higher, preserving quieter settings. WirePlumber remembers the hardware level, and `--remove eq` restores the level saved on first apply. Re-applying with the hardware already at 100% leaves the visible slider alone.
+
+Older installs could leave the hidden output at 40% (about −24 dB), making the speakers much too quiet even with the visible EQ slider at 100%. Re-run `./scripts/imac-patcher --apply eq` to correct that. The tuning itself still includes woofer attenuation, compression, limiting and frequency correction, so equal slider positions need not match the loudness of an untuned output.
 
 The tuning was measured on an iMac17,1 (2015), which has the same 4.0 speaker layout; if it sounds inverted — treble from the woofers — the channel mapping on your board differs and `--remove eq` restores it.
 

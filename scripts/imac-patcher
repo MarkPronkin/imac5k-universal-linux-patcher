@@ -258,6 +258,7 @@ EQ_SINK=audio_effect.iMac-convolver
 EQ_HIDE_RULE="${HOME}/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf"
 EQ_PROFILE_40='output:analog-surround-40+input:analog-stereo'
 EQ_PROFILE_STATE="${LOGDIR}/eq-card-profile"
+EQ_VOLUME_STATE="${LOGDIR}/eq-hardware-volume"
 
 mod_eq_title() { echo "Speaker tuning (4.0 DSP)"; }
 mod_eq_tier()  { echo safe; }
@@ -368,6 +369,10 @@ mod_eq_apply() {
         return 1
     }
     command -v curl >/dev/null || { warn "curl is needed to fetch the tuning"; return 1; }
+    command -v pw-cli >/dev/null && command -v wpctl >/dev/null || {
+        warn "pw-cli and wpctl are needed to set the hidden speaker volume (install PipeWire tools and WirePlumber)"
+        return 1
+    }
     eq_plugins || return 1
     eq_fetch   || return 1
 
@@ -402,14 +407,72 @@ mod_eq_apply() {
         sleep 1
     done
     if [[ $(mod_eq_detect) == applied ]]; then
+        eq_set_hardware_volume "$card" || return 1
         pactl set-default-sink "$EQ_SINK" 2>/dev/null && say "default output set to the tuned sink"
-        # The chain is calibrated around a fixed hardware level; the sink's own
-        # slider is the one to use. See the volume warning in the README.
-        say "start quiet: this chain is louder than the stock sink at the same slider position"
+        say "hardware output is at 100%; adjust listening volume with iMac Speakers"
     else
         warn "the tuned sink did not appear -- see: journalctl --user -u pipewire -n 40"
         return 1
     fi
+}
+
+# Internal sinks are absent from pactl's sink list. Resolve the exact native
+# node name each time: numeric PipeWire IDs change when the stack restarts.
+eq_node_id() {
+    LC_ALL=C pw-cli ls Node 2>/dev/null | awk -v name="\"$1\"" '
+        $1 == "id" { id=$2; sub(/,$/, "", id) }
+        $1 == "node.name" && $3 == name { print id }'
+}
+
+eq_node_volume() {
+    LC_ALL=C wpctl get-volume "$1" 2>/dev/null | awk '
+        $1 == "Volume:" && $2 ~ /^[0-9]+([.][0-9]+)?$/ { print $2 }'
+}
+
+eq_set_hardware_volume() {
+    local hw tuned volume visible i
+    for i in $(seq 10); do
+        hw=$(eq_node_id "alsa_output.${1#alsa_card.}.analog-surround-40")
+        [[ $hw =~ ^[0-9]+$ ]] && break
+        sleep 0.5
+    done
+    [[ $hw =~ ^[0-9]+$ ]] || {
+        warn "could not find the hidden 4.0 speaker output"; return 1; }
+    volume=$(eq_node_volume "$hw")
+    [[ -n $volume ]] || { warn "could not read the hardware volume"; return 1; }
+    # Keep the pre-install level for --remove, including across re-applies.
+    if [[ ! -f $EQ_VOLUME_STATE ]]; then
+        printf '%s\n' "$volume" > "$EQ_VOLUME_STATE" || return 1
+    fi
+    if awk -v v="$volume" 'BEGIN { exit !(v < 1) }'; then
+        tuned=$(eq_node_id "$EQ_SINK")
+        [[ $tuned =~ ^[0-9]+$ ]] || {
+            warn "could not find the tuned sink to lower its volume"; return 1; }
+        visible=$(eq_node_volume "$tuned")
+        [[ -n $visible ]] || { warn "could not read the tuned sink volume"; return 1; }
+        # Lower BEFORE raising the hardware level. Preserve quieter settings
+        # and leave the user's slider alone when re-applying at unity gain.
+        if awk -v v="$visible" 'BEGIN { exit !(v > 0.45) }'; then
+            wpctl set-volume "$tuned" 45% || {
+                warn "could not lower the tuned sink volume"; return 1; }
+            say "iMac Speakers volume lowered to 45% before raising the hardware output"
+        fi
+    fi
+    # wpctl updates the ALSA route as well as the node; WirePlumber saves it.
+    wpctl set-volume "$hw" 100% || {
+        warn "could not set the hidden speaker output to 100%"; return 1; }
+}
+
+eq_restore_hardware_volume() {
+    [[ -f $EQ_VOLUME_STATE ]] || return 0
+    local hw volume
+    volume=$(cat "$EQ_VOLUME_STATE")
+    [[ $volume =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+        warn "invalid saved hardware volume in ${EQ_VOLUME_STATE}"; return 1; }
+    hw=$(eq_node_id "alsa_output.${1#alsa_card.}.analog-surround-40")
+    [[ $hw =~ ^[0-9]+$ ]] && wpctl set-volume "$hw" "$volume" || {
+        warn "could not restore the saved hardware volume; keeping ${EQ_VOLUME_STATE}"; return 1; }
+    rm -f "$EQ_VOLUME_STATE"
 }
 
 # On the 4.0 profile the raw device stops being a speaker pair: FL/FR are the
@@ -448,6 +511,9 @@ mod_eq_remove() {
     local card profile restore=output:analog-stereo+input:analog-stereo
     read -r card profile <<<"$(eq_card)"
     [[ -r $EQ_PROFILE_STATE ]] && restore="$(cat "$EQ_PROFILE_STATE")"
+    # Restore while the hidden 4.0 node still exists, before exposing hardware
+    # as the user's output again. Old installs have no saved volume to restore.
+    eq_restore_hardware_volume "$card" || return 1
     rm -f "$EQ_CONF" "$EQ_HIDE_RULE"
     rm -rf "$EQ_IRS_DIR"
     eq_restart_pipewire
@@ -828,7 +894,19 @@ run_module() {   # $1 = apply|remove, $2 = id
     local action=$1 id=$2 st
     st="$("mod_${id}_detect")"
     [[ $st == n/a ]] && { say "${id}: not applicable on this machine — skipping"; return 0; }
-    if [[ $action == apply && $st == applied ]]; then say "${id}: already applied — skipping"; return 0; fi
+    if [[ $action == apply && $st == applied ]]; then
+        # Older EQ installs pass the file/profile checks but can retain a
+        # quiet hidden hardware route. Repair it without downloading again.
+        if [[ $id == eq ]]; then
+            local card profile
+            read -r card profile <<<"$(eq_card)"
+            eq_set_hardware_volume "$card" || return 1
+            say "eq: hardware output is at 100%; adjust listening volume with iMac Speakers"
+        else
+            say "${id}: already applied — skipping"
+        fi
+        return 0
+    fi
     if [[ $action == remove && $st == not-applied ]]; then say "${id}: not applied — nothing to remove"; return 0; fi
     hdr "$( [[ $action == apply ]] && echo Applying || echo Removing ): $("mod_${id}_title")"
     if "mod_${id}_${action}"; then

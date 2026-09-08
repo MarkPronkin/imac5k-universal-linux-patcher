@@ -55,6 +55,36 @@ class EqTests(unittest.TestCase):
         # yourself" message and never prompts at all.
         self.stub("sudo", 'exec "$@"')
         self.stub("pacman", 'echo "PACMAN: $*"; exit 0')
+        self.stub_audio()
+
+    def stub_audio(self, hardware="0.40", visible="1.00", fail_node=""):
+        # Use different node IDs from the real machine, plus another 4.0
+        # device: the fix must target this card, not the first matching sink.
+        self.stub("pw-cli", '''cat <<'EOF'
+    id 12, type PipeWire:Interface:Node/3
+        node.name = "alsa_output.usb-other.analog-surround-40"
+    id 73, type PipeWire:Interface:Node/3
+        node.name = "audio_effect.iMac-convolver"
+    id 91, type PipeWire:Interface:Node/3
+        node.name = "alsa_output.pci-0000_00_1f.3.analog-surround-40"
+        media.class = "Audio/Sink/Internal"
+EOF''')
+        for node, value in (("91", hardware), ("73", visible)):
+            (self.root / f"volume-{node}").write_text(value)
+        self.stub("wpctl", f'''
+state="{self.root}/volume-$2"
+case "$1" in
+    get-volume) printf 'Volume: %s\\n' "$(cat "$state")" ;;
+    set-volume)
+        echo "SET-VOLUME $2 $3"
+        [[ $2 != "{fail_node}" ]] || exit 1
+        case "$3" in
+            45%) echo 0.45 > "$state" ;;
+            100%) echo 1.00 > "$state" ;;
+            *) printf '%s' "$3" > "$state" ;;
+        esac ;;
+    *) exit 1 ;;
+esac''')
 
     def stub(self, name, body):
         path = self.bin / name
@@ -224,6 +254,95 @@ mod_eq_apply''')
         order = [line for line in result.stdout.splitlines()
                  if line.startswith(("RESTARTED", "SET-PROFILE"))]
         self.assertEqual(order[:2], ["RESTARTED", f"SET-PROFILE {FOUR_CHANNEL}"])
+        self.assertLess(result.stdout.index("SET-PROFILE"), result.stdout.index("SET-VOLUME"))
+        self.assertIn("SET-VOLUME 73 45%\n", result.stdout)
+        self.assertIn("SET-VOLUME 91 100%\n", result.stdout)
+        self.assertLess(result.stdout.index("SET-VOLUME 73"), result.stdout.index("SET-VOLUME 91"))
+
+    def test_reapply_preserves_the_original_hardware_level_and_user_slider(self):
+        result = self.run_eq('''
+eq_set_hardware_volume alsa_card.pci-0000_00_1f.3
+wpctl set-volume 73 0.80
+eq_set_hardware_volume alsa_card.pci-0000_00_1f.3
+cat "$EQ_VOLUME_STATE"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("SET-VOLUME 73 45%"), 1)
+        self.assertEqual((self.root / "volume-73").read_text(), "0.80")
+        self.assertEqual((self.root / "state/eq-hardware-volume").read_text(), "0.40\n")
+
+    def test_apply_repairs_an_already_installed_eq_instead_of_skipping_it(self):
+        self.stub_pactl(active=FOUR_CHANNEL)
+        source = PATCHER.read_text()
+        start = source.index("run_module() {")
+        driver = source[start:source.index('\ncase "${1:-}" in', start)]
+        result = self.run_eq(driver + '''
+mod_eq_detect() { echo applied; }
+mod_eq_apply() { echo UNEXPECTED-REINSTALL; return 1; }
+run_module apply eq
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SET-VOLUME 91 100%", result.stdout)
+        self.assertNotIn("UNEXPECTED-REINSTALL", result.stdout)
+
+    def test_unreadable_hardware_volume_changes_nothing(self):
+        self.stub("wpctl", "exit 1")
+        result = self.run_eq("eq_set_hardware_volume alsa_card.pci-0000_00_1f.3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not read the hardware volume", result.stdout)
+        self.assertFalse((self.root / "state/eq-hardware-volume").exists())
+
+    def test_quieter_visible_volume_is_preserved(self):
+        self.stub_audio(visible="0.20")
+        result = self.run_eq("eq_set_hardware_volume alsa_card.pci-0000_00_1f.3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SET-VOLUME 73", result.stdout)
+        self.assertIn("SET-VOLUME 91 100%", result.stdout)
+
+    def test_failed_visible_volume_change_does_not_raise_hardware(self):
+        self.stub_audio(fail_node="73")
+        result = self.run_eq("eq_set_hardware_volume alsa_card.pci-0000_00_1f.3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("SET-VOLUME 91", result.stdout)
+        self.assertEqual((self.root / "volume-91").read_text(), "0.40")
+
+    def test_failed_hardware_volume_change_is_reported(self):
+        self.stub_audio(fail_node="91")
+        result = self.run_eq("eq_set_hardware_volume alsa_card.pci-0000_00_1f.3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not set the hidden speaker output", result.stdout)
+
+    def test_missing_hardware_node_does_not_change_another_device(self):
+        self.stub("sleep", ":")
+        result = self.run_eq("eq_set_hardware_volume alsa_card.not-present")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("SET-VOLUME", result.stdout)
+
+    def test_remove_restores_hardware_volume_before_the_restart(self):
+        self.stub_pactl(active=FOUR_CHANNEL)
+        result = self.run_eq('''
+eq_set_hardware_volume alsa_card.pci-0000_00_1f.3
+eq_restart_pipewire() { echo RESTARTED; }
+mod_eq_remove
+''')
+        self.assertLess(result.stdout.index("SET-VOLUME 91 0.40"), result.stdout.index("RESTARTED"))
+        self.assertEqual((self.root / "volume-91").read_text(), "0.40")
+        self.assertFalse((self.root / "state/eq-hardware-volume").exists())
+
+    def test_failed_restore_preserves_the_saved_volume_and_installed_eq(self):
+        self.stub_pactl(active=FOUR_CHANNEL)
+        self.stub_audio(fail_node="91")
+        result = self.run_eq('''
+mkdir -p "$(dirname "$EQ_CONF")"
+touch "$EQ_CONF"
+echo 0.40 > "$EQ_VOLUME_STATE"
+eq_restart_pipewire() { echo RESTARTED; }
+mod_eq_remove
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("RESTARTED", result.stdout)
+        self.assertTrue((self.root / "state/eq-hardware-volume").exists())
+        self.assertTrue((self.root / "home/.config/pipewire/pipewire.conf.d/imac-audio.conf").exists())
 
     def test_removing_puts_the_saved_card_profile_back(self):
         self.stub_pactl()

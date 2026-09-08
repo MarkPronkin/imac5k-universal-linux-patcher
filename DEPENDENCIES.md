@@ -83,6 +83,8 @@ with wget.
 |---|---|---|
 | pipewire (filter-chain built in) | pipewire | pipewire |
 | pactl | libpulse | pulseaudio-utils |
+| pw-cli | pipewire | pipewire-utils |
+| wpctl | wireplumber | wireplumber |
 | curl | curl | curl |
 | LSP LV2 plugins | lsp-plugins-lv2 | lsp-plugins |
 | bankstown LV2 | bankstown (AUR) | — build from source |
