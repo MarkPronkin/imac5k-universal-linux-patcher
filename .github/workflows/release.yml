@@ -1,0 +1,42 @@
+# Push a tag, get a release: the tarball and its checksum are built here, from
+# the tagged commit, so what people download always matches a commit in this
+# repository and can be reproduced by running scripts/make-release.sh on it.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # make-release.sh archives a git ref
+
+      - name: Run the offline test suite
+        run: python3 -m unittest discover -s tests
+
+      - name: Build the release tarball
+        id: build
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          scripts/make-release.sh "$version" "$GITHUB_SHA"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Anything with a suffix (-alpha, -rc1) is a pre-release.
+          prerelease=""
+          [[ "${GITHUB_REF_NAME}" == *-* ]] && prerelease=--prerelease
+          gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes $prerelease \
+              dist/imac5k-patcher-${{ steps.build.outputs.version }}.tar.gz \
+              dist/SHA256SUMS
