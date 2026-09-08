@@ -16,7 +16,6 @@ from test_deps import COREUTILS
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCHER = ROOT / "scripts/imac-patcher"
 BWRAP = shutil.which("bwrap")
 
 
@@ -42,6 +41,11 @@ class StartupTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        # A root-run CI test enters a user namespace that cannot traverse the
+        # runner's private home. Mount the unchanged checkout under our own
+        # temporary directory instead of relying on its host parent permissions.
+        self.sandbox_repo = self.root / "repo"
+        self.sandbox_repo.mkdir()
         self.available = self.root / "tools"
         self.available.mkdir()
         self.commands = {"bash", "env", "grep", "sed", "awk", "find", *COREUTILS}
@@ -96,10 +100,11 @@ done
         commands = self.commands - set(missing)
         if not both_managers:
             commands -= {"pacman"} if fedora else {"dnf"}
-        launcher = PATCHER
+        launcher = self.sandbox_repo / "scripts/imac-patcher"
         if symlink:
-            launcher = self.root / "launcher"
-            launcher.symlink_to(PATCHER)
+            link = self.root / "launcher"
+            link.symlink_to(launcher)
+            launcher = link
         if gum:
             self.stub("gum", '''
 case "$1" in
@@ -110,6 +115,7 @@ esac''')
             commands.add("gum")
         cmd = [BWRAP, "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
                "--bind", str(self.root), str(self.root), "--tmpfs", "/usr/bin",
+               "--ro-bind", str(ROOT), str(self.sandbox_repo),
                "--ro-bind", str(self.available), str(self.available),
                "--ro-bind", str(self.sys), "/sys", "--ro-bind", str(self.os_release), "/etc/os-release"]
         if Path("/usr/sbin").resolve() != Path("/usr/bin").resolve():
