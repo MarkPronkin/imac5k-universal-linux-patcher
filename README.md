@@ -137,6 +137,7 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 - Apple iMac18,3 (2017 27" 5K). The patcher refuses to run on other hardware.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
 - Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, EQ and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
+- Nothing to install by hand: on startup the patcher checks the handful of basics it needs (`grep`, `sed`, `awk`, `findutils`, `coreutils`, `sudo`) and offers to install any that are missing. Each patch checks its own heavier dependencies when you run it. The full list is in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## 📦 Updating and removing the tool
 

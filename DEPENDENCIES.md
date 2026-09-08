@@ -13,6 +13,12 @@ where they differ.
 | sudo | sudo | sudo | every module needs root at some point |
 | gum | gum | — | optional; nicer interactive UI, plain prompts are the fallback |
 
+`imac-patcher` checks this core set on every run and offers to install what is
+missing (pacman on Arch, DNF on Fedora) before it does anything else; when the
+set is complete it says nothing and goes straight to the menu. `gum` is not
+part of that gate — it is optional and the plain prompts are a real fallback.
+Per-module dependencies stay with their module, checked when that module runs.
+
 ## 5K module (boot tier)
 
 ### Arch/Omarchy (`scripts/patch-imac5k-amdgpu.sh`)

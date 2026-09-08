@@ -115,6 +115,55 @@ if [[ "$product" != "iMac18,3" && " $* " != *" --force "* ]]; then
     exit 1
 fi
 
+# ── core dependencies ──────────────────────────────────────────────────────
+#
+# Per-module dependencies stay with their module -- the 5K build wants a
+# toolchain and eight spare gigabytes, audio wants DKMS, and neither is worth
+# installing to read a status listing. What follows is only what the patcher
+# and the helper scripts it drives reach for on *every* run, checked once at
+# startup so a missing basic is a prompt here rather than a "command not
+# found" three modules deep, halfway through an install.
+#
+# "<command> <package>" pairs; the two package sets agree on these names.
+CORE_DEPS=(
+    "grep grep"
+    "sed sed"
+    "awk gawk"           # the 5K helpers parse with awk
+    "find findutils"
+    "install coreutils"
+    "sudo sudo"          # every module needs root at some point
+)
+
+core_deps_check() {
+    local entry cmd pkg missing=() packages=()
+    for entry in "${CORE_DEPS[@]}"; do
+        read -r cmd pkg <<<"$entry"
+        command -v "$cmd" >/dev/null && continue
+        missing+=("$cmd"); packages+=("$pkg")
+    done
+    ((${#missing[@]})) || return 0
+
+    warn "missing: ${missing[*]}"
+    local installer=()
+    if   command -v pacman >/dev/null; then installer=(sudo pacman -S --needed --noconfirm)
+    elif command -v dnf    >/dev/null; then installer=(sudo dnf install -y)
+    fi
+    # Without sudo there is no way to run the package manager either, so say so
+    # once instead of failing again inside the install.
+    if ((${#installer[@]} == 0)) || [[ " ${packages[*]} " == *" sudo "* ]]; then
+        warn "install these as root, then re-run: ${packages[*]}"
+        return 1
+    fi
+    say "the patcher needs these packages: ${packages[*]}"
+    confirm "Install them now?" || { warn "cannot run without: ${missing[*]}"; return 1; }
+    "${installer[@]}" "${packages[@]}" || return 1
+    for cmd in "${missing[@]}"; do
+        command -v "$cmd" >/dev/null || { warn "${cmd} is still missing after the install"; return 1; }
+    done
+    say "dependencies installed"
+}
+core_deps_check || exit 1
+
 # ═══════════════════════ module: audio ═════════════════════════════════════
 AUDIO_REPO=https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
 AUDIO_SRC="${CACHE}/imac18-3-cs8409-linux-audio"
