@@ -112,9 +112,13 @@ means the CS8409 driver from the audio module, installed and rebooted into.
 - Hyprland: `hyprctl` (edits `~/.config/hypr/monitors.lua`, then reloads)
 - KDE: `python3` + `kscreen-doctor` (via `scripts/kde-display.py`, stdlib only)
 
-## Suspend module (safe tier)
+## Suspend module (boot tier)
 
-- systemd (`systemctl`) only
+- systemd (`systemctl`) — hibernation target masks
+- Omarchy: the Limine/mkinitcpio stack from the boot module — the `idle=poll`
+  drop-in is applied by rebuilding the UKI (`limine-mkinitcpio`, `objcopy` for
+  verification)
+- Fedora: `grubby` — adds `idle=poll` to the current kernel's GRUB entry
 
 ## Boot module (boot tier, Omarchy only)
 

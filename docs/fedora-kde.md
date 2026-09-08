@@ -231,9 +231,12 @@ touched. KScreen has to be reachable from the current Plasma Wayland session.
 No Hyprland config is written and no live KWin configuration file is
 overwritten.
 
-**Sleep** uses the same systemd target masks as the upstream project. If you
-want KDE's Power Management UI to reflect the change, disable automatic sleep
-there as well. `--remove suspend` lifts the masks.
+**Sleep** follows the same policy as the upstream project: suspend works with
+the CPUs kept out of idle C-states, so grubby adds `idle=poll` to the current
+kernel's GRUB entry, while the hibernation targets
+(`hibernate.target hybrid-sleep.target suspend-then-hibernate.target`) stay
+masked — hibernation is not rescued by this. Reboot to pick up the kernel
+argument. `--remove suspend` lifts the masks and removes the argument.
 
 ---
 
@@ -265,7 +268,7 @@ does not mention keeps the Omarchy behaviour verbatim.
 scripts/imac-patcher
   ├─ source lib/platform.sh          detection helpers, always
   ├─ …original Omarchy mod_* definitions…
-  ├─ source lib/fedora.sh   if Fedora   → overrides audio, boot, 5k
+  ├─ source lib/fedora.sh   if Fedora   → overrides audio, suspend, boot, 5k
   └─ source lib/kde.sh      if KDE      → overrides color
 ```
 

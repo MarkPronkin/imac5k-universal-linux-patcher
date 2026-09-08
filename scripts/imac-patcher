@@ -42,6 +42,9 @@ FALLBACK_4K_DROPIN="${LIMINE_DROPIN_DIR}/imac4k-fallback.conf"
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 MONITORS_LUA="${HOME}/.config/hypr/monitors.lua"
 SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
+HIBERNATE_TARGETS=(hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
+NO_CSTATES_PARAM='idle=poll'
+NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
 mkdir -p "$LOGDIR" "$CACHE"
 
 MODULES=(audio eq color suspend boot 5k)
@@ -587,20 +590,46 @@ mod_color_remove() {
 }
 
 # ═══════════════════════ module: suspend ═══════════════════════════════════
-mod_suspend_title() { echo "Block suspend/hibernate"; }
-mod_suspend_tier()  { echo safe; }
-mod_suspend_desc()  { echo "Optional workaround for suspend hangs, observed on iMac18,3. Masks sleep targets; leave this off if sleep works on your model."; }
+mod_suspend_title() { echo "Sleep (no C-states)"; }
+mod_suspend_tier()  { echo boot; }
+mod_suspend_desc()  { echo "Suspend hard-hangs this machine once the CPUs enter idle C-states, but works with them off (verified on iMac18,3). Adds idle=poll to the kernel command line and rebuilds the boot image — sleep then works, at higher idle power use. Hibernation is not rescued by this, so it stays masked off. Leave this off if sleep works on your model."; }
 mod_suspend_detect() {
     local masked=0
-    for t in "${SLEEP_TARGETS[@]}"; do
+    for t in "${HIBERNATE_TARGETS[@]}"; do
         [[ "$(systemctl is-enabled "$t" 2>/dev/null)" == masked ]] && (( masked++ ))
     done
-    if (( masked == ${#SLEEP_TARGETS[@]} )); then echo applied
-    elif (( masked > 0 )); then echo partial
+    local suspend_off=0 conf=0 live=0
+    [[ "$(systemctl is-enabled suspend.target 2>/dev/null)" == masked ]] && suspend_off=1
+    boot_config_has "$NO_CSTATES_PARAM" && conf=1
+    grep -q "$NO_CSTATES_PARAM" /proc/cmdline 2>/dev/null && live=1
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_off && conf && live )); then echo applied
+    elif (( masked || suspend_off || conf || live )); then echo partial
     else echo not-applied; fi
 }
-mod_suspend_apply()  { sudo systemctl mask "${SLEEP_TARGETS[@]}"; }
-mod_suspend_remove() { sudo systemctl unmask "${SLEEP_TARGETS[@]}"; say "sleep re-enabled"; }
+mod_suspend_apply() {
+    sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
+    # Machines coming from the old block-everything behaviour have this masked.
+    sudo systemctl unmask suspend.target || return 1
+    sudo mkdir -p "$LIMINE_DROPIN_DIR"
+    printf '%s\n%s\n' \
+        '# Written by imac-patcher; delete this file to drop the parameter.' \
+        "KERNEL_CMDLINE[default]+=\" ${NO_CSTATES_PARAM}\"" \
+        | sudo tee "$NO_CSTATES_DROPIN" >/dev/null
+    say "wrote ${NO_CSTATES_DROPIN}"
+    sync_boot_files && verify_cmdline "$NO_CSTATES_PARAM" ''
+    say "reboot to activate — suspend then works; hibernation stays disabled"
+}
+mod_suspend_remove() {
+    sudo systemctl unmask "${SLEEP_TARGETS[@]}"
+    sudo rm -f "$NO_CSTATES_DROPIN"
+    # Older layouts appended parameters straight into /etc/default/limine.
+    if grep -qs "$NO_CSTATES_PARAM" "$LIMINE_DEFAULT"; then
+        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-cstates-$(date +%s)"
+        sudo sed -i "s| ${NO_CSTATES_PARAM}||" "$LIMINE_DEFAULT"
+    fi
+    sync_boot_files && verify_cmdline '' "$NO_CSTATES_PARAM"
+    say "sleep and hibernation re-enabled; reboot to restore idle C-states"
+}
 
 # ═══════════════════════ module: boot ══════════════════════════════════════
 HYGIENE_HOOK=/etc/boot/hooks/post.d/95-limine-esp-hygiene
