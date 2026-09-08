@@ -1,0 +1,26 @@
+iMac 5K: halt the tiled resync worker when the machine is going down
+
+Companion to 5k-post-commit-link-recovery.patch, as a separate patch because
+amdgpu_dm_apple5k_going_down() sits at a different file position in the lean
+core and the verbose stack, and GNU patch locates hunks in file order -- one
+patch cannot carry this hunk for both stacks.
+
+Set the worker's stopping flag and cancel it at the same point where the
+going-down gate is raised, so a pending link-health pass cannot fire while
+the display is being torn down for firmware.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -2999,6 +2999,11 @@
+ void amdgpu_dm_apple5k_going_down(struct amdgpu_device *adev)
+ {
+-	if (adev && adev->dm.dc)
++	if (adev && adev->dm.dc) {
++		mutex_lock(&adev->dm.dc_lock);
++		adev->dm.tiled_resync_stopping = true;
+ 		adev->dm.dc->apple_5k_going_down = true;
++		mutex_unlock(&adev->dm.dc_lock);
++		cancel_delayed_work_sync(&adev->dm.tiled_resync_work);
++	}
+ }
+

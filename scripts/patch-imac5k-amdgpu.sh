@@ -35,18 +35,21 @@ fi
 imac_require_limine
 # Which stack to build. "lean" (default since 2026-09-07): the lean core (the
 # upstream candidate) plus the stitch layer -- same features as the verbose
-# stack minus its logging. "verbose": the original full-stack patch plus the
-# follow-up patches, kept as a fallback (IMAC5K_STACK=verbose).
+# stack minus its logging -- plus the post-commit link-health recovery that
+# repairs a tile losing DP link lock during the boot modeset (the "stretched
+# 5K desktop" fix, promoted to the default on 2026-09-08 after a passing boot).
+# "verbose": the original full-stack patch plus the follow-up patches, kept as
+# a fallback (IMAC5K_STACK=verbose).
 IMAC5K_STACK="${IMAC5K_STACK:-lean}"
 case "$IMAC5K_STACK" in
 lean)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-lean-core-7.2.x.patch"
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
 	;;
 verbose)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-amdgpu-7.2.2.patch"
 	# Applied in order, on top of PATCH_FILE. Each must apply cleanly or we abort.
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-verify-retrain.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-preserve-lock.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-verify-retrain.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-preserve-lock.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
 	;;
 *) echo "IMAC5K_STACK must be 'lean' or 'verbose'" >&2; exit 1 ;;
 esac

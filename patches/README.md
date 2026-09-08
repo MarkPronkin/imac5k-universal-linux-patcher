@@ -33,7 +33,10 @@ The script rebuilds **only the amdgpu module** for your *running* kernel and
 swaps it in (stock module backed up first). Re-run it after a kernel update.
 
 Since 2026-09-07 the installer builds the **lean pair** (`imac5k-lean-core-7.2.x.patch`
-+ `imac5k-stitch-layer-7.x.patch`). The verbose stack (full-stack patch + the
++ `imac5k-stitch-layer-7.x.patch`), and since 2026-09-08 the default stack also
+includes the post-commit link-health recovery
+(`5k-going-down-stop-resync.patch` + `5k-post-commit-link-recovery.patch`), the
+fix for the stretched-5K boot. The verbose stack (full-stack patch + the
 `5k-*.patch` follow-ups) is still available: `sudo env IMAC5K_STACK=verbose
 ../scripts/patch-imac5k-amdgpu.sh`.
 
@@ -47,7 +50,10 @@ A full DPMS off/on cycle restored healthy AUX status on both links, which
 verified session recovery but not a boot fix. Both are superseded by the
 post-commit patch below, and are kept for the record. See `TODO.md`.
 
-`5k-post-commit-link-recovery.patch` follows them. It moves the deferred check
+`5k-post-commit-link-recovery.patch` follows them (with its going-down half in
+`5k-going-down-stop-resync.patch` — the function it extends sits at a different
+file position in each stack, and one patch cannot carry that hunk for both).
+It moves the deferred check
 after the *complete* atomic commit and re-reads both tiles' DPCD lane status up
 to eight times (250 ms, then every 500 ms), running DC's link-loss recovery at
 most twice per modeset when a tile is not locked. Its whole sequence is tagged,
@@ -69,8 +75,8 @@ anything reached the screen. Two details that boot corrected: the loss is *not*
 slave-only (the unhealthy tile was the root, with lanes locked but sink status
 0x205 = 00), and the AUX `EIO` seen earlier is a real transient that the same
 recovery handles. The *cause* of the post-enable loss is still unknown -- this
-repairs it after the fact. `scripts/imac-test-entry` still keeps it off the
-default entry pending repeat-boot evidence.
+repairs it after the fact. **Promoted to the default install stacks on
+2026-09-08** after the owner confirmed the passing boot.
 
 ### Fedora 7.1.13 context
 
@@ -124,7 +130,12 @@ Upstream will not take this layer.
 ```bash
 patch -p1 < patches/imac5k-lean-core-7.2.x.patch     # core (+ genlock + reboot handoff)
 patch -p1 < patches/imac5k-stitch-layer-7.x.patch    # Hyprland stitch (+ early modeset, resync)
+patch -p1 < patches/5k-going-down-stop-resync.patch  # halt the resync worker on shutdown
+patch -p1 < patches/5k-post-commit-link-recovery.patch  # stretched-5K boot fix
 ```
+
+The last two apply on top of either stack: the lean pair and the full verbose
+stack alike (verified at `--fuzz=0` on the lean pair over pristine 7.1.9).
 
 Applies cleanly on pristine 7.1.9 and 7.2.2 after the core. One fix over
 erik2's original: the saved tile-group id buffer is 9 bytes like DRM's

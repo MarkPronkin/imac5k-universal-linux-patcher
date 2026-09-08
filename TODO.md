@@ -50,9 +50,14 @@ attempts`). Gather repeat-boot evidence before promoting.
 
 - Staged and booted; the default entry still carries the known-good module.
 - `sudo scripts/imac-test-entry promote` makes it permanent, `drop` discards it.
-  Not promoted.
-- Nothing committed. `patches/5k-post-commit-link-recovery.patch` and the two
-  earlier slave-link patches are still untracked.
+- **Promoted into the installers on 2026-09-08** at the owner's request: the
+  default (lean) stack of both `patch-imac5k-amdgpu.sh` and `fedora-imac5k`
+  now applies `5k-going-down-stop-resync.patch` +
+  `5k-post-commit-link-recovery.patch`. The going-down hunk was split into its
+  own patch because `amdgpu_dm_apple5k_going_down()` sits at a different file
+  position in the lean and verbose stacks and GNU patch locates hunks in file
+  order. Verified applying at `--fuzz=0` on the lean pair over pristine 7.1.9,
+  and on the full verbose chain.
 
 ### Build provenance
 

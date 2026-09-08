@@ -1,9 +1,9 @@
 iMac 5K: recover tile link loss after the completed display commit
 
-Experimental follow-up to 5k-slave-link-preserve-lock.patch (verbose stack).
-The 2026-09-08 test boot reported initial lock but remained stretched, with
-slave AUX returning EIO. Its HPD guard was active. A full DPMS restart
-restored both links and the owner confirmed a normal desktop.
+Follow-up to 5k-slave-link-preserve-lock.patch. The earlier 2026-09-08 test
+boot reported initial lock but remained stretched, with slave AUX returning
+EIO. Its HPD guard was active. A full DPMS restart restored both links and
+the owner confirmed a normal desktop.
 
 Move deferred work after the complete atomic commit. For a tiled modeset,
 observe both active tile links eight times (250 ms initially, then 500 ms).
@@ -16,8 +16,13 @@ not restarted. Re-sync after recovery, then verify on a later work pass.
 Serialize against DC programming; do not revive DPMS-off streams or act
 during suspend/reset/shutdown. Stop requeueing before teardown cancellation.
 This repairs the observed failure after it occurs; the underlying cause of
-the post-enable loss is not yet established. Hardware reboot validation is
-required before promotion. No compositor startup reset is installed.
+the post-enable loss is not yet established. No compositor startup reset is
+installed.
+
+Validated on hardware 2026-09-08 (first boot off this build came up at a
+correct 5120x2880 with no VT or DPMS cycle) and promoted to the default
+install stacks. The going-down hunk anchors only on context the verbose
+stack and the lean pair share, so it applies on top of either.
 
 Every line of the sequence carries one tag, so a single
 `journalctl -k -b 0 | grep 'APPLE5K: link-health'` reads the whole story of a
@@ -54,21 +59,6 @@ the arming line.
  	mutex_init(&adev->dm.audio_lock);
  
  	if (amdgpu_dm_irq_init(adev)) {
-@@ -2998,8 +3006,13 @@
-  */
- void amdgpu_dm_apple5k_going_down(struct amdgpu_device *adev)
- {
--	if (adev && adev->dm.dc)
-+	if (adev && adev->dm.dc) {
-+		mutex_lock(&adev->dm.dc_lock);
-+		adev->dm.tiled_resync_stopping = true;
- 		adev->dm.dc->apple_5k_going_down = true;
-+		mutex_unlock(&adev->dm.dc_lock);
-+		cancel_delayed_work_sync(&adev->dm.tiled_resync_work);
-+	}
- }
- 
- /*
 @@ -3056,6 +3069,9 @@
  {
  	int i;
