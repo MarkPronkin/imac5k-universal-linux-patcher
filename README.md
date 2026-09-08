@@ -1,6 +1,6 @@
 # 🖥️ Retina 5K iMac Linux Patcher
 
-![iMac Linux patches — display, audio and colour](.github/social-preview.png)
+![Retina 5K iMac Linux Patcher — display, audio, colour and boot fixes, applied module by module](.github/social-preview.png)
 
 **A Linux patch manager for every Retina 5K iMac model, including iMac Pro.**
 
