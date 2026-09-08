@@ -20,8 +20,9 @@ MAKE_RELEASE = REPO / "scripts/make-release.sh"
 VERSION = "9.9.9-test"
 
 
-def build_release(dist):
-    subprocess.run([MAKE_RELEASE, VERSION], cwd=REPO, check=True, capture_output=True)
+def build_release(dist, ref=None):
+    subprocess.run([MAKE_RELEASE, VERSION, *([ref] if ref else [])],
+                   cwd=REPO, check=True, capture_output=True)
     built = REPO / "dist"
     dist.mkdir(parents=True, exist_ok=True)
     for name in (f"imac5k-patcher-{VERSION}.tar.gz", "SHA256SUMS"):
@@ -72,6 +73,20 @@ class ReleaseTests(unittest.TestCase):
         second = self.tmp / "again"
         build_release(second)
         self.assertEqual(first, (second / f"imac5k-patcher-{VERSION}.tar.gz").read_bytes())
+
+    def test_building_from_an_annotated_tag_matches_building_from_its_commit(self):
+        # An annotated tag is its own git object, so a bare rev-parse hands back
+        # the tag rather than the commit it points at -- and the tarball then
+        # gets a mangled timestamp and a checksum nobody else can reproduce.
+        tag = "_test-make-release"
+        subprocess.run(["git", "tag", "-a", tag, "-m", "temp"], cwd=REPO, check=True)
+        self.addCleanup(subprocess.run, ["git", "tag", "-d", tag],
+                        cwd=REPO, capture_output=True)
+        from_tag, from_commit = self.tmp / "tag", self.tmp / "commit"
+        build_release(from_tag, tag)
+        build_release(from_commit, "HEAD")
+        name = f"imac5k-patcher-{VERSION}.tar.gz"
+        self.assertEqual((from_tag / name).read_bytes(), (from_commit / name).read_bytes())
 
     def test_install_links_a_launcher_that_finds_its_own_files(self):
         result = self.install()

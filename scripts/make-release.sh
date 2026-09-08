@@ -36,7 +36,7 @@ TARBALL="${DIST}/${PREFIX}.tar.gz"
 
 git rev-parse --verify --quiet "${REF}^{commit}" >/dev/null \
     || { echo "no such git ref: ${REF}" >&2; exit 1; }
-COMMIT="$(git rev-parse "$REF")"
+COMMIT="$(git rev-parse "${REF}^{commit}")"   # ^{commit}: an annotated tag is its own object
 MTIME="$(git show -s --format=%cI "$COMMIT")"
 
 stage="$(mktemp -d)"
