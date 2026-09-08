@@ -112,6 +112,9 @@ class FedoraInstallTests(unittest.TestCase):
 source "$REPO/scripts/fedora-imac5k"
 export PATH="$TEST_ROOT/bin:$PATH"
 export KREL=7.1.13-200.fc44.x86_64
+# KSERIES too: it is derived from the host's own uname at source time,
+# and these tests must not depend on the kernel the runner happens to boot.
+KSERIES=7.1
 DEST=$TEST_ROOT/modules/updates/imac5k/amdgpu.ko.xz
 DEPMOD_CONF=$TEST_ROOT/depmod/imac5k.conf
 STATE=$TEST_ROOT/state
