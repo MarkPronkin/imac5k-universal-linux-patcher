@@ -9,7 +9,7 @@ where they differ.
 | Tool | Arch package | Fedora package | Notes |
 |---|---|---|---|
 | bash | bash | bash | |
-| coreutils, grep (with `-P`), sed, awk, findutils | coreutils, grep, sed, gawk, findutils | same names | grep `-P` is used to parse `wpctl status` |
+| coreutils, grep, sed, awk, findutils | coreutils, grep, sed, gawk, findutils | same names | awk is used by the 5K helper scripts |
 | sudo | sudo | sudo | every module needs root at some point |
 | gum | gum | — | optional; nicer interactive UI, plain prompts are the fallback |
 
@@ -72,11 +72,6 @@ update Fedora, reboot, and retry. Fedora Kinoite/Atomic is not supported.
 Clones https://github.com/jackdanyell/imac18-3-cs8409-linux-audio into
 `~/.cache/imac-patcher/`; the upstream DKMS build downloads kernel source
 with wget.
-
-## EQ module (safe tier)
-
-- pipewire with the filter-chain plugin (`filter-chain.service` user unit)
-- wpctl (wireplumber) — optional; used to select the EQ sink as default
 
 ## Color module (safe tier)
 

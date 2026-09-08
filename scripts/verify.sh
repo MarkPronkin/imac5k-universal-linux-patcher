@@ -47,10 +47,9 @@ command -v glxinfo >/dev/null && glxinfo -B 2>/dev/null | grep -i 'OpenGL render
     echo "  glxinfo not installed (dnf install glx-utils)"
 
 echo
-echo "Audio and EQ"
+echo "Audio"
 command -v wpctl >/dev/null && wpctl status
 command -v dkms >/dev/null && dkms status
-systemctl --user is-active filter-chain.service
 
 echo
 echo "Thunderbolt devices"

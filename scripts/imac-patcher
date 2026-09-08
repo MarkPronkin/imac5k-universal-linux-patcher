@@ -41,11 +41,10 @@ STITCH_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-stitch.conf"
 FALLBACK_4K_DROPIN="${LIMINE_DROPIN_DIR}/imac4k-fallback.conf"
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 MONITORS_LUA="${HOME}/.config/hypr/monitors.lua"
-EQ_DEST="${HOME}/.config/pipewire/filter-chain.conf.d/eq6.conf"
 SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 mkdir -p "$LOGDIR" "$CACHE"
 
-MODULES=(audio eq color suspend boot 5k)
+MODULES=(audio color suspend boot 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
@@ -223,44 +222,6 @@ mod_audio_remove() {
     [[ -x "$AUDIO_SRC/install.cirrus.driver.sh" ]] && ( cd "$AUDIO_SRC" && sudo ./install.cirrus.driver.sh -r )
     sudo dkms remove snd_hda_macbookpro/0.2 --all 2>/dev/null || true
     say "stock module restored — reboot to load it"
-}
-
-# ═══════════════════════ module: eq ════════════════════════════════════════
-mod_eq_title() { echo "Speaker tone EQ"; }
-mod_eq_tier()  { echo safe; }
-mod_eq_desc()  { echo "The codec does no DSP at all; macOS's warmth is entirely software EQ. Adds a PipeWire filter-chain (bass shelf + clipping clamp)."; }
-mod_eq_detect() {
-    local conf=0 active=0
-    [[ -f "$EQ_DEST" ]] && conf=1
-    systemctl --user is-active filter-chain.service &>/dev/null && active=1
-    if (( conf && active )); then echo applied
-    elif (( conf || active )); then echo partial
-    else echo not-applied; fi
-}
-mod_eq_apply() {
-    mkdir -p "$(dirname "$EQ_DEST")"
-    install -m644 "${REPO_DIR}/configs/eq6.conf" "$EQ_DEST" || return 1
-    systemctl --user enable --now filter-chain.service || return 1
-    sleep 2
-    if command -v wpctl >/dev/null; then
-        local id
-        id=$(wpctl status 2>/dev/null | grep -oP '^\s*\*?\s*\K[0-9]+(?=\.\s+effect_input\.eq6)' | head -1)
-        [[ -n ${id:-} ]] && wpctl set-default "$id" && say "default output set to the EQ sink"
-        # the hardware sink keeps its own volume; leave it at full so the EQ
-        # sink's slider spans the real range (a stale low value silently caps it)
-        local hw
-        hw=$(wpctl status 2>/dev/null | grep -oP '^\s*\*?\s*\K[0-9]+(?=\.\s+.*Analog Stereo)' | head -1)
-        [[ -n ${hw:-} ]] && wpctl set-volume "$hw" 1.0 2>/dev/null || true
-    fi
-}
-mod_eq_remove() {
-    rm -f "$EQ_DEST"
-    systemctl --user disable --now filter-chain.service 2>/dev/null
-    if command -v wpctl >/dev/null; then
-        local hw
-        hw=$(wpctl status 2>/dev/null | grep -oP '^\s*\*?\s*\K[0-9]+(?=\.\s+.*Analog Stereo)' | head -1)
-        [[ -n ${hw:-} ]] && wpctl set-default "$hw" && say "default output restored to the hardware sink"
-    fi
 }
 
 # ═══════════════════════ module: color ═════════════════════════════════════

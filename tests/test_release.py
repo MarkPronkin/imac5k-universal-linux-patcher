@@ -102,7 +102,7 @@ class ReleaseTests(unittest.TestCase):
         with tarfile.open(self.dist / f"imac5k-patcher-{VERSION}.tar.gz") as tar:
             names = {n.split("/", 1)[1] for n in tar.getnames() if "/" in n}
         for needed in ("VERSION", "scripts/imac-patcher", "scripts/lib/platform.sh",
-                       "configs/eq6.conf", "patches/imac5k-lean-core-7.2.x.patch"):
+                       "configs/monitors.lua", "patches/imac5k-lean-core-7.2.x.patch"):
             self.assertIn(needed, names)
         for excluded in ("TODO.md", "notes", "tests"):
             self.assertNotIn(excluded, {n.split("/")[0] for n in names})
