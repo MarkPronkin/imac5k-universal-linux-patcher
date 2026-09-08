@@ -82,11 +82,18 @@ mod_audio_detect() {
     else echo not-applied; fi
 }
 mod_audio_apply() {
-    if ! command -v dkms >/dev/null; then
-        warn "dkms is not installed — the driver needs it to survive kernel updates"
-        say "install with:  sudo pacman -S --needed dkms linux-headers"
-        confirm "Install dkms and linux-headers now?" || return 1
-        sudo pacman -S --needed --noconfirm dkms linux-headers || return 1
+    # The upstream DKMS pre_build downloads kernel source with wget, and its
+    # failure is silent (exit 0) -- the build then dies later with a bogus
+    # "external module directory does not exist" make error. Check everything
+    # the install actually needs up front.
+    local pkg missing=()
+    for pkg in dkms linux-headers wget base-devel git; do
+        pacman -Q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+    done
+    if ((${#missing[@]})); then
+        warn "missing packages: ${missing[*]}"
+        confirm "Install them now?" || return 1
+        sudo pacman -S --needed --noconfirm "${missing[@]}" || return 1
     fi
     # A prior install may be registered but broken (source dir vanished, e.g. it
     # lived in /tmp). Clear that first so the installer can re-register cleanly.
