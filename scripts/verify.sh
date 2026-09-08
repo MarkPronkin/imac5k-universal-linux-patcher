@@ -50,6 +50,7 @@ echo
 echo "Audio"
 command -v wpctl >/dev/null && wpctl status
 command -v dkms >/dev/null && dkms status
+command -v pactl >/dev/null && pactl list cards | grep -E 'Name: alsa_card|Active Profile'
 
 echo
 echo "Thunderbolt devices"

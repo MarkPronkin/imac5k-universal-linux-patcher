@@ -47,6 +47,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 |---|---|---|
 | 🖥️ **Display** | Panel is two 2560×2880 tiles; stock `amdgpu` drives one and stretches it. No native 5K. | ✅ Native 5120×2880, genlocked |
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
+| 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
 | 😴 **Suspend** | Hard-hangs the machine every time (Apple firmware ACPI issue). | ⚠️ Masked off — see below |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
@@ -94,6 +95,24 @@ git clone https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
 cd imac18-3-cs8409-linux-audio && sudo ./install-imac18-3.sh && sudo reboot
 ```
 
+Then, optionally, the speaker tuning:
+
+```bash
+./scripts/imac-patcher --apply eq
+```
+
+The four speakers are two woofers and two tweeters, which the driver presents as a 4-channel card and everything else drives as a plain stereo pair. This switches the card to its **Analog Surround 4.0** profile and inserts a PipeWire filter-chain that crosses over at 3.8 kHz, EQs the two ways separately and convolves each with a measured impulse response — [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s tuning, measured with a calibrated microphone. Only that project's `Audio/` files are used; its kernel, display and GRUB work is not touched.
+
+It needs two LV2 plugin sets — `lsp-plugins-lv2` and `bankstown` (AUR) — and offers to install them. The files are downloaded at apply time rather than shipped here, so the tuning is always the upstream one. Everything lands in your home directory: `~/.config/pipewire/pipewire.conf.d/imac-audio.conf` and `~/.local/share/imac-audio/`, with nothing written as root.
+
+While the tuning is installed, the raw 4.0 device is hidden from sound pickers (a WirePlumber rule marks it internal, so the chain still feeds it but nothing offers it): selected directly it plays the tweeter half of the crossover and sounds thin. `--remove eq` puts the card profile, the default sink and that device back.
+
+**On loudness.** This is a corrective tuning, not a loudness profile — expect it to be somewhat quieter than stock at the same slider position. The woofer path runs about 8 dB down with a compressor and limiter, two bands are notched, the impulse responses flatten the speakers' peaks, and the crossover stops all four drivers reproducing everything at once. Flat costs level on these speakers.
+
+The tuning was measured on an iMac17,1 (2015), which has the same 4.0 speaker layout; if it sounds inverted — treble from the woofers — the channel mapping on your board differs and `--remove eq` restores it.
+
+If it ever sounds thin and far too quiet, the card has fallen back to its stereo profile: the chain still produces four channels, but the two woofer ones link to nothing and you are hearing the tweeter half of a crossover. `--status` reports that as `partial` rather than `applied`; `pactl list cards | grep 'Active Profile'` confirms it, and re-applying selects the 4.0 profile again.
+
 ---
 
 ## 🎨 Colour
@@ -133,7 +152,7 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 
 - Apple iMac18,3 (2017 27" 5K). The patcher refuses to run on other hardware.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
-- Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
+- Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
 - Nothing to install by hand: on startup the patcher checks the handful of basics it needs (`grep`, `sed`, `awk`, `findutils`, `coreutils`, `sudo`) and offers to install any that are missing. Each patch checks its own heavier dependencies when you run it. The full list is in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## 📦 Updating and removing the tool
@@ -173,4 +192,4 @@ This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://githu
 
 Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
 
-Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio).
+Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1 and fetched from that repository at apply time rather than vendored here.

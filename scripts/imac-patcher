@@ -44,7 +44,7 @@ MONITORS_LUA="${HOME}/.config/hypr/monitors.lua"
 SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 mkdir -p "$LOGDIR" "$CACHE"
 
-MODULES=(audio color suspend boot 5k)
+MODULES=(audio eq color suspend boot 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
@@ -230,6 +230,256 @@ mod_audio_remove() {
     [[ -x "$AUDIO_SRC/install.cirrus.driver.sh" ]] && ( cd "$AUDIO_SRC" && sudo ./install.cirrus.driver.sh -r )
     sudo dkms remove snd_hda_macbookpro/0.2 --all 2>/dev/null || true
     say "stock module restored — reboot to load it"
+}
+
+# ═══════════════════════ module: eq ════════════════════════════════════════
+#
+# Speaker tuning by taprobane99 (github.com/taprobane99/iMac5KLinux), measured
+# with a calibrated microphone: a PipeWire filter-chain that crosses the four
+# speaker channels over at 3.8 kHz, EQs each way, and convolves each with a
+# measured impulse response. Only the Audio/ part of that project is used --
+# nothing of its kernel, display or GRUB work is touched here.
+#
+# The files are fetched at apply time rather than vendored: that project
+# publishes no licence, and the audio module already installs its upstream
+# driver the same way.
+EQ_UPSTREAM="${IMAC5K_EQ_URL:-https://raw.githubusercontent.com/taprobane99/iMac5KLinux/main/Audio}"
+EQ_CONF="${HOME}/.config/pipewire/pipewire.conf.d/imac-audio.conf"
+# Upstream installs the impulse responses to /usr/share with sudo. They are
+# read by the user's own PipeWire daemon and referenced from a config in the
+# user's home, so they live beside it here: the whole module then needs root
+# for nothing but the plugin packages, and removing it leaves no root-owned
+# files behind. The paths inside the config are rewritten to match.
+EQ_UPSTREAM_IRS_DIR=/usr/share/imac-audio
+EQ_IRS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/imac-audio"
+EQ_IRS=("Filters L Aug 14-MP.wav" "Filters R Aug 14-MP.wav"
+        "Filters C2 Aug 16-MP.wav" "Filters LFE Aug 16-MP.wav")
+EQ_SINK=audio_effect.iMac-convolver
+EQ_HIDE_RULE="${HOME}/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf"
+EQ_PROFILE_40='output:analog-surround-40+input:analog-stereo'
+EQ_PROFILE_STATE="${LOGDIR}/eq-card-profile"
+
+mod_eq_title() { echo "Speaker tuning (4.0 DSP)"; }
+mod_eq_tier()  { echo safe; }
+mod_eq_desc()  { echo "The codec does no DSP at all; macOS's warmth is entirely software. Drives the woofers and tweeters as separate channels through a measured crossover, EQ and convolution chain."; }
+
+# The built-in speakers are one 4-channel card: two stereo speaker pins, which
+# PulseAudio/PipeWire present as the "Analog Surround 4.0" profile. That is
+# also how the card is told apart from HDMI here -- no other card offers it.
+# LC_ALL=C because pactl translates these labels.
+eq_card() {   # prints "<card name> <active profile>"
+    LC_ALL=C pactl list cards 2>/dev/null | awk '
+        /^Card #/                                  { name=""; active=""; has40=0 }
+        /^\tName: /                                { name=$2 }
+        $1 == "'"${EQ_PROFILE_40}"':"              { has40=1 }
+        /^\tActive Profile: /                      { active=$3
+                                                     if (has40 && name) { print name, active; exit } }'
+}
+
+# An LV2 plugin is present when its bundle is, wherever the distribution keeps
+# bundles -- checking package names would need one list per distribution.
+# NB: LV2_PATH is usually unset, and this script runs under `set -u`, where
+# expanding an unset variable is fatal to the whole process -- not to the
+# function. ${LV2_PATH:-} first, or a machine without it dies here, silently,
+# before a single message has been printed.
+eq_have_lv2() {   # $1 = bundle directory name
+    local dir search="${LV2_PATH:-}"
+    for dir in ${search//:/ } /usr/lib/lv2 /usr/lib64/lv2 /usr/local/lib/lv2 "${HOME}/.lv2"; do
+        [[ -d "${dir}/$1" ]] && return 0
+    done
+    return 1
+}
+
+# The card profile counts. With the card on stereo the chain still loads and
+# still produces four channels -- the two woofer ones just link to nothing, and
+# the machine plays the tweeter half of a crossover: quiet and thin, while
+# every file is in place. That is a "partial", not an "applied".
+mod_eq_detect() {
+    command -v pactl >/dev/null || { echo n/a; return; }
+    local conf=0 irs=1 live=0 four=0 f profile
+    [[ -f $EQ_CONF ]] && conf=1
+    for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
+    [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] && live=1
+    read -r _ profile <<<"$(eq_card)"
+    [[ ${profile:-} == "$EQ_PROFILE_40" ]] && four=1
+    if   (( conf && irs && live && four )); then echo applied
+    elif (( conf || irs || live || four )); then echo partial
+    else echo not-applied; fi
+}
+
+# lsp-plugins carries the loudness compensation and the woofer compressors;
+# bankstown is the psychoacoustic bass extension the chain starts with. A
+# missing plugin does not degrade the graph -- PipeWire drops the whole filter
+# node and the sink never appears -- so both are required, not optional.
+eq_plugins() {
+    local missing=() repo=() aur=()
+    eq_have_lv2 lsp-plugins.lv2 || { missing+=("lsp-plugins (LV2)"); repo+=(lsp-plugins-lv2); }
+    eq_have_lv2 bankstown.lv2   || { missing+=("bankstown (LV2)");   aur+=(bankstown); }
+    ((${#missing[@]})) || return 0
+    warn "missing LV2 plugins: ${missing[*]}"
+    ((${#repo[@]})) && say "  sudo pacman -S --needed ${repo[*]}    (dnf install on Fedora)"
+    ((${#aur[@]}))  && say "  yay -S ${aur[*]}    (or build it from https://github.com/chadmed/bankstown)"
+
+    if ((${#repo[@]})); then
+        if   command -v pacman >/dev/null; then
+            confirm "Install ${repo[*]} with pacman?" || return 1
+            sudo pacman -S --needed --noconfirm "${repo[@]}" || return 1
+        elif command -v dnf >/dev/null; then
+            confirm "Install ${repo[*]} with DNF?" || return 1
+            sudo dnf install -y "${repo[@]}" || return 1
+        else
+            warn "install the LSP LV2 plugins with your package manager, then re-run"; return 1
+        fi
+    fi
+    # bankstown is packaged in the AUR and nowhere else; on any other
+    # distribution it is a cargo build from source, which is the user's call.
+    if ((${#aur[@]})); then
+        local helper
+        for helper in yay paru; do command -v "$helper" >/dev/null && break; helper=""; done
+        if [[ -z $helper ]]; then
+            warn "bankstown is not in any distribution repository. Build it from"
+            warn "https://github.com/chadmed/bankstown into ~/.lv2, then re-run."
+            return 1
+        fi
+        confirm "Install bankstown from the AUR with ${helper}?" || return 1
+        "$helper" -S --needed --noconfirm bankstown || return 1
+    fi
+    eq_have_lv2 lsp-plugins.lv2 && eq_have_lv2 bankstown.lv2 && return 0
+    warn "the plugins are still missing after the install"; return 1
+}
+
+eq_fetch() {   # upstream config and impulse responses -> $CACHE/imac-audio
+    local dest="${CACHE}/imac-audio" f
+    mkdir -p "$dest"
+    for f in iMacAudio.conf "${EQ_IRS[@]}"; do
+        say "fetching ${f}"
+        curl -fsSL --retry 3 -o "${dest}/${f}" "${EQ_UPSTREAM}/${f// /%20}" \
+            || { warn "could not download ${f} from ${EQ_UPSTREAM}"; return 1; }
+        [[ -s "${dest}/${f}" ]] || { warn "${f} came back empty"; return 1; }
+    done
+}
+
+mod_eq_apply() {
+    local card profile
+    read -r card profile <<<"$(eq_card)"
+    [[ -n ${card:-} ]] || {
+        warn "no built-in speaker card offering ${EQ_PROFILE_40}."
+        warn "Apply the audio module first, then reboot -- the stock driver exposes no speakers."
+        return 1
+    }
+    command -v curl >/dev/null || { warn "curl is needed to fetch the tuning"; return 1; }
+    eq_plugins || return 1
+    eq_fetch   || return 1
+
+    local src="${CACHE}/imac-audio" f
+    for f in "${EQ_IRS[@]}"; do
+        install -Dm644 "${src}/${f}" "${EQ_IRS_DIR}/${f}" || return 1
+    done
+    install -Dm644 "${src}/iMacAudio.conf" "$EQ_CONF" || return 1
+    sed -i "s|${EQ_UPSTREAM_IRS_DIR}/|${EQ_IRS_DIR}/|g" "$EQ_CONF" || return 1
+    grep -qs -- "${EQ_IRS_DIR}/" "$EQ_CONF" || {
+        warn "the upstream config no longer points at ${EQ_UPSTREAM_IRS_DIR} -- check ${EQ_CONF}"; return 1; }
+    eq_write_hide_rule || return 1
+
+    # Remember what the card was on, so --remove can put it back rather than
+    # guessing at stereo. Written once: re-applying must not overwrite it with
+    # the 4.0 profile this module itself selected.
+    if [[ ! -f $EQ_PROFILE_STATE && -n ${profile:-} && $profile != "$EQ_PROFILE_40" ]]; then
+        printf '%s\n' "$profile" > "$EQ_PROFILE_STATE"
+    fi
+    eq_restart_pipewire
+    # Only now: WirePlumber re-applies its own stored profile as it comes back,
+    # so a profile selected before the restart is quietly undone -- the graph
+    # then feeds a stereo sink, the two woofer channels link to nothing, and
+    # the result is the tweeter half of a crossover and nothing else. Selecting
+    # it afterwards also stores it as the preference, so it survives a reboot.
+    eq_select_profile || {
+        warn "could not select ${EQ_PROFILE_40} on ${card}"; return 1; }
+    # The daemon answers before it has finished loading the filter graph.
+    local i
+    for i in $(seq 10); do
+        [[ $(mod_eq_detect) == applied ]] && break
+        sleep 1
+    done
+    if [[ $(mod_eq_detect) == applied ]]; then
+        pactl set-default-sink "$EQ_SINK" 2>/dev/null && say "default output set to the tuned sink"
+        # The chain is calibrated around a fixed hardware level; the sink's own
+        # slider is the one to use. See the volume warning in the README.
+        say "start quiet: this chain is louder than the stock sink at the same slider position"
+    else
+        warn "the tuned sink did not appear -- see: journalctl --user -u pipewire -n 40"
+        return 1
+    fi
+}
+
+# On the 4.0 profile the raw device stops being a speaker pair: FL/FR are the
+# tweeters, RL/RR the woofers. A stereo app that picks it directly gets the
+# tweeters plus whatever PipeWire's upmixer derives for the rear -- thin and
+# quiet -- so it is marked internal while the tuning is installed. It stays a
+# real node the chain links to; it is only the pickers that lose it, because
+# the PulseAudio layer exposes media.class "Audio/Sink" and nothing else.
+eq_write_hide_rule() {
+    mkdir -p "$(dirname "$EQ_HIDE_RULE")" || return 1
+    cat > "$EQ_HIDE_RULE" <<'RULE'
+# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+# Hides the raw 4.0 speaker device, which the DSP chain feeds, from sound
+# pickers: selected directly it plays the tweeter half of a crossover.
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_output.*analog-surround-40" } ]
+    actions = { update-props = { media.class = "Audio/Sink/Internal" } }
+  }
+]
+RULE
+}
+
+eq_select_profile() {   # idempotent; the card takes a moment after a restart
+    local i card profile
+    for i in $(seq 10); do
+        read -r card profile <<<"$(eq_card)"
+        [[ ${profile:-} == "$EQ_PROFILE_40" ]] && return 0
+        [[ -n ${card:-} ]] && pactl set-card-profile "$card" "$EQ_PROFILE_40" 2>/dev/null
+        sleep 1
+    done
+    return 1
+}
+
+mod_eq_remove() {
+    local card profile restore=output:analog-stereo+input:analog-stereo
+    read -r card profile <<<"$(eq_card)"
+    [[ -r $EQ_PROFILE_STATE ]] && restore="$(cat "$EQ_PROFILE_STATE")"
+    rm -f "$EQ_CONF" "$EQ_HIDE_RULE"
+    rm -rf "$EQ_IRS_DIR"
+    eq_restart_pipewire
+    # After the restart, for the same reason as in apply.
+    read -r card profile <<<"$(eq_card)"
+    if [[ -n ${card:-} ]]; then
+        pactl set-card-profile "$card" "$restore" \
+            && say "card profile restored to ${restore}" \
+            && rm -f "$EQ_PROFILE_STATE"
+    fi
+    # Whatever the card is now offering: with the filter sink gone, that is the
+    # hardware sink again.
+    local hw
+    hw=$(LC_ALL=C pactl list sinks short 2>/dev/null | awk '$2 ~ /^alsa_output/ {print $2; exit}')
+    [[ -n ${hw:-} ]] && pactl set-default-sink "$hw" && say "default output restored to ${hw}"
+}
+
+# The config is read by the PipeWire daemon at startup, not by a unit of its
+# own, so it takes a restart of the session's audio stack to load or unload.
+eq_restart_pipewire() {
+    say "restarting the audio stack"
+    # One unit at a time: a session that runs, say, no pipewire-pulse must not
+    # cost the others their restart, and with it the config reload.
+    local unit
+    for unit in pipewire pipewire-pulse wireplumber; do
+        systemctl --user restart "$unit" 2>/dev/null || true
+    done
+    local i
+    for i in $(seq 10); do
+        sleep 0.5
+        LC_ALL=C pactl info >/dev/null 2>&1 && break
+    done
 }
 
 # ═══════════════════════ module: color ═════════════════════════════════════
@@ -559,8 +809,21 @@ show_status() {
     done
     echo
     printf '  ids: %s\n' "${MODULES[*]}"
+    eq_prereq_note
 }
 
+# The startup gate covers what every run needs. These belong to one optional
+# patch and one of them is a source build, so they are reported here rather
+# than installed at launch on machines that will never apply it; the module
+# offers to install them at the point where they are actually needed.
+eq_prereq_note() {
+    [[ $(mod_eq_detect) == applied ]] && return 0
+    local missing=()
+    eq_have_lv2 lsp-plugins.lv2 || missing+=(lsp-plugins-lv2)
+    eq_have_lv2 bankstown.lv2   || missing+=("bankstown(AUR)")
+    ((${#missing[@]})) || return 0
+    printf '  eq needs %s — it offers to install them when you apply it\n' "${missing[*]}"
+}
 run_module() {   # $1 = apply|remove, $2 = id
     local action=$1 id=$2 st
     st="$("mod_${id}_detect")"

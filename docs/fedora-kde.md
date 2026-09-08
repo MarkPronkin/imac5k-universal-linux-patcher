@@ -197,11 +197,11 @@ the initramfs.
 
 ---
 
-## Audio, colour and sleep
+## Audio, tuning, colour and sleep
 
 ```bash
 ./scripts/imac-patcher --apply audio
-./scripts/imac-patcher --apply color suspend
+./scripts/imac-patcher --apply eq color suspend
 ```
 
 **Audio** verifies the iMac model and the CS8409 codec, then registers the
@@ -211,6 +211,12 @@ can hide a failed build behind a later success. DKMS keeps its own source copy
 under `/usr/src`, so later kernels rebuild without the cache. An existing
 registration is reused, and the initramfs is rebuilt at the end. Reboot before
 testing speakers and microphone.
+
+**Tuning** (`eq`) switches the speaker card to Analog Surround 4.0 and loads a
+PipeWire filter-chain over it. `lsp-plugins` comes from Fedora's repositories;
+`bankstown` does not exist as a Fedora package and has to be built from
+https://github.com/chadmed/bankstown into `~/.lv2` first, or the module stops
+and says so rather than installing a graph that cannot load.
 
 **Colour** selects the internal panel's **EDID** colour profile through
 `kscreen-doctor`. This uses the colour information the panel advertises — it is
@@ -246,7 +252,7 @@ there as well. `--remove suspend` lifts the masks.
 The design goal was to add Fedora without forking or rewriting the Omarchy
 implementation. The patcher is a set of `mod_<id>_<verb>` shell functions
 (`detect`, `apply`, `remove`, …) over the module list
-`audio color suspend boot 5k`. The Fedora backend **redefines only the
+`audio eq color suspend boot 5k`. The Fedora backend **redefines only the
 functions that differ**, and it is sourced *after* the originals, so anything it
 does not mention keeps the Omarchy behaviour verbatim.
 
