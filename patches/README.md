@@ -34,8 +34,43 @@ swaps it in (stock module backed up first). Re-run it after a kernel update.
 
 Since 2026-09-07 the installer builds the **lean pair** (`imac5k-lean-core-7.2.x.patch`
 + `imac5k-stitch-layer-7.x.patch`). The verbose stack (full-stack patch + the
-five `5k-*.patch` increments) is still available: `IMAC5K_STACK=verbose sudo
+`5k-*.patch` follow-ups) is still available: `sudo env IMAC5K_STACK=verbose
 ../scripts/patch-imac5k-amdgpu.sh`.
+
+The verbose stack includes the experimental slave-link recovery pair,
+`5k-slave-link-verify-retrain.patch` then `5k-slave-link-preserve-lock.patch`.
+The first check passed at stream enable yet the link later lost lock on the
+2026-09-08 boot. The follow-up ports the lean stack's panel-latch HPD guard
+and delays the lock checks, but its test boot also remained stretched:
+the slave AUX returned EIO despite the early checks reporting lock.
+A full DPMS off/on cycle restored healthy AUX status on both links, which
+verified session recovery but not a boot fix. Both are superseded by the
+post-commit patch below, and are kept for the record. See `TODO.md`.
+
+`5k-post-commit-link-recovery.patch` follows them. It moves the deferred check
+after the *complete* atomic commit and re-reads both tiles' DPCD lane status up
+to eight times (250 ms, then every 500 ms), running DC's link-loss recovery at
+most twice per modeset when a tile is not locked. Its whole sequence is tagged,
+so one command reads a boot:
+
+```bash
+journalctl -k -b 0 | grep 'APPLE5K: link-health'
+```
+
+The `build=post-commit-recovery` banner is logged at DM init, before any panel
+is detected -- if it is missing, that module did not load. Each armed sequence
+ends in one `PASS`, `FAIL` or `disarmed` line; on `recovery` and `FAIL` lines,
+`root=`/`slave=` are per-tile health flags rather than attempt counts.
+
+**Validated on hardware 2026-09-08:** first boot off this build came up at a
+correct 5120x2880 with no VT or DPMS cycle, logging `PASS: both tiles healthy
+after 1 recovery attempts` -- so the recovery ran and repaired the link before
+anything reached the screen. Two details that boot corrected: the loss is *not*
+slave-only (the unhealthy tile was the root, with lanes locked but sink status
+0x205 = 00), and the AUX `EIO` seen earlier is a real transient that the same
+recovery handles. The *cause* of the post-enable loss is still unknown -- this
+repairs it after the fact. `scripts/imac-test-entry` still keeps it off the
+default entry pending repeat-boot evidence.
 
 ### Fedora 7.1.13 context
 

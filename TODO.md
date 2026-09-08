@@ -3,6 +3,337 @@
 Open items for the iMac18,3 patch. Root causes are recorded here so nobody has
 to re-derive them.
 
+## Resume checkpoint — 2026-09-08
+
+**The post-commit link-health candidate WORKS. First clean boot: 02:09.**
+Owner confirmed a normal, unstretched desktop straight out of the
+**Test - 5K boot fixes** entry, with no VT cycle and no DPMS cycle. This is the
+first boot fix in this line of work — every earlier "success" was session
+recovery after the fact.
+
+Evidence for that boot, `hardware-private/post-commit-recovery/pass-boot-0209.log`:
+
+- `srcversion` = `D6E34F13001AF8D6C5A6E90`, so the candidate is what loaded.
+- `card1-eDP-1` enabled at `5120x2880`; Hyprland reports one 5120x2880@59.982
+  monitor, scale 2.
+- Three armed sequences, each ending `PASS`. The first needed one recovery.
+
+**The failure is not slave-only.** On the first tiled modeset the unhealthy
+link was **link[0], the root tile**:
+
+```
+pass 1/8  link[0] aux=1 lanes=4 status=77 77 81 00 00 00 ready=0
+          link[1] aux=1 lanes=4 status=77 77 01 01 00 00 ready=1
+recovery 1/2 root=0 slave=1
+```
+
+Lanes were fully locked (`77 77`) and align was done, but **sink status 0x205
+was `00` — the sink was not receiving** — with bit 7 of 0x204 set, i.e. the
+sink flagging LINK_STATUS_UPDATED. That is a different signature from the
+CR-only slave failure recorded below, and it is on the other tile. After the
+recovery, 0x205 went to `01` and stayed there for passes 2-8.
+
+The third sequence also caught the AUX `EIO` signature from the 01:37 failed
+boot, mid-flight rather than at boot: pass 4/8 read `link[1] aux=-1
+status=00 00 00 00 00 00`, recovery ran, a fresh tiled modeset armed, and it
+passed 8/8 clean. So the transient AUX failure is real and recoverable, not a
+measurement artifact.
+
+**What this does and does not establish.** It establishes that reading DPCD
+after the complete commit detects the loss, and that DC's link-loss recovery
+repairs it before the user sees anything. It does not establish the *cause* of
+the post-enable loss, and one boot is not evidence about a race: the failure
+did not reproduce at all in the second and third sequences (`0 recovery
+attempts`). Gather repeat-boot evidence before promoting.
+
+### Where it stands
+
+- Staged and booted; the default entry still carries the known-good module.
+- `sudo scripts/imac-test-entry promote` makes it permanent, `drop` discards it.
+  Not promoted.
+- Nothing committed. `patches/5k-post-commit-link-recovery.patch` and the two
+  earlier slave-link patches are still untracked.
+
+### Build provenance
+
+Built for `7.1.9-arch1-2`, srcversion **`D6E34F13001AF8D6C5A6E90`** (the old
+default is `0580ADB03337B21F464071D`). Module:
+`hardware-private/post-commit-recovery/amdgpu.ko.zst` (stripped, zstd -19, the
+same packaging the installer uses). `patches/5k-post-commit-link-recovery.patch`
+is last in the verbose stack: it moves the deferred work after the *complete*
+atomic commit and, for a tiled modeset, re-reads both tiles' DPCD lane status
+eight times — 250 ms, then every 500 ms. An AUX error, incomplete lane lock or
+absent sink reception counts as failure and runs DC's own link-loss recovery
+(blank/disable/enable), at most twice per modeset, slave last; the final
+observation is reserved for verification.
+
+Offline fault injection covers healthy scanout, AUX failure, delayed success,
+lane/sink validation, active-pair guards, bounded recovery, suspend/reset/
+shutdown guards and the modeset budget:
+
+```bash
+python3 hardware-private/post-commit-recovery/sync-test.py   # keep the copy honest
+gcc -o /tmp/hc hardware-private/post-commit-recovery/health-check-test.c && /tmp/hc
+```
+
+`sync-test.py` re-copies the four functions out of the driver, so the test can
+never drift into testing a stale copy of the logic.
+
+### Reading a boot
+
+One tag covers the whole sequence:
+
+```bash
+journalctl -k -b 0 | grep 'APPLE5K: link-health'
+```
+
+Expect, in order: `build=post-commit-recovery ...` (logged at DM init, before
+any panel is detected — **if this line is absent the candidate did not load**,
+check `/sys/module/amdgpu/srcversion` against the value above), `armed after
+tiled modeset`, then numbered `pass N/8` lines each carrying both links'
+`aux=`, `lanes=` and raw `status=` bytes, and finally one of:
+
+- `PASS: both tiles healthy after N recovery attempts` — with `N>0` the
+  recovery worked; with `N=0` the failure did not reproduce this boot.
+- `FAIL: unrecovered after N attempts root=.. slave=..` — recovery ran and the
+  tile still would not lock.
+- `disarmed: ...` — the checks stopped before reaching a verdict (no DC state,
+  no active tiled pair, or a pass skipped for suspend/shutdown). The reason is
+  on the line.
+
+On `recovery` and `FAIL` lines, `root=`/`slave=` are per-tile *health* flags,
+not attempt counts: `root=0 slave=1` means the root tile was the unhealthy one.
+
+Still capture the owner's visible result alongside the log; a logged PASS alone
+is not sufficient, as the 01:37 boot demonstrated for the earlier build.
+
+### Restaging after a kernel update
+
+The staging that produced this boot, for reference — run from the repo root:
+
+```bash
+KREL=$(uname -r); M=/usr/lib/modules/$KREL/kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko.zst
+sudo cp -f "$M" "$M.prev-5k"                                  # today's default = known-good
+sudo cp -f hardware-private/post-commit-recovery/amdgpu.ko.zst "$M"
+sudo depmod "$KREL"
+sudo limine-mkinitcpio                                        # current UKI now carries the candidate
+sudo scripts/imac-test-entry stage "$M.prev-5k"               # that UKI becomes the test entry
+```
+
+Earlier this session, in order:
+
+**Update after booting the test entry (01:37 boot): FAILED.** The owner
+reported a stretched desktop. Running `srcversion` is
+`DFC9A1AD3EACA2EEC021236`, confirming the intended test module loaded.
+Hyprland reports 5120x2880, scale 2, XRGB8888, with no config errors.
+All three initial slave-link checks reported locked, and the panel-latch
+HPD guard ran. Suppressing those re-detects is therefore insufficient.
+
+Before any display changes, AUX0 at 0x200 returned
+`01 00 77 77 01 01 00 00`; AUX1 returned EIO, including with the previously
+working byte-by-byte `dd` method. Sysfs confirms AUX1 belongs to DP-1.
+This differs from the earlier CR-only reads: no valid slave lane-status
+bytes were obtained, so do not describe this boot as measured CR-only.
+EIO alone does not establish whether the sink powered down or another AUX
+failure occurred.
+
+A tty1 -> tty3 -> tty1 cycle did **not** recover the picture (owner
+confirmed). It also produced no new stream-enable/link-training log,
+so this particular VT cycle did not force the required link restart.
+
+An explicit DPMS off/on cycle, with a three-second delay, did run the
+stream-enable sequence again (boot time ~324 s). Both AUX devices then
+returned `01 00 77 77 01 01 00 00`. The owner confirmed the desktop now
+looks normal. This verifies session recovery, not a boot fix.
+On installed Hyprland 0.56.2, use the Lua dispatch form:
+`hyprctl eval 'hl.dispatch(hl.dsp.dpms("off"))'`, then after three seconds
+`hyprctl eval 'hl.dispatch(hl.dsp.dpms("on"))'`. The old
+`hyprctl dispatch dpms off` form is rejected without changing state.
+Always arrange the `on` call in a finally/trap so the screen returns.
+
+Evidence: `hardware-private/link-recovery/failed-test-boot.log` (captured
+before recovery) and `failed-test-after-dpms.log`. No driver/config/boot
+artifacts changed during this diagnosis. The test is not ready to promote.
+Next driver investigation needs link status after the entire commit and
+settled scanout, including AUX failures; another early "locked" message
+is not a sufficient success criterion.
+
+Previous checkpoint, retained for build provenance:
+
+Stopped after installing **Test - 5k-link-recovery** in Limine. The owner
+confirmed the current desktop was normal after a VT round trip and will
+reboot into the test entry next. The new build has NOT been boot-tested or
+promoted. Default UKI and installed module hashes were verified unchanged.
+
+On resume, capture evidence BEFORE any reload, VT switch or modeset:
+
+1. Read `uname -r` and `/sys/module/amdgpu/srcversion`. The test build is
+   `7.1.9-arch1-2` / `DFC9A1AD3EACA2EEC021236`; the old default is
+   `0580ADB03337B21F464071D`. `modinfo` reads the installed default file,
+   so it does not identify which module the test entry actually loaded.
+2. Read both AUX devices at 0x200 for eight bytes with root privileges.
+   Healthy lane bytes (0x202/0x203) are `77 77`, align (0x204) has bit 0
+   set (`01` or `81`), and sink status (0x205) is `01`. Record raw bytes.
+3. Capture boot kernel logs for `slave tile link`, `re-train result`,
+   `ignoring panel-latch HPD`, and `detect connection link[1]`. Check the
+   owner's visible result; a logged lock alone already proved insufficient.
+4. If stretched again, preserve that evidence, then use the known VT
+   recovery and verify both links afterward. If clean, gather repeat-boot
+   evidence before treating this as resolved or promoting the build.
+
+Artifacts and logs: `hardware-private/link-recovery/` (gitignored), including
+the source/build tree, `amdgpu.ko.zst`, build logs, captured kernel log,
+`limine-before.conf`, and `default-before.json`. The follow-up patch is
+`patches/5k-slave-link-preserve-lock.patch`, after
+`patches/5k-slave-link-verify-retrain.patch` in the verbose installer.
+Existing changes in `scripts/imac-patcher` predate this recovery work;
+preserve them. Nothing was committed or published.
+
+## Stretched desktop: a tile loses link lock (5K, MITIGATED — cause still open)
+
+**Mitigated 2026-09-08** by `patches/5k-post-commit-link-recovery.patch`, which
+detects the loss after the complete commit and repairs it; see the resume
+checkpoint at the top for the passing boot and for why the failure is not
+slave-only. The cause of the post-enable loss is still unknown, so the analysis
+below stands as the record of what was measured.
+
+**Root-caused 2026-09-08 on iMac18,3 / kernel 7.1.9-arch1-2, verbose stack.**
+On the measured stretched boots, the second tile's DP link has clock recovery
+but no equalisation or symbol lock, so tile B receives no valid symbols and
+the panel stretches tile A across the glass. The later 01:19 reboot proves
+that initial training can succeed and the lock can be lost afterward; see
+the follow-up below.
+
+Read on the slave AUX after a stretched boot, with the root as control:
+
+| DPCD | root eDP-1 (tile A) | slave DP-1 (tile B) | slave after `chvt` cycle |
+|---|---|---|---|
+| 0x202/0x203 lane status | `77 77` CR+EQ+symbol lock | `11 11` **CR only** | `77 77` |
+| 0x204 interlane align | `01` done | `00` | `81` |
+| 0x205 sink status | `01` receiving | `00` | `01` |
+| 0x100/0x101 | `14 84` | `14 84` | `14 84` |
+| 0x206/0x207 adjust req | `00 00` | `00 00` | `00 00` |
+
+Diagnostic shortcut worth remembering: **half-dark panel = dual mode with one
+tile unlit; stretched panel = the slave link is dead.** They are different
+faults and the section below is only about the first.
+
+A `chvt 3; chvt 1` cycle re-trains the link and fixes it for the session, with
+identical parameters and the identical code path — so this is a race, not a
+misconfiguration.
+
+**Why five patch iterations missed it:** nothing in either stack reads back
+0x202-0x204. `APPLE5K: link-config final ... status=1` is the status of the
+*config write*, not of training; boot logs five such "successful" rounds while
+the link sits at CR-only. The one guard that exists,
+`link_apple_5k_slave_aux_ready()`, polls `DP_DPCD_REV` over **AUX** — which
+answers regardless of main-link state (`elapsed_ms=0`, returns on attempt 0) —
+so it adds no settling and proves nothing about the link.
+
+Ruled out by measurement; do not re-derive:
+- **0x4F1 latch.** Written and `readback=0x01` on both links at every
+  stream-enable. The wake works.
+- **ASSR / scrambler.** `0x00D = 00` on *both* links — neither sink advertises
+  ASSR capability — yet `dp_get_panel_mode()` is patched to return
+  `DP_PANEL_MODE_EDP` for the tiled slave, so the slave carries `0x10A = 01`
+  and the root `00`. It trains fine with `0x10A` still `01`. Not this bug,
+  though forcing ASSR against a sink that does not advertise it is worth
+  revisiting on its own.
+- **Signal integrity.** The sink never requests more swing or pre-emphasis.
+
+**First recovery patch built and booted 2026-09-08; insufficient:**
+`patches/5k-slave-link-verify-retrain.patch`, wired into the **verbose** stack's
+`EXTRA_PATCHES`. It adds `dp_tiled_slave_link_locked()` and
+`dp_relock_tiled_slave_link()` to `link_dpms.c` and calls the latter from
+`enable_stream_features()`, immediately after `dp_write_tiled_stream_enable_latch()`
+— i.e. with the stream unblanked and the latch re-asserted. Up to four rounds;
+each round settles `20 ms * (attempt + 1)` and then calls
+`dp_perform_link_training()` at the current link settings.
+
+It deliberately does **not** re-assert `0x4F1` inside the loop: the latch already
+reads back 1, writing it pulses the slave's HPD, that write is itself a suspect
+for knocking the freshly trained link down, and on stacks without lean3's
+HPD-ignore fix each write costs a full re-detect round. Re-asserting would risk
+repeating the fault the loop is recovering from, and could never converge.
+
+Applies cleanly to the 7.1.9 tree. **Verbose only** — the lean core names the
+guard `dc_link_is_apple_tiled_slave()` rather than
+`dc_link_needs_tiled_stream_enable_latch()`, so it needs a one-line port before
+it can go in the installer default. Do that after it is verified on hardware.
+
+**Follow-up after the 01:19 reboot (2026-09-08):** the running module's
+`srcversion` matched the installed build (`0580ADB03337B21F464071D`), and all
+six stream-enable checks logged `locked after 0 re-train(s)`. Nevertheless,
+live AUX reads found root `77 77 / 81 / 01`, slave `11 11 / 80 / 00`
+(lanes / align / sink). Thus the link can lose lock **after** the check;
+the first patch was installed correctly but checked too early.
+
+The last check was followed by two `DETECT_REASON_HPD` slave detects.
+Unlike the lean core, this verbose stack still re-detects on its own latch
+pulse. A VT round trip (`tty1 -> tty3 -> tty1`) restored both links to
+`77 77 / 01 / 01`; the owner confirmed the desktop looked normal.
+
+`patches/5k-slave-link-preserve-lock.patch` follows the first recovery patch
+in the verbose installer. It ports the existing lean HPD guard, waits before
+the first lock read and after each re-train, and checks the final re-train
+before declaring failure. It also ports the lean stitch layer's 9-byte
+tile-group buffer fix, after the compiler caught the verbose stack passing
+an 8-byte buffer to DRM functions that read nine bytes. That overread is a
+separate defect, not established as the link-loss cause.
+
+The HPD re-detect is the leading explanation for
+the post-check loss, not yet a reboot-confirmed cause. The lean default is
+unchanged. Reboot validation must check both AUX status and the visible
+panel, since immediate log messages alone already gave a false reassurance.
+
+Build validation: complete amdgpu module compiled for `7.1.9-arch1-2`,
+`srcversion=DFC9A1AD3EACA2EEC021236`. The full verbose sequence applies to
+fresh 7.1.9 source using the installer's normal patch settings (older base
+hunks require fuzz); the new follow-up applies at `--fuzz=0`. All three
+changed source files match the clean-stack result. The final incremental
+build removes the tile-buffer overread warning; the initial build also
+reported an existing unused `aconnector` variable in `amdgpu_dm_helpers.c`.
+BTF generation was skipped because the source tree has no `vmlinux`.
+
+Installed as the separate Limine entry **Test - 5k-link-recovery**
+(`/boot/EFI/Linux/omarchy_linux-5k-link-recovery.efi`). The helper verified
+the embedded module byte-for-byte and verified its command line. SHA-256
+checks confirmed that the default UKI and installed module were unchanged.
+The initial packaging attempt stopped before installation because mkinitcpio
+squeezes spaces in the command line; the menu contained a doubled separator.
+The successful attempt used the default UKI's embedded command line after
+verifying its argument list matched the menu. Reboot into the test entry
+and confirm the display plus AUX status before promoting it.
+
+
+Verify with the DPCD read, which is stack-independent and is the ground truth —
+a locked slave reads `77 77` / `81` / `01`:
+
+```
+dd if=/dev/drm_dp_aux1 bs=1 skip=512 count=6 status=none | od -An -tx1
+journalctl -k -b | grep 'slave tile link'
+```
+
+**Fix direction:** after the slave stream-enable sequence completes — i.e.
+after the final `0x4F1` write, which pulses the slave's HPD — read 0x202-0x204
+and retrain if EQ, symbol lock or interlane align are not all set; retry a few
+times with a delay. Replace the AUX-readiness guard with this link-status
+check, or keep both. Stopgap until then: force a modeset after boot.
+
+Reproduce the reads with plain `dd` on the AUX chardevs (decimal offsets):
+
+```
+dd if=/dev/drm_dp_aux1 bs=1 skip=512 count=6 status=none | od -An -tx1   # 0x200-0x205
+dd if=/dev/drm_dp_aux1 bs=1 skip=518 count=2 status=none | od -An -tx1   # 0x206-0x207
+```
+
+Enable DC's own training log with dynamic debug (it is all `pr_debug`):
+
+```
+echo 'file drivers/gpu/drm/amd/display/dc/link/protocols/link_dp_training*.c +p' \
+  > /sys/kernel/debug/dynamic_debug/control
+```
+
 ## Display — two boot artifacts (5K only)
 
 **Patch layout (2026-09-06):** the boot-artifact work is split by confidence.

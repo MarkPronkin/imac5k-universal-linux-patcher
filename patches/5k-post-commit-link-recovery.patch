@@ -1,0 +1,316 @@
+iMac 5K: recover tile link loss after the completed display commit
+
+Experimental follow-up to 5k-slave-link-preserve-lock.patch (verbose stack).
+The 2026-09-08 test boot reported initial lock but remained stretched, with
+slave AUX returning EIO. Its HPD guard was active. A full DPMS restart
+restored both links and the owner confirmed a normal desktop.
+
+Move deferred work after the complete atomic commit. For a tiled modeset,
+observe both active tile links eight times (250 ms initially, then 500 ms).
+Treat AUX errors, incomplete lane lock, and absent sink reception as failure.
+Use DC's normal blank/disable/enable link-loss recovery, bringing the slave
+up after the root if the root also failed. At most two recoveries per
+modeset; reserve the final observation for verification. Healthy links are
+not restarted. Re-sync after recovery, then verify on a later work pass.
+
+Serialize against DC programming; do not revive DPMS-off streams or act
+during suspend/reset/shutdown. Stop requeueing before teardown cancellation.
+This repairs the observed failure after it occurs; the underlying cause of
+the post-enable loss is not yet established. Hardware reboot validation is
+required before promotion. No compositor startup reset is installed.
+
+Every line of the sequence carries one tag, so a single
+`journalctl -k -b 0 | grep 'APPLE5K: link-health'` reads the whole story of a
+boot: the build banner at init (before any panel is detected, so a missing
+banner means the wrong module booted), the arming, each numbered pass with
+both links' DPCD status, and a final PASS or FAIL. The paths that silently
+disarmed the checks -- no DC state, no active tiled pair, a pass skipped for
+suspend or shutdown -- now say so rather than leaving the log to end after
+the arming line.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -849,7 +849,7 @@
+ static int amdgpu_dm_init(struct amdgpu_device *adev);
+ static void amdgpu_dm_fini(struct amdgpu_device *adev);
+ static void amdgpu_dm_tiled_resync_work(struct work_struct *work);
+-static void amdgpu_dm_queue_tiled_resync(struct amdgpu_device *adev);
++static void amdgpu_dm_queue_tiled_resync(struct amdgpu_device *adev, bool modeset);
+ static bool is_freesync_video_mode(const struct drm_display_mode *mode, struct amdgpu_dm_connector *aconnector);
+ static void reset_freesync_config_for_crtc(struct dm_crtc_state *new_crtc_state);
+ static struct amdgpu_i2c_adapter *
+@@ -2645,6 +2645,14 @@
+ 	mutex_init(&adev->dm.dpia_aux_lock);
+ 	mutex_init(&adev->dm.dc_lock);
+ 	INIT_DELAYED_WORK(&adev->dm.tiled_resync_work, amdgpu_dm_tiled_resync_work);
++	adev->dm.tiled_resync_stopping = false;
++	adev->dm.tiled_link_checks = 0;
++	adev->dm.tiled_link_recoveries = 0;
++	adev->dm.tiled_sync_pending = false;
++	drm_info(adev_to_drm(adev),
++		 "APPLE5K: link-health build=post-commit-recovery checks=%u recoveries=%u delay_ms=%u+%u\n",
++		 APPLE5K_LINK_CHECKS, APPLE5K_LINK_RECOVERIES,
++		 APPLE5K_LINK_SETTLE_MS, APPLE5K_LINK_RECHECK_MS);
+ 	mutex_init(&adev->dm.audio_lock);
+ 
+ 	if (amdgpu_dm_irq_init(adev)) {
+@@ -2998,8 +3006,13 @@
+  */
+ void amdgpu_dm_apple5k_going_down(struct amdgpu_device *adev)
+ {
+-	if (adev && adev->dm.dc)
++	if (adev && adev->dm.dc) {
++		mutex_lock(&adev->dm.dc_lock);
++		adev->dm.tiled_resync_stopping = true;
+ 		adev->dm.dc->apple_5k_going_down = true;
++		mutex_unlock(&adev->dm.dc_lock);
++		cancel_delayed_work_sync(&adev->dm.tiled_resync_work);
++	}
+ }
+ 
+ /*
+@@ -3056,6 +3069,9 @@
+ {
+ 	int i;
+ 
++	mutex_lock(&adev->dm.dc_lock);
++	adev->dm.tiled_resync_stopping = true;
++	mutex_unlock(&adev->dm.dc_lock);
+ 	cancel_delayed_work_sync(&adev->dm.tiled_resync_work);
+ 
+ 	if (adev->dm.vblank_control_workqueue) {
+@@ -12946,6 +12962,7 @@
+ 	struct drm_connector_state *old_con_state = NULL, *new_con_state = NULL;
+ 	struct dm_crtc_state *dm_old_crtc_state, *dm_new_crtc_state;
+ 	int crtc_disable_count = 0;
++	bool tiled_modeset = false;
+ 
+ 	trace_amdgpu_dm_atomic_commit_tail_begin(state);
+ 
+@@ -12956,7 +12973,6 @@
+ 	if (dm_state && dm_state->context) {
+ 		dc_state = dm_state->context;
+ 		amdgpu_dm_commit_streams(state, dc_state);
+-		amdgpu_dm_queue_tiled_resync(adev);
+ 	}
+ 
+ 	amdgpu_dm_update_hdcp(state);
+@@ -13208,6 +13224,19 @@
+ 
+ 	drm_atomic_helper_cleanup_planes(dev, state);
+ 
++	/* Arm after the complete commit, not midway through stream programming. */
++	if (dc_state) {
++		for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
++			dm_new_crtc_state = to_dm_crtc_state(new_crtc_state);
++			if (new_crtc_state->active &&
++			    drm_atomic_crtc_needs_modeset(new_crtc_state) &&
++			    dm_new_crtc_state->stream &&
++			    amdgpu_dm_link_is_tiled_stitch_root(dm_new_crtc_state->stream->link))
++				tiled_modeset = true;
++		}
++		amdgpu_dm_queue_tiled_resync(adev, tiled_modeset);
++	}
++
+ 	/* Don't free the memory if we are hitting this as part of suspend.
+ 	 * This way we don't free any memory during suspend; see
+ 	 * amdgpu_bo_free_kernel().  The memory will be freed in the first
+@@ -15783,22 +15812,162 @@
+  * So: after every commit that touches the tiled pair, re-run the sync a short
+  * while later, via the same routine the debugfs force_timing_sync knob uses.
+  */
++/* A stream-enable check can pass before the tile loses AUX or main-link
++ * lock later in the commit. HPD-RX recovery cannot help when its status read
++ * fails. Observe settled scanout, and use DC's full link-loss sequence rather
++ * than sending training patterns into an otherwise live stream.
++ */
++static bool amdgpu_dm_tiled_link_ready(struct amdgpu_device *adev,
++				      struct dc_link *link)
++{
++	u8 status[DP_LINK_STATUS_SIZE] = {0};
++	unsigned int lanes = link->cur_link_settings.lane_count;
++	enum dc_status ret;
++	bool ready;
++
++	ret = core_link_read_dpcd(link, DP_LANE0_1_STATUS, status, sizeof(status));
++	ready = ret == DC_OK && lanes == 4 &&
++		drm_dp_channel_eq_ok(status, lanes) &&
++		(status[DP_SINK_STATUS - DP_LANE0_1_STATUS] & DP_RECEIVE_PORT_0_STATUS);
++	drm_info(adev_to_drm(adev),
++		 "APPLE5K: link-health link[%u] aux=%d lanes=%u status=%*ph ready=%d\n",
++		 link->link_index, ret, lanes, (int)sizeof(status), status, ready);
++	return ready;
++}
++
++/* Caller holds dc_lock. Never resurrect a DPMS-off or disappearing stream. */
++static bool amdgpu_dm_tiled_check_links(struct amdgpu_device *adev)
++{
++	struct dc *dc = adev->dm.dc;
++	struct dc_link *root = NULL, *slave = NULL;
++	bool root_ready, slave_ready;
++	int i;
++
++	if (!dc->current_state) {
++		drm_warn(adev_to_drm(adev),
++			 "APPLE5K: link-health disarmed: no dc state\n");
++		return false;
++	}
++	for (i = 0; i < dc->current_state->stream_count; i++) {
++		struct dc_stream_state *stream = dc->current_state->streams[i];
++		struct dc_link *link = stream->link;
++
++		if (stream->dpms_off || !link->local_sink || link->aux_access_disabled)
++			continue;
++		if (amdgpu_dm_link_is_tiled_stitch_root(link))
++			root = link;
++		else if (dc_link_has_tiled_slave_panel_patch(link))
++			slave = link;
++	}
++	if (!root || !slave || root->tiled_peer != slave || slave->tiled_peer != root) {
++		drm_warn(adev_to_drm(adev),
++			 "APPLE5K: link-health disarmed: no active tiled pair root=%d slave=%d paired=%d streams=%u\n",
++			 !!root, !!slave,
++			 root && slave && root->tiled_peer == slave &&
++				 slave->tiled_peer == root,
++			 dc->current_state->stream_count);
++		return false;
++	}
++
++	root_ready = amdgpu_dm_tiled_link_ready(adev, root);
++	slave_ready = amdgpu_dm_tiled_link_ready(adev, slave);
++	if (root_ready && slave_ready)
++		return true;
++
++	/* Reserve the last observation for verification, not another reset. */
++	if (adev->dm.tiled_link_recoveries >= APPLE5K_LINK_RECOVERIES ||
++	    adev->dm.tiled_link_checks <= 1) {
++		drm_err(adev_to_drm(adev),
++			"APPLE5K: link-health FAIL: unrecovered after %u attempts root=%d slave=%d\n",
++			adev->dm.tiled_link_recoveries, root_ready, slave_ready);
++		return false;
++	}
++	adev->dm.tiled_link_recoveries++;
++	adev->dm.tiled_sync_pending = true;
++	drm_warn(adev_to_drm(adev),
++		 "APPLE5K: link-health recovery %u/%u root=%d slave=%d\n",
++		 adev->dm.tiled_link_recoveries, APPLE5K_LINK_RECOVERIES,
++		 root_ready, slave_ready);
++	if (!root_ready)
++		dc_link_dp_handle_link_loss(root);
++	/* A root restart can reset the shared panel. Bring the slave up last. */
++	dc_link_dp_handle_link_loss(slave);
++	return true;
++}
++
+ static void amdgpu_dm_tiled_resync_work(struct work_struct *work)
+ {
+ 	struct amdgpu_display_manager *dm =
+ 		container_of(to_delayed_work(work), struct amdgpu_display_manager,
+ 			     tiled_resync_work);
++	struct amdgpu_device *adev = dm->adev;
++	struct dc *dc = dm->dc;
++	int i;
++
++	mutex_lock(&dm->dc_lock);
++	if (dm->tiled_resync_stopping || !dc || dc->apple_5k_going_down ||
++	    adev->in_suspend || amdgpu_in_reset(adev)) {
++		if (dm->tiled_link_checks)
++			drm_info(adev_to_drm(adev),
++				 "APPLE5K: link-health pass skipped: stopping=%d going_down=%d suspend=%d reset=%d\n",
++				 dm->tiled_resync_stopping,
++				 dc && dc->apple_5k_going_down, adev->in_suspend,
++				 amdgpu_in_reset(adev));
++		goto out;
++	}
+ 
+-	amdgpu_dm_trigger_timing_sync(adev_to_drm(dm->adev));
++	if (dm->tiled_link_checks) {
++		drm_info(adev_to_drm(adev),
++			 "APPLE5K: link-health pass %u/%u recoveries=%u\n",
++			 APPLE5K_LINK_CHECKS - dm->tiled_link_checks + 1,
++			 APPLE5K_LINK_CHECKS, dm->tiled_link_recoveries);
++		if (!amdgpu_dm_tiled_check_links(adev))
++			dm->tiled_link_checks = 0;
++		else if (!--dm->tiled_link_checks)
++			drm_info(adev_to_drm(adev),
++				 "APPLE5K: link-health PASS: both tiles healthy after %u recovery attempts\n",
++				 dm->tiled_link_recoveries);
++	}
++
++	if (dc->current_state && dm->tiled_sync_pending) {
++		for (i = 0; i < dc->current_state->stream_count; i++)
++			dc->current_state->streams[i]->triggered_crtc_reset.enabled =
++				dm->force_timing_sync;
++		dm_enable_per_frame_crtc_master_sync(dc->current_state);
++		dc_trigger_sync(dc, dc->current_state);
++	}
++	dm->tiled_sync_pending = false;
++	/* Read again after recovery AND timing sync. Neither an immediate lock
++	 * read nor successful training establishes that scanout remains healthy.
++	 */
++	if (dm->tiled_link_checks)
++		mod_delayed_work(system_wq, &dm->tiled_resync_work,
++				 msecs_to_jiffies(APPLE5K_LINK_RECHECK_MS));
++out:
++	mutex_unlock(&dm->dc_lock);
+ }
+ 
+-static void amdgpu_dm_queue_tiled_resync(struct amdgpu_device *adev)
++static void amdgpu_dm_queue_tiled_resync(struct amdgpu_device *adev, bool modeset)
+ {
+ 	if (!amdgpu_dm_has_tiled_stitch_panel(adev))
+ 		return;
+ 
+-	mod_delayed_work(system_wq, &adev->dm.tiled_resync_work,
+-			 msecs_to_jiffies(250));
++	mutex_lock(&adev->dm.dc_lock);
++	if (!adev->dm.tiled_resync_stopping && !adev->dm.dc->apple_5k_going_down &&
++	    !adev->in_suspend && !amdgpu_in_reset(adev)) {
++		if (modeset) {
++			adev->dm.tiled_link_checks = APPLE5K_LINK_CHECKS;
++			adev->dm.tiled_link_recoveries = 0;
++			drm_info(adev_to_drm(adev),
++				 "APPLE5K: link-health armed after tiled modeset: checks=%u\n",
++				 APPLE5K_LINK_CHECKS);
++		}
++		adev->dm.tiled_sync_pending = true;
++		/* Ordinary plane commits must not postpone an already armed check. */
++		queue_delayed_work(system_wq, &adev->dm.tiled_resync_work,
++				   msecs_to_jiffies(APPLE5K_LINK_SETTLE_MS));
++	}
++	mutex_unlock(&adev->dm.dc_lock);
+ }
+ 
+ void amdgpu_dm_trigger_timing_sync(struct drm_device *dev)
+@@ -15808,7 +15977,8 @@
+ 	int i;
+ 
+ 	mutex_lock(&adev->dm.dc_lock);
+-	if (dc->current_state) {
++	if (dc->current_state && !adev->dm.tiled_resync_stopping &&
++	    !dc->apple_5k_going_down && !adev->in_suspend && !amdgpu_in_reset(adev)) {
+ 		for (i = 0; i < dc->current_state->stream_count; ++i)
+ 			dc->current_state->streams[i]
+ 				->triggered_crtc_reset.enabled =
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+@@ -631,6 +631,19 @@
+ 	/* Apple 5K dual-tile: re-run the timing sync shortly after each commit
+ 	 * that involves the tiled pair, once both tiles have settled. */
+ 	struct delayed_work tiled_resync_work;
++/* Bounds of the post-commit link health check, in the header so the driver can
++ * announce them once at init: a boot log then states which build is running and
++ * what it will do, before any panel is detected.
++ */
++#define APPLE5K_LINK_CHECKS 8
++#define APPLE5K_LINK_RECOVERIES 2
++#define APPLE5K_LINK_SETTLE_MS 250
++#define APPLE5K_LINK_RECHECK_MS 500
++	/* Protected by dc_lock; health checks are bounded per tiled modeset. */
++	u8 tiled_link_checks;
++	u8 tiled_link_recoveries;
++	bool tiled_sync_pending;
++	bool tiled_resync_stopping;
+ 	bool disable_hpd_irq;
+ 	bool dmcub_trace_event_en;
+ 	/**

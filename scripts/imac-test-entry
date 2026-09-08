@@ -168,6 +168,7 @@ describe_module() {  # describe_module <path-to-.ko.zst>
 	[[ $syms == *tiled_stitch* ]]                 && marks+=("5K stitch")
 	[[ $syms == *"stream-disable latch"* ]]       && marks+=("latch clear")
 	[[ $syms == *"forcing initial modeset"* ]]    && marks+=("early modeset")
+	[[ $syms == *"link-health"* ]]                && marks+=("link health")
 	((${#marks[@]})) && (IFS=', '; echo "${marks[*]} [${sv:0:8}]") || echo "stock [${sv:0:8}]"
 }
 
@@ -244,9 +245,19 @@ status)
 	fi
 
 	printf '\n  \033[1mRunning now\033[0m\n\n'
+	klog="$(journalctl -k -b 0 --no-pager 2>/dev/null || true)"
 	printf '  %-26s %s\n' "loaded amdgpu" \
-		"$(grep -qi 'panel latch teardown\|forcing initial modeset' <(journalctl -k -b 0 --no-pager 2>/dev/null) \
+		"$(grep -qi 'panel latch teardown\|forcing initial modeset' <<<"$klog" \
 			&& echo 'test build (fix log lines present)' || echo 'no fix log lines this boot')"
+
+	# The link-health build announces itself at DM init, before any panel is
+	# detected, so its absence means that module did not load -- not that the
+	# panel went undetected.
+	if grep -q 'APPLE5K: link-health build=' <<<"$klog"; then
+		verdict="$(grep -o 'APPLE5K: link-health \(PASS\|FAIL\|disarmed\).*' <<<"$klog" | tail -1)"
+		printf '  %-26s %s\n' "post-commit link health" "${verdict:-armed, no verdict yet}"
+		printf '  %-26s %s\n' "" "journalctl -k -b 0 | grep 'APPLE5K: link-health'"
+	fi
 	printf '\n'
 	;;
 

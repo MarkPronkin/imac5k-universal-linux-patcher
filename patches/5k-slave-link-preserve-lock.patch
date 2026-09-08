@@ -1,0 +1,95 @@
+iMac 5K: preserve the slave link after the stream-enable lock check
+
+Follow-up to 5k-slave-link-verify-retrain.patch (verbose stack only).
+On the 2026-09-08 reboot the new check reported locked on all six commits,
+but the live slave later read 11 11 / 80 / 00 while the root read
+77 77 / 81 / 01. A VT round trip restored both to 77 77 / 01 / 01,
+and the owner confirmed a normal desktop.
+
+The last stream-enable check was followed by two slave HPD detects. Port
+the existing lean-core guard to the verbose stack so the panel-latch pulse
+does not re-detect and probe the active slave. This is the leading cause
+of the post-check loss; reboot testing is still required to confirm it.
+Also settle before the first status read and after each re-train, and
+check the fourth re-train before reporting exhaustion.
+
+Port the lean stitch layer's 9-byte tile-group buffer fix as well: DRM
+reads nine bytes, while the verbose stack saved only eight. The build
+reported this overread; it is not established as the cause of link loss.
+
+--- a/drivers/gpu/drm/amd/display/dc/link/link_detection.c
++++ b/drivers/gpu/drm/amd/display/dc/link/link_detection.c
+@@ -1710,6 +1710,19 @@
+ 	bool is_delegated_to_mst_top_mgr = false;
+ 	enum dc_connection_type pre_link_type = link->type;
+ 
++	/* The internal slave pulses HPD after our panel-latch write. A fresh
++	 * detect would re-write the latch and verify the live link's capability,
++	 * disturbing the stream after its lock check. Keep the existing sink;
++	 * short-pulse HPD-RX link-loss handling is unaffected.
++	 */
++	if (reason == DETECT_REASON_HPD && link->local_sink &&
++	    dc_link_has_tiled_slave_panel_patch(link)) {
++		DC_LOGGER_INIT(link->ctx->logger);
++		DC_LOG_INFO("APPLE5K: ignoring panel-latch HPD on slave link[%u]\n",
++			    link->link_index);
++		return false;
++	}
++
+ 	is_local_sink_detect_success = detect_link_and_local_sink(link, reason);
+ 
+ 	if (is_local_sink_detect_success && link->local_sink) {
+--- a/drivers/gpu/drm/amd/display/dc/link/link_dpms.c
++++ b/drivers/gpu/drm/amd/display/dc/link/link_dpms.c
+@@ -250,31 +250,25 @@
+ 
+ 	DC_LOGGER_INIT(link->ctx->logger);
+ 
+-	for (attempt = 0; attempt < APPLE_5K_SLAVE_LOCK_ATTEMPTS; attempt++) {
++	/* Check after settling, including after the final allowed re-train.
++	 * An immediate read after the latch can still report the previous lock.
++	 */
++	for (attempt = 0; attempt <= APPLE_5K_SLAVE_LOCK_ATTEMPTS; attempt++) {
++		msleep(APPLE_5K_SLAVE_LOCK_SETTLE_MS * (attempt + 1));
+ 		if (dp_tiled_slave_link_locked(link)) {
+ 			DC_LOG_INFO("APPLE5K: slave tile link[%u] locked after %u re-train(s)\n",
+ 				    link->link_index, attempt);
+ 			return;
+ 		}
+ 
++		if (attempt == APPLE_5K_SLAVE_LOCK_ATTEMPTS)
++			break;
++
+ 		DC_LOG_WARNING("APPLE5K: slave tile link[%u] not locked (attempt %u/%u) -- re-training\n",
+ 			       link->link_index, attempt + 1,
+ 			       APPLE_5K_SLAVE_LOCK_ATTEMPTS);
+ 
+-		/*
+-		 * Let the tile settle before re-training, a little longer each
+-		 * round: the link trains fine once the panel has been up for a
+-		 * while, so what it lacks at boot is settling time, not a
+-		 * different configuration.
+-		 *
+-		 * Deliberately no latch re-assert here. 0x4F1 already reads
+-		 * back 1, and writing it pulses the slave's HPD -- which is
+-		 * itself a suspect for knocking the freshly trained link down,
+-		 * and on stacks without the HPD-ignore fix costs a full
+-		 * re-detect round per write. Re-asserting it would risk
+-		 * repeating the very fault this loop is recovering from.
+-		 */
+-		msleep(APPLE_5K_SLAVE_LOCK_SETTLE_MS * (attempt + 1));
++		/* Do not pulse the latch again: it is already asserted. */
+ 		lt = dp_perform_link_training(link, &pipe_ctx->link_res,
+ 					      &link->cur_link_settings, true);
+ 		DC_LOG_INFO("APPLE5K: slave tile link[%u] re-train result=%d\n",
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -188,7 +188,7 @@
+ 	u8 tile_v_loc;
+ 	u16 tile_h_size;
+ 	u16 tile_v_size;
+-	u8 tile_group_data[8];
++	u8 tile_group_data[9]; /* DRM tile group ids are 9 bytes */
+ };
+ 
+ /*

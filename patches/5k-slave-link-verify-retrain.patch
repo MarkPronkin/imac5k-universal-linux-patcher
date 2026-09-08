@@ -1,0 +1,151 @@
+iMac 5K: verify the slave tile's link actually locked, and re-train if not
+
+Root cause of the stretched 5K desktop, measured on iMac18,3 / kernel
+7.1.9-arch1-2 on 2026-09-08.
+
+After a stretched boot the slave tile's DPCD reads, with the root as control:
+
+                        root eDP-1     slave DP-1     slave after a modeset
+  0x202/0x203           77 77          11 11          77 77
+  0x204 align           01             00             81
+  0x205 sink status     01             00             01
+
+0x11 per lane is clock recovery only: channel equalisation and symbol lock
+never happen, interlane align never asserts, and SINK_STATUS stays 0. No valid
+symbols reach the second tile, so the panel reverts to factory single-link
+behaviour and stretches the root tile across the glass.
+
+Link parameters are identical in the failing and working cases (0x100/0x101 =
+14 84, HBR2 4 lanes enhanced framing) and the sink never requests more voltage
+swing or pre-emphasis (0x206/0x207 = 00 00), so this is neither a rate/lane
+misconfiguration nor signal integrity. A plain modeset re-trains the link and
+it locks -- it is a race.
+
+It stayed invisible through several patch iterations because nothing ever read
+0x202-0x204 back. "link-config final ... status=1" is the status of the config
+write, not of training; a stretched boot logs five such "successful" rounds.
+The one guard that existed, link_apple_5k_slave_aux_ready(), polls DP_DPCD_REV
+over AUX -- which answers regardless of main-link state (elapsed_ms=0, returns
+on attempt 0) -- so it adds no settling and proves nothing about the link.
+
+Check the link status where the stream is unblanked and the enable latch has
+been re-asserted, and re-train while it is not locked. Also re-assert the latch
+after each re-train, since re-training drops the tile.
+
+Ruled out by measurement and deliberately not addressed here: the 0x4F1 latch
+(written and verified readback=0x01 on both links every stream-enable), and
+ASSR (0x00D = 00 on both links -- neither sink advertises the capability --
+yet dp_get_panel_mode() is patched to return DP_PANEL_MODE_EDP for the slave,
+so it carries 0x10A = 01; it trains fine that way, though forcing ASSR against
+a sink that does not advertise it is worth revisiting separately).
+
+--- a/drivers/gpu/drm/amd/display/dc/link/link_dpms.c
++++ b/drivers/gpu/drm/amd/display/dc/link/link_dpms.c
+@@ -192,6 +192,99 @@
+ 		    root_link ? (int)root_link->link_index : -1, root_status);
+ }
+ 
++/*
++ * Apple 5K second tile: verify the slave link actually locked, and re-train
++ * while it has not.
++ *
++ * The tile can come up clock-recovered but never equalised -- 0x202/0x203 read
++ * 0x11 per lane with interlane align clear and SINK_STATUS 0, so no valid
++ * symbols reach the tile and the panel falls back to its factory single-link
++ * behaviour, stretching the root tile across the whole glass. (A tile that is
++ * in dual-link mode but simply unlit shows as a dark half instead; the two
++ * faults look nothing alike.)
++ *
++ * DC's own training reports success in this state, and the stream-enable latch
++ * pulses the slave's HPD *after* training, so the link can also be knocked back
++ * down between training and first scanout. Nothing else in this driver reads
++ * the result back -- the link-config logging reports the status of the config
++ * write, not of training -- so the failure is silent. Check it here, where the
++ * stream is unblanked and the latch has been re-asserted, and re-train while it
++ * is wrong.
++ */
++#define APPLE_5K_SLAVE_LOCK_ATTEMPTS  4
++#define APPLE_5K_SLAVE_LOCK_SETTLE_MS 20
++
++static bool dp_tiled_slave_link_locked(struct dc_link *link)
++{
++	enum dc_lane_count lane_count = link->cur_link_settings.lane_count;
++	union lane_status dpcd_lane_status[LANE_COUNT_DP_MAX];
++	union lane_align_status_updated lane_status_updated;
++	uint8_t dpcd_buf[3] = {0};
++	unsigned int lane;
++
++	if (core_link_read_dpcd(link, DP_LANE0_1_STATUS,
++				dpcd_buf, sizeof(dpcd_buf)) != DC_OK)
++		return false;
++
++	for (lane = 0; lane < LANE_COUNT_DP_MAX; lane++)
++		dpcd_lane_status[lane].raw =
++			dp_get_nibble_at_index(&dpcd_buf[0], lane);
++	lane_status_updated.raw = dpcd_buf[2];
++
++	return dp_is_cr_done(lane_count, dpcd_lane_status) &&
++	       dp_is_ch_eq_done(lane_count, dpcd_lane_status) &&
++	       dp_is_symbol_locked(lane_count, dpcd_lane_status) &&
++	       dp_is_interlane_aligned(lane_status_updated);
++}
++
++static void dp_relock_tiled_slave_link(struct pipe_ctx *pipe_ctx)
++{
++	struct dc_link *link = pipe_ctx->stream->link;
++	enum link_training_result lt;
++	unsigned int attempt;
++
++	if (!dc_link_needs_tiled_stream_enable_latch(link) || !link->local_sink)
++		return;
++	if (link->dc && link->dc->apple_5k_going_down)
++		return;
++
++	DC_LOGGER_INIT(link->ctx->logger);
++
++	for (attempt = 0; attempt < APPLE_5K_SLAVE_LOCK_ATTEMPTS; attempt++) {
++		if (dp_tiled_slave_link_locked(link)) {
++			DC_LOG_INFO("APPLE5K: slave tile link[%u] locked after %u re-train(s)\n",
++				    link->link_index, attempt);
++			return;
++		}
++
++		DC_LOG_WARNING("APPLE5K: slave tile link[%u] not locked (attempt %u/%u) -- re-training\n",
++			       link->link_index, attempt + 1,
++			       APPLE_5K_SLAVE_LOCK_ATTEMPTS);
++
++		/*
++		 * Let the tile settle before re-training, a little longer each
++		 * round: the link trains fine once the panel has been up for a
++		 * while, so what it lacks at boot is settling time, not a
++		 * different configuration.
++		 *
++		 * Deliberately no latch re-assert here. 0x4F1 already reads
++		 * back 1, and writing it pulses the slave's HPD -- which is
++		 * itself a suspect for knocking the freshly trained link down,
++		 * and on stacks without the HPD-ignore fix costs a full
++		 * re-detect round per write. Re-asserting it would risk
++		 * repeating the very fault this loop is recovering from.
++		 */
++		msleep(APPLE_5K_SLAVE_LOCK_SETTLE_MS * (attempt + 1));
++		lt = dp_perform_link_training(link, &pipe_ctx->link_res,
++					      &link->cur_link_settings, true);
++		DC_LOG_INFO("APPLE5K: slave tile link[%u] re-train result=%d\n",
++			    link->link_index, lt);
++	}
++
++	DC_LOG_ERROR("APPLE5K: slave tile link[%u] never locked after %u attempts; the panel will stretch the root tile\n",
++		     link->link_index, APPLE_5K_SLAVE_LOCK_ATTEMPTS);
++}
++
+ void link_blank_all_dp_displays(struct dc *dc)
+ {
+ 	unsigned int i;
+@@ -1054,6 +1147,7 @@
+ 		}
+ 
+ 		dp_write_tiled_stream_enable_latch(link);
++		dp_relock_tiled_slave_link(pipe_ctx);
+ 	} else {
+ 		dm_helpers_mst_enable_stream_features(stream);
+ 	}

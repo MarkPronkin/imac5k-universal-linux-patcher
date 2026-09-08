@@ -36,7 +36,7 @@ imac_require_limine
 # Which stack to build. "lean" (default since 2026-09-07): the lean core (the
 # upstream candidate) plus the stitch layer -- same features as the verbose
 # stack minus its logging. "verbose": the original full-stack patch plus the
-# five increments, kept as a fallback (IMAC5K_STACK=verbose).
+# follow-up patches, kept as a fallback (IMAC5K_STACK=verbose).
 IMAC5K_STACK="${IMAC5K_STACK:-lean}"
 case "$IMAC5K_STACK" in
 lean)
@@ -46,7 +46,7 @@ lean)
 verbose)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-amdgpu-7.2.2.patch"
 	# Applied in order, on top of PATCH_FILE. Each must apply cleanly or we abort.
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-verify-retrain.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-preserve-lock.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
 	;;
 *) echo "IMAC5K_STACK must be 'lean' or 'verbose'" >&2; exit 1 ;;
 esac
@@ -71,9 +71,13 @@ if [[ "${1:-}" == "--restore" ]]; then
 	say "restoring stock amdgpu module"
 	cp -v "$BAK" "$AMDKO"
 	depmod "$KREL"
+	if [[ -f /etc/limine-entry-tool.d/imac5k-stitch.conf ]]; then
+		say "removing the amdgpu.tiled_stitch drop-in"
+		rm -f /etc/limine-entry-tool.d/imac5k-stitch.conf
+	fi
 	say "rebuilding initramfs"
 	if command -v limine-mkinitcpio >/dev/null; then limine-mkinitcpio; else mkinitcpio -P; fi
-	say "done — reboot to run the stock module. (You may also want to remove amdgpu.tiled_stitch from your cmdline.)"
+	say "done — reboot to run the stock module."
 	exit 0
 fi
 
@@ -185,11 +189,27 @@ case "$AMDKO" in
 esac
 depmod "$KREL"
 
-# ── add the boot parameter (Limine, with the 3-copy sync) ──────────────────
-if ! grep -q 'amdgpu.tiled_stitch=1' /etc/default/limine 2>/dev/null; then
-	say "adding amdgpu.tiled_stitch=1 to the default cmdline"
-	cp /etc/default/limine "/etc/default/limine.backup-5k-$(date +%s)"
-	sed -i 's/\(KERNEL_CMDLINE\[default\]="[^"]*\)"/\1 amdgpu.tiled_stitch=1"/' /etc/default/limine
+# ── add the boot parameter ─────────────────────────────────────────────────
+# Omarchy assembles the cmdline from /etc/default/limine PLUS every
+# /etc/limine-entry-tool.d/*.conf drop-in, and every piece it ships appends
+# with `+=` rather than assigning with `=`. An earlier version of this script
+# sed'd for `KERNEL_CMDLINE[default]="..."` in /etc/default/limine only: on a
+# stock Omarchy install that pattern matches nothing, the substitution was a
+# silent no-op, and the parameter never reached the cmdline -- while the next
+# run's grep, looking in the same one file, kept reporting it as missing.
+# Write our own drop-in instead, the way Omarchy's own hardware quirks do.
+LIMINE_DROPIN_DIR=/etc/limine-entry-tool.d
+STITCH_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-stitch.conf"
+if grep -qs 'amdgpu.tiled_stitch=1' /etc/default/limine "$LIMINE_DROPIN_DIR"/*.conf; then
+	say "amdgpu.tiled_stitch=1 already in the boot config"
+else
+	say "adding amdgpu.tiled_stitch=1 to the default cmdline ($STITCH_DROPIN)"
+	mkdir -p "$LIMINE_DROPIN_DIR"
+	cat > "$STITCH_DROPIN" <<'DROPIN'
+# Written by imac-patcher (iMac18,3 native 5K). Delete this file to drop the
+# parameter, or run: imac-patcher --remove 5k
+KERNEL_CMDLINE[default]+=" amdgpu.tiled_stitch=1"
+DROPIN
 fi
 
 say "rebuilding initramfs (bakes the patched module in)"
