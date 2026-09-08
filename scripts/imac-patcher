@@ -31,6 +31,9 @@ KREL="$(uname -r)"
 KSERIES="$(uname -r | cut -d. -f1-2)"
 SUPPORTED_5K_SERIES="7.1 7.2"
 LIMINE_DEFAULT=/etc/default/limine
+LIMINE_DROPIN_DIR=/etc/limine-entry-tool.d
+STITCH_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-stitch.conf"
+FALLBACK_4K_DROPIN="${LIMINE_DROPIN_DIR}/imac4k-fallback.conf"
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 MONITORS_LUA="${HOME}/.config/hypr/monitors.lua"
 EQ_DEST="${HOME}/.config/pipewire/filter-chain.conf.d/eq6.conf"
@@ -62,17 +65,29 @@ mod_audio_detect() {
     # NB: capture then match. "cmd | grep -q" is unsafe under `set -o pipefail`:
     # grep -q exits on first match, the producer takes SIGPIPE, and pipefail
     # then reports the pipeline as failed despite the match succeeding.
-    local dkms_ok=0 loaded=0 dkms_out mods
+    local dkms_ok=0 live_oot=0 dkms_out mods path
     dkms_out="$(dkms status 2>/dev/null)"
     mods="$(lsmod 2>/dev/null)"
+    path="$(modinfo -n snd_hda_codec_cs8409 2>/dev/null)"
     [[ $dkms_out == *"snd_hda_macbookpro"*"${KREL}"*"installed"* ]] && dkms_ok=1
-    [[ $'\n'$mods == *$'\n'snd_hda_codec_cs8409* ]] && loaded=1
-    if (( dkms_ok && loaded )); then echo applied
-    elif (( loaded )); then echo partial       # working now, but DKMS can't rebuild it
+    # The in-kernel codec driver has the SAME module name, and this board loads
+    # it either way -- so "snd_hda_codec_cs8409 is loaded" proves nothing about
+    # which driver is live. DKMS installs under .../updates/; the resolved path
+    # is what tells the two apart. Without this the stock module reads as an
+    # applied patch on a machine that has never had dkms installed.
+    [[ $'\n'$mods == *$'\n'snd_hda_codec_cs8409* && $path == */updates/* ]] && live_oot=1
+    if (( dkms_ok && live_oot )); then echo applied
+    elif (( live_oot )); then echo partial     # working now, but DKMS can't rebuild it
+    elif (( dkms_ok )); then echo partial      # registered, stock module still live: reboot
     else echo not-applied; fi
 }
 mod_audio_apply() {
-    command -v dkms >/dev/null || { warn "dkms not installed: sudo pacman -S dkms linux-headers"; return 1; }
+    if ! command -v dkms >/dev/null; then
+        warn "dkms is not installed — the driver needs it to survive kernel updates"
+        say "install with:  sudo pacman -S --needed dkms linux-headers"
+        confirm "Install dkms and linux-headers now?" || return 1
+        sudo pacman -S --needed --noconfirm dkms linux-headers || return 1
+    fi
     # A prior install may be registered but broken (source dir vanished, e.g. it
     # lived in /tmp). Clear that first so the installer can re-register cleanly.
     if dkms status 2>/dev/null | grep -q "snd_hda_macbookpro.*broken"; then
@@ -258,7 +273,7 @@ mod_5k_detect() {
     local backup swapped=0 conf=0 live=0 res=""
     backup="$(find "$moddir" -name 'amdgpu.ko*.stock-backup' 2>/dev/null | head -1)"
     [[ -n "$backup" ]] && swapped=1
-    grep -q 'amdgpu.tiled_stitch=1' "$LIMINE_DEFAULT" 2>/dev/null && conf=1
+    boot_config_has 'amdgpu.tiled_stitch=1' && conf=1
     grep -q 'amdgpu.tiled_stitch=1' /proc/cmdline 2>/dev/null && live=1
     command -v hyprctl >/dev/null && res="$(hyprctl monitors 2>/dev/null | grep -oE '5120x2880' | head -1)"
     if (( swapped && conf && live )) && [[ "$res" == "5120x2880" ]]; then echo applied
@@ -321,27 +336,64 @@ mod_5k_apply() {
     confirm "Build and install the patched amdgpu module?" || return 1
     local log="$LOGDIR/apply-5k-$(date +%Y%m%d-%H%M%S).log"
     sudo "$INSTALLER_5K" 2>&1 | tee "$log" || return 1
-    if grep -q "$VIDEO_4K" "$LIMINE_DEFAULT" 2>/dev/null && confirm "Remove the 4K fallback parameter (required for real 5K)?"; then
-        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-pre5k-$(date +%s)"
-        sudo sed -i "s| ${VIDEO_4K}||" "$LIMINE_DEFAULT"
+    if boot_config_has "$VIDEO_4K" && confirm "Remove the 4K fallback parameter (required for real 5K)?"; then
+        remove_4k_fallback
     fi
     sync_boot_files && verify_cmdline 'amdgpu.tiled_stitch=1' "$VIDEO_4K"
     say "reboot to activate"
 }
 mod_5k_remove() {
     sudo "$INSTALLER_5K" --restore || return 1
-    if grep -q 'amdgpu.tiled_stitch=1' "$LIMINE_DEFAULT" 2>/dev/null; then
+    sudo rm -f "$STITCH_DROPIN"
+    # Older layouts appended the parameter straight into /etc/default/limine.
+    if grep -qs 'amdgpu.tiled_stitch=1' "$LIMINE_DEFAULT"; then
         sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-restore-$(date +%s)"
         sudo sed -i 's| amdgpu.tiled_stitch=1||' "$LIMINE_DEFAULT"
     fi
-    if ! grep -q "$VIDEO_4K" "$LIMINE_DEFAULT" 2>/dev/null && confirm "Re-add the 4K fallback (recommended without 5K)?"; then
-        sudo sed -i "s|\(KERNEL_CMDLINE\[default\]=\"[^\"]*\)\"|\1 ${VIDEO_4K}\"|" "$LIMINE_DEFAULT"
+    if ! boot_config_has "$VIDEO_4K" && confirm "Re-add the 4K fallback (recommended without 5K)?"; then
+        add_4k_fallback
     fi
     sync_boot_files && verify_cmdline "" 'amdgpu.tiled_stitch=1'
     say "reboot to return to stock"
 }
 
 # ── boot helpers ───────────────────────────────────────────────────────────
+#
+# Omarchy builds the kernel cmdline from /etc/default/limine PLUS every
+# /etc/limine-entry-tool.d/*.conf drop-in, each appending with `+=`. Reading
+# /etc/default/limine alone sees none of what Omarchy actually sets, which is
+# how `amdgpu.tiled_stitch=1` could read as missing while the 4K fallback in a
+# drop-in read as absent and so was never offered for removal.
+boot_config_has() {
+    grep -qs -- "$1" "$LIMINE_DEFAULT" "$LIMINE_DROPIN_DIR"/*.conf
+}
+
+# The 4K fallback is a stock-amdgpu workaround: it pins eDP-1 to a single-tile
+# 3840x2160 mode, which the stitched driver rejects. It has to go before 5K.
+remove_4k_fallback() {
+    local stamp; stamp="$(date +%s)"
+    if sudo test -f "$FALLBACK_4K_DROPIN"; then
+        # renamed, not deleted -- ".disabled-<stamp>" falls outside the *.conf
+        # glob the entry tool reads, so it stops applying but stays recoverable
+        sudo mv "$FALLBACK_4K_DROPIN" "${FALLBACK_4K_DROPIN}.disabled-${stamp}"
+        say "disabled ${FALLBACK_4K_DROPIN} (kept as .disabled-${stamp})"
+    fi
+    if grep -qs -- "$VIDEO_4K" "$LIMINE_DEFAULT"; then
+        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-pre5k-${stamp}"
+        sudo sed -i "s| ${VIDEO_4K}||" "$LIMINE_DEFAULT"
+        say "removed ${VIDEO_4K} from ${LIMINE_DEFAULT}"
+    fi
+}
+
+add_4k_fallback() {
+    sudo mkdir -p "$LIMINE_DROPIN_DIR"
+    printf '%s\n%s\n' \
+        '# Written by imac-patcher; delete this file to drop the parameter.' \
+        "KERNEL_CMDLINE[default]+=\" ${VIDEO_4K}\"" \
+        | sudo tee "$FALLBACK_4K_DROPIN" >/dev/null
+    say "wrote ${FALLBACK_4K_DROPIN}"
+}
+
 #
 # Limine >= 10.3.0 loads the FIRST config in its search order, so a copy at
 # EFI/limine/ or EFI/BOOT/ silently overrides /boot/limine.conf -- the file
