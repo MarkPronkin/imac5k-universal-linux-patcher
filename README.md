@@ -77,7 +77,16 @@ you choose the module. Prompts remain visible when input is piped.
 
 ## Compatibility
 
-Read both tables together: a patch needs a compatible model **and** distribution setup. **Verified** means hardware-tested by this project, currently on iMac18,3 running Omarchy. **Untested** means an implementation exists but hardware behaviour is unconfirmed. **Build-tested** means build/install/restore checks passed, without confirming the result on hardware. **Conditional** means additional setup is required and that combination is untested. **Unsupported** means the patcher does not provide that installation path; it does not mean the hardware cannot work under Linux.
+Read both tables together: a patch needs a compatible model **and** distribution setup.
+
+- ✅ **Verified** — hardware-tested by this project, currently on iMac18,3 running Omarchy.
+- ⚪ **Build-tested** — build, install and restore checks passed, without confirming the result on hardware.
+- ⚪ **Conditional** — additional setup is required and that combination is untested.
+- ⚪ **Untested** — an implementation exists but hardware behaviour is unconfirmed.
+- 🔴 **Unsupported** — the patcher does not provide that installation path; it does not mean the hardware cannot work under Linux.
+- ➖ **N/A** — the module does not apply to that model or distribution.
+
+Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
@@ -85,14 +94,14 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 
 | Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | Untested | Unsupported | Upstream-measured; locally untested | Untested | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | **Verified** | **Verified** | **Verified** | **Verified** | **Verified workaround** | **Verified** |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified workaround** | ✅ **Verified** |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 
 The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Leave block-sleep unselected if suspend works on your model.
 
@@ -102,11 +111,11 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 
 | Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
-| **Arch Linux** | Conditional: Omarchy/Limine setup | Untested: pacman backend | Untested: PipeWire + plugins | Conditional: KDE or Omarchy Hyprland config | Untested: systemd | Conditional: Omarchy/Limine layout |
-| **Omarchy** | **Verified** | **Verified** | **Verified** | **Verified: Hyprland** | **Verified workaround** | **Verified** |
-| **Fedora** | **Build-tested: GRUB/dracut** | Untested: DNF/DKMS backend | Conditional: Bankstown built manually | Untested: KDE Wayland | Untested: systemd | N/A: GRUB backend |
-| **Debian** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
-| **Ubuntu** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
+| **Arch Linux** | ⚪ Conditional: Omarchy/Limine setup | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
+| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
+| **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
+| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
+| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 
 Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
