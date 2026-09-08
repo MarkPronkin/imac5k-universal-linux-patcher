@@ -85,6 +85,8 @@ if [[ "${1:-}" == "--restore" ]]; then
 fi
 
 # ── sanity / version gate ──────────────────────────────────────────────────
+imac_is_retina5k || die "This driver targets Retina 5K iMacs (detected: $(imac_product_name))."
+imac_has_amdgpu || die "The 5K display patch requires a GPU using amdgpu."
 [[ -f "$PATCH_FILE" ]] || die "patch not found: $PATCH_FILE"
 say "running kernel: ${KREL}  (source version ${KVER}, series ${KSERIES})"
 if [[ " ${PATCH_KVER_SUPPORTED} " != *" ${KSERIES} "* ]]; then
@@ -209,7 +211,7 @@ else
 	say "adding amdgpu.tiled_stitch=1 to the default cmdline ($STITCH_DROPIN)"
 	mkdir -p "$LIMINE_DROPIN_DIR"
 	cat > "$STITCH_DROPIN" <<'DROPIN'
-# Written by imac-patcher (iMac18,3 native 5K). Delete this file to drop the
+# Written by imac-patcher (iMac native 5K). Delete this file to drop the
 # parameter, or run: imac-patcher --remove 5k
 KERNEL_CMDLINE[default]+=" amdgpu.tiled_stitch=1"
 DROPIN

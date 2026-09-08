@@ -22,7 +22,7 @@ mod_boot_apply() { warn "Limine boot repair does not apply to Fedora GRUB."; ret
 mod_boot_remove() { mod_boot_apply; }
 mod_audio_apply() {
     fedora_mutable || return 1
-    [[ $product == iMac18,3 ]] || { warn "Audio requires an iMac18,3."; return 1; }
+    imac_audio_supported || { warn "The bundled CS8409 driver supports only iMac18,3; keep this model's existing audio driver."; return 1; }
     local codec found=0
     for codec in /sys/bus/hdaudio/devices/*/chip_name; do
         [[ -f $codec && $(cat "$codec") == CS8409* ]] && found=1
@@ -71,6 +71,7 @@ mod_5k_desc() { echo "Builds amdgpu from matching Fedora sources, installs a mod
 mod_5k_detect() {
     local installed=0 live=0 active=0
     [[ -f /usr/lib/modules/${KREL}/updates/imac5k/amdgpu.ko.xz ]] && installed=1
+    ((installed)) || imac_has_amdgpu || { echo n/a; return; }
     [[ $(cat /sys/module/amdgpu/parameters/tiled_stitch 2>/dev/null) =~ ^(1|Y)$ ]] && live=1
     if imac_is_kde; then
         python3 "$SCRIPT_DIR/kde-display.py" --5k-active 2>/dev/null && active=1
@@ -84,6 +85,7 @@ mod_5k_detect() {
     else echo not-applied; fi
 }
 mod_5k_preflight() {
+    imac_has_amdgpu || { warn "The 5K display patch requires a GPU using amdgpu."; return 1; }
     fedora_mutable || return 1
     [[ $KSERIES == 7.1 || $KSERIES == 7.2 ]] || {
         warn "Kernel ${KREL} needs a patch port; supported series: 7.1 and 7.2."; return 1;

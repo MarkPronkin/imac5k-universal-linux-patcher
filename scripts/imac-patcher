@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# imac-patcher — patch manager for the Apple iMac18,3 under Linux/Omarchy.
+# imac-patcher — patch manager for Apple Retina 5K iMacs under Linux.
 #
 # Every fix is a module implementing the same contract:
 #   mod_<id>_title / _tier / _desc   metadata
@@ -116,9 +116,9 @@ case "${1:-}" in
 esac
 
 # ── hardware gate ──────────────────────────────────────────────────────────
-product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo unknown)"
-if [[ "$product" != "iMac18,3" && " $* " != *" --force "* ]]; then
-    echo "This tool targets the iMac18,3 (detected: ${product}). Refusing. Use --force to override." >&2
+product="$(imac_product_name)"
+if ! imac_is_retina5k "$product" && [[ " $* " != *" --force "* ]]; then
+    echo "This tool targets Retina 5K iMacs (detected: ${product}). Refusing. Use --force to override." >&2
     exit 1
 fi
 
@@ -178,6 +178,7 @@ mod_audio_title() { echo "Speakers & microphone (CS8409)"; }
 mod_audio_tier()  { echo safe; }
 mod_audio_desc()  { echo "The in-kernel driver finds no speaker output on this board. Installs the hardware-gated DKMS driver so it also survives kernel updates."; }
 mod_audio_detect() {
+    imac_audio_supported || { echo n/a; return; }
     # NB: capture then match. "cmd | grep -q" is unsafe under `set -o pipefail`:
     # grep -q exits on first match, the producer takes SIGPIPE, and pipefail
     # then reports the pipeline as failed despite the match succeeding.
@@ -198,6 +199,7 @@ mod_audio_detect() {
     else echo not-applied; fi
 }
 mod_audio_apply() {
+    imac_audio_supported || { warn "The bundled CS8409 driver supports only iMac18,3; keep this model's existing audio driver."; return 1; }
     # The upstream DKMS pre_build downloads kernel source with wget, and its
     # failure is silent (exit 0) -- the build then dies later with a bogus
     # "external module directory does not exist" make error. Check everything
@@ -365,7 +367,11 @@ mod_eq_apply() {
     read -r card profile <<<"$(eq_card)"
     [[ -n ${card:-} ]] || {
         warn "no built-in speaker card offering ${EQ_PROFILE_40}."
-        warn "Apply the audio module first, then reboot -- the stock driver exposes no speakers."
+        if imac_audio_supported; then
+            warn "Apply the audio module first, then reboot -- the stock driver exposes no speakers."
+        else
+            warn "EQ requires a working built-in four-channel speaker driver for ${product:-this model}."
+        fi
         return 1
     }
     command -v curl >/dev/null || { warn "curl is needed to fetch the tuning"; return 1; }
@@ -553,10 +559,14 @@ mod_color_title() { echo "Wide-gamut colour"; }
 mod_color_tier()  { echo safe; }
 mod_color_desc()  { echo "The panel is Display P3; Hyprland's default sRGB mode leaves everything oversaturated. Sets cm=\"dp3\" on the monitor."; }
 mod_color_detect() {
+    # The early Retina 5K panel predates the Display P3 models. KDE's EDID
+    # backend overrides this implementation and can use its actual gamut.
+    [[ $product != iMac15,1 ]] || { echo n/a; return; }
     [[ -f "$MONITORS_LUA" ]] || { echo n/a; return; }
     grep -q 'cm = "dp3"' "$MONITORS_LUA" && echo applied || echo not-applied
 }
 mod_color_apply() {
+    [[ $product != iMac15,1 ]] || { warn "The iMac15,1 panel should not be forced to Display P3."; return 1; }
     [[ -f "$MONITORS_LUA" ]] || { warn "$MONITORS_LUA not found"; return 1; }
     cp "$MONITORS_LUA" "${MONITORS_LUA}.bak-$(date +%s)"
     if grep -q 'cm = "' "$MONITORS_LUA"; then
@@ -579,7 +589,7 @@ mod_color_remove() {
 # ═══════════════════════ module: suspend ═══════════════════════════════════
 mod_suspend_title() { echo "Block suspend/hibernate"; }
 mod_suspend_tier()  { echo safe; }
-mod_suspend_desc()  { echo "Sleep hard-hangs this machine every time (Apple firmware ACPI issue; recovery is a hard power-cycle). Masks the sleep targets so nothing triggers them by accident."; }
+mod_suspend_desc()  { echo "Optional workaround for suspend hangs, observed on iMac18,3. Masks sleep targets; leave this off if sleep works on your model."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${SLEEP_TARGETS[@]}"; do
@@ -590,7 +600,7 @@ mod_suspend_detect() {
     else echo not-applied; fi
 }
 mod_suspend_apply()  { sudo systemctl mask "${SLEEP_TARGETS[@]}"; }
-mod_suspend_remove() { sudo systemctl unmask "${SLEEP_TARGETS[@]}"; warn "sleep re-enabled — it is known to hang this machine"; }
+mod_suspend_remove() { sudo systemctl unmask "${SLEEP_TARGETS[@]}"; say "sleep re-enabled"; }
 
 # ═══════════════════════ module: boot ══════════════════════════════════════
 HYGIENE_HOOK=/etc/boot/hooks/post.d/95-limine-esp-hygiene
@@ -674,6 +684,8 @@ mod_5k_detect() {
     local backup swapped=0 conf=0 live=0 res=""
     backup="$(find "$moddir" -name 'amdgpu.ko*.stock-backup' 2>/dev/null | head -1)"
     [[ -n "$backup" ]] && swapped=1
+    # Keep installed patches removable even if the GPU driver fails to load.
+    ((swapped)) || imac_has_amdgpu || { echo n/a; return; }
     boot_config_has 'amdgpu.tiled_stitch=1' && conf=1
     grep -q 'amdgpu.tiled_stitch=1' /proc/cmdline 2>/dev/null && live=1
     command -v hyprctl >/dev/null && res="$(hyprctl monitors 2>/dev/null | grep -oE '5120x2880' | head -1)"
@@ -682,6 +694,7 @@ mod_5k_detect() {
     else echo not-applied; fi
 }
 mod_5k_preflight() {
+    imac_has_amdgpu || { warn "The 5K display patch requires a GPU using amdgpu."; return 1; }
     local ok=1 missing=() pkgs=()
     if [[ " $SUPPORTED_5K_SERIES " != *" $KSERIES "* ]]; then
         warn "kernel ${KREL}: the 5K patch is verified only for series ${SUPPORTED_5K_SERIES}."

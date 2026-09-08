@@ -20,6 +20,11 @@ configure. If you are curious about *how* that dispatch works, see
 
 ## Status and scope
 
+All Retina 5K iMac identifiers, including iMac Pro, pass the model check; see
+the [model and module table](../README.md#models-and-module-availability).
+The display backend requires `amdgpu`. The bundled CS8409 audio driver remains
+specific to `iMac18,3`, and compatibility on other models is not hardware-verified.
+
 The kernel patches themselves are unchanged; this port is the Fedora
 integration *around* them. What that means concretely:
 

@@ -1,10 +1,10 @@
-# 🖥️ iMac18,3 Patch
+# 🖥️ Retina 5K iMac Linux Patcher
 
-![iMac18,3 Patch — native 5120×2880, working speakers and mic, true wide-gamut colour](.github/social-preview.png)
+![iMac Linux patches — display, audio and colour](.github/social-preview.png)
 
-**Makes a 2017 27" 5K iMac work properly under Linux — native 5120×2880, working speakers, and correct colour.**
+**A Linux patch manager for every Retina 5K iMac model, including iMac Pro.**
 
-Apple's 2017 iMac hardware has several things stock Linux gets wrong or doesn't support at all. This repo is a patcher that fixes them, one command at a time, with every change reversible.
+Choose display, audio and colour fixes for your hardware, one module at a time. The patches were developed and hardware-tested on the 2017 iMac18,3; accepting other models does not mean every patch has been validated on them. Hardware-specific modules retain their compatibility checks.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash
@@ -28,14 +28,40 @@ cd imac5k-universal-linux-patcher
 
 The patcher shows you what's applied, what isn't, and lets you pick. Nothing is applied without asking.
 
+## Compatibility
+
+Read both tables together: a patch needs a compatible model **and** distribution setup. **Verified** means hardware-tested by this project, currently on iMac18,3 running Omarchy. **Untested** means an implementation exists but hardware behaviour is unconfirmed. **Build-tested** means build/install/restore checks passed, without confirming the result on hardware. **Conditional** means additional setup is required and that combination is untested. **Unsupported** means the patcher does not provide that installation path; it does not mean the hardware cannot work under Linux.
+
+### Models and module availability
+
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns are the patcher's six modules; the suspend module **disables sleep**, rather than repairing it.
+
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
+|---|---|---|---|---|---|---|---|---|
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | Untested | Unsupported | Untested | KDE: untested; P3 preset: N/A | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | Untested | Unsupported | Upstream-measured; locally untested | Untested | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | **Verified** | **Verified** | **Verified** | **Verified** | **Verified workaround** | **Verified** |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | Untested | Unsupported | Untested | Untested | Untested; optional | Untested; Limine only |
+
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Leave block-sleep unselected if suspend works on your model.
+
 ### 🐧 Distributions
 
-The patcher detects which of these it's running on and uses the matching backend — same menu, same module names, same `--apply`/`--remove` commands.
+Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| | Packages | Kernel source | Boot / initramfs | Display control | Hardware-tested |
-|---|---|---|---|---|---|
-| **Omarchy / Arch** | pacman | kernel.org tarball | Limine + mkinitcpio | Hyprland | ✅ this is where the patches were developed and verified |
-| **Fedora KDE** | DNF | matching Fedora source RPM | GRUB/BLS + dracut | KScreen (Plasma Wayland) | ⚠️ build, install and restore verified; display/audio behaviour not yet confirmed on hardware |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
+|---|---|---|---|---|---|---|
+| **Arch Linux** | Conditional: Omarchy/Limine setup | Untested: pacman backend | Untested: PipeWire + plugins | Conditional: KDE or Omarchy Hyprland config | Untested: systemd | Conditional: Omarchy/Limine layout |
+| **Omarchy** | **Verified** | **Verified** | **Verified** | **Verified: Hyprland** | **Verified workaround** | **Verified** |
+| **Fedora** | **Build-tested: GRUB/dracut** | Untested: DNF/DKMS backend | Conditional: Bankstown built manually | Untested: KDE Wayland | Untested: systemd | N/A: GRUB backend |
+| **Debian** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
+| **Ubuntu** | Unsupported: no kernel backend | Unsupported: no APT installer | Conditional: manual dependencies | Conditional: KDE Wayland | Untested: systemd | Unsupported |
+
+Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
 Fedora specifics — dependencies, Secure Boot signing, recovery, and how the backend is wired in — are in the **[Fedora KDE guide](docs/fedora-kde.md)**. Fedora Kinoite/Atomic is not supported.
 
@@ -152,7 +178,7 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 
 ## 📋 Requirements
 
-- Apple iMac18,3 (2017 27" 5K). The patcher refuses to run on other hardware.
+- A Retina 5K iMac from the [model table](#models-and-module-availability). Other Macs, including 21.5-inch 4K and 24-inch 4.5K iMacs, remain outside the normal model gate.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
 - Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
 - Nothing to install by hand: on startup the patcher checks the handful of basics it needs (`grep`, `sed`, `awk`, `findutils`, `coreutils`, `sudo`) and offers to install any that are missing. Each patch checks its own heavier dependencies when you run it. The full list is in [DEPENDENCIES.md](DEPENDENCIES.md).

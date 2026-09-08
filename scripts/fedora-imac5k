@@ -228,7 +228,9 @@ case ${1:-} in
 esac
 imac_is_fedora || die "This backend requires Fedora."
 imac_is_atomic && die "Fedora Kinoite/Atomic is not supported by this mutable-kernel installer."
-[[ $(cat /sys/class/dmi/id/product_name) == iMac18,3 ]] || die "This driver targets iMac18,3 only."
+imac_is_retina5k || die "This driver targets Retina 5K iMacs (detected: $(imac_product_name))."
+# Restoration must remain possible even if the patched GPU driver cannot load.
+[[ ${1:-} == --restore ]] || imac_has_amdgpu || die "The 5K display patch requires a GPU using amdgpu."
 case ${1:-} in
     --check) check ;;
     --build) build_module ;;

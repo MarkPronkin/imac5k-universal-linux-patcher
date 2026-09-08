@@ -60,7 +60,7 @@ warn() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 usage() {
     cat <<'USAGE'
-install.sh -- install the iMac18,3 patcher from a published release.
+install.sh -- install the Retina 5K iMac patcher from a published release.
 
   --version <tag>   install a specific release   (env IMAC5K_VERSION)
   --bin-dir <dir>   where to link the launcher   (env IMAC5K_BIN_DIR)
@@ -87,7 +87,12 @@ preflight() {
     # A warning, not a gate: it is reasonable to stage the tool before moving the
     # disk into the iMac. The patcher gates on the same check when it runs.
     local product; product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo unknown)"
-    [[ $product == iMac18,3 ]] || warn "this machine is ${product}, not an iMac18,3 -- installing anyway, but the patcher will refuse to run here"
+    # Keep in sync with imac_is_retina5k in scripts/lib/platform.sh. This
+    # bootstrap also runs standalone through curl, before that file exists.
+    case "$product" in
+        iMac15,1|iMac17,1|iMac18,3|iMac19,1|iMac20,1|iMac20,2|iMacPro1,1) ;;
+        *) warn "this machine is ${product}, not a Retina 5K iMac -- installing anyway, but the patcher will refuse to run here" ;;
+    esac
 }
 
 resolve_version() {

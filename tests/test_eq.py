@@ -119,6 +119,8 @@ esac
         harness = f'''
 set -uo pipefail
 export PATH="{self.bin}:$PATH"
+source "{ROOT}/scripts/lib/platform.sh"
+product=iMac18,3
 HOME="{self.root}/home"; XDG_DATA_HOME="{self.root}/home/.local/share"
 CACHE="{self.root}/cache"; LOGDIR="{self.root}/state"
 mkdir -p "$HOME" "$CACHE" "$LOGDIR"
