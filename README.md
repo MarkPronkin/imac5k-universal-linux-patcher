@@ -7,6 +7,15 @@
 Apple's 2017 iMac hardware has several things stock Linux gets wrong or doesn't support at all. This repo is a patcher that fixes them, one command at a time, with every change reversible.
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash
+imac-patcher
+```
+
+That fetches the latest release (~130 KB), checks it against the published SHA-256, unpacks it under `~/.local/share/imac5k-patcher/`, and links `imac-patcher` into `~/.local/bin`. It installs the tool and stops there — nothing is patched until you run it and choose.
+
+Prefer to read before you run, or want to work on the patches themselves? Clone instead — the patcher runs the same either way:
+
+```bash
 git clone https://github.com/MarkPronkin/imac5k-universal-linux-patcher
 cd imac5k-universal-linux-patcher
 ./scripts/imac-patcher
@@ -128,6 +137,24 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 - Apple iMac18,3 (2017 27" 5K). The patcher refuses to run on other hardware.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
 - Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, EQ and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
+
+## 📦 Updating and removing the tool
+
+Re-running the install command pulls the newest release; the previous two are kept under `~/.local/share/imac5k-patcher/versions/`, so a rollback is one symlink:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash
+imac-patcher --version
+```
+
+Pin a specific release, or take the tool back off the machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash -s -- --version v0.1.0-alpha
+curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-patcher/main/install.sh | bash -s -- --uninstall
+```
+
+Uninstalling removes the tool, **not the patches** — those outlive it, so reverse anything you want gone with `imac-patcher --remove <id>` first. `imac-patcher --status` lists what is applied.
 
 ## 🛟 Safety
 
