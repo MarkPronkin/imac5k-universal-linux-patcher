@@ -1,5 +1,9 @@
 # iMac 5K patch — how to use, and the rules that keep you safe
 
+For the CS8409 headset driver patch, see
+[headphone setup and provenance](../docs/headphones.md). The display patch
+stacks below are separate from those audio changes.
+
 `imac5k-amdgpu-7.2.2.patch` is the complete native-5K stack for the iMac18,3's
 internal tiled panel, as one diff against **kernel 7.2.2** source:
 

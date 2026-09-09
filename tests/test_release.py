@@ -102,6 +102,12 @@ class ReleaseTests(unittest.TestCase):
         with tarfile.open(self.dist / f"imac5k-patcher-{VERSION}.tar.gz") as tar:
             names = {n.split("/", 1)[1] for n in tar.getnames() if "/" in n}
         for needed in ("VERSION", "scripts/imac-patcher", "scripts/lib/platform.sh",
+                       "patches/cs8409-headset-capture.patch", "docs/headphones.md",
+                       "scripts/imac-audio-jack-switch",
+                       # The speaker tuning is vendored, not downloaded: an
+                       # archive without it installs a graph that cannot load.
+                       "assets/imac-audio/iMacAudio.conf",
+                       "assets/imac-audio/Filters L Aug 14-MP.wav",
                        "configs/monitors.lua", "patches/imac5k-lean-core-7.2.x.patch"):
             self.assertIn(needed, names)
         for excluded in ("TODO.md", "notes", "tests"):
@@ -118,15 +124,19 @@ class ReleaseTests(unittest.TestCase):
         # the tag rather than the commit it points at -- and the tarball then
         # gets a mangled timestamp and a checksum nobody else can reproduce.
         tag = "_test-make-release"
-        subprocess.run(["git", "tag", "-a", tag, "-m", "temp"], cwd=REPO, check=True,
-                       env=GIT_ENV)
+        # Tag the same worktree ref the other release tests build from, not
+        # HEAD: a runtime file added but not yet committed is in the worktree
+        # ref and absent from HEAD, and archiving a path that does not exist
+        # in the commit is a hard git error.
+        base = subprocess.run(["git", "rev-parse", REF], cwd=REPO, check=True,
+                              text=True, capture_output=True).stdout.strip()
+        subprocess.run(["git", "tag", "-a", tag, "-m", "temp", base], cwd=REPO,
+                       check=True, env=GIT_ENV)
         self.addCleanup(subprocess.run, ["git", "tag", "-d", tag],
                         cwd=REPO, capture_output=True)
         from_tag, from_commit = self.tmp / "tag", self.tmp / "commit"
         build_release(from_tag, tag)
-        build_release(from_commit, subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=REPO, check=True,
-            text=True, capture_output=True).stdout.strip())
+        build_release(from_commit, base)
         name = f"imac5k-patcher-{VERSION}.tar.gz"
         self.assertEqual((from_tag / name).read_bytes(), (from_commit / name).read_bytes())
 

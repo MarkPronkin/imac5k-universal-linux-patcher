@@ -83,13 +83,25 @@ update Fedora, reboot, and retry. Fedora Kinoite/Atomic is not supported.
 | wget | wget | wget |
 | git | git | git |
 | gcc, make, patch | base-devel | gcc, make, patch |
+| tar, xz, modinfo, depmod | tar, xz, kmod | tar, xz, kmod |
+| limine-mkinitcpio or mkinitcpio | limine / mkinitcpio | — |
 | — | — | elfutils-libelf-devel, openssl-devel |
 | mokutil (Secure Boot only) | — | mokutil |
 | dracut | — | dracut |
 
 Clones https://github.com/jackdanyell/imac18-3-cs8409-linux-audio into
-`~/.cache/imac-patcher/`; the upstream DKMS build downloads kernel source
-with wget.
+`~/.cache/imac-patcher/`, exports commit
+`be90113a7638eb264b2ff5acfe888cd72c8364c6` without changing the cached checkout,
+and applies the bundled `cs8409-headset-capture.patch`. Requires iMac18,3,
+the CS8409 codec, and Linux 6.17+. Both backends register the prepared source
+as `snd_hda_macbookpro/0.2.imac5k1`; DKMS keeps a source copy under `/usr/src`.
+The upstream DKMS build downloads kernel source with wget.
+
+Arch builds all installed supported kernels with matching headers, including
+a pending kernel update. Fedora targets the running kernel and requires its
+exact `kernel-devel` package. Installation verifies the selected module has
+the headset patch, refreshes the initramfs, and requires a reboot. A competing
+CS8409 DKMS package must be removed through its package manager first.
 
 ## EQ module (safe tier)
 
@@ -99,24 +111,47 @@ with wget.
 | pactl | libpulse | pulseaudio-utils |
 | pw-cli | pipewire | pipewire-utils |
 | wpctl | wireplumber | wireplumber |
-| curl | curl | curl |
+| systemctl (user units) | systemd | systemd |
 | LSP LV2 plugins | lsp-plugins-lv2 | lsp-plugins |
-| bankstown LV2 | bankstown (AUR) | — build from source |
+| bankstown LV2 | built from source | built from source |
+| cargo, git (only to build bankstown) | rust, git | cargo, git |
+
+The tuning graph runs as a PipeWire client of its own under
+`imac-speaker-eq.service`, and `imac-audio-jack.service` swaps the built-in
+output between it and the untuned jack output as headphones are used. Both are
+**user** units, installed under `~/.config/systemd/user` and pulled in by
+`pipewire.service`; neither needs root. A session without systemd user units
+gets no headphone switching, and `--status` reports the module as `partial`.
 
 Both plugin sets are required, not optional: PipeWire drops a filter node whose
 plugin is missing, and with it the whole graph, so the tuned sink simply never
-appears. `bankstown` is packaged only in the AUR — the module installs it with
-`yay` or `paru` when one is present, and otherwise points at
-https://github.com/chadmed/bankstown.
+appears. `bankstown` is in no distribution's repositories, so the module
+**builds it from source**, after asking: it clones
+https://github.com/chadmed/bankstown at the pinned `1.1.0` tag
+(`e9829c9`, MIT) and runs `cargo build --release --locked`, installing the
+three files into `~/.lv2/bankstown.lv2/`. That needs `cargo` and `git`, and no
+root. **No AUR helper is required**, on Arch or anywhere else: the AUR package
+does nothing but run the same cargo build. A distribution package or a copy
+you built yourself is found first and nothing is built. `--remove eq` deletes
+only a bundle this module built, never one that was already there.
 
-Downloads `Audio/iMacAudio.conf` and the four impulse-response WAVs from
-https://github.com/taprobane99/iMac5KLinux at apply time into
-`~/.cache/imac-patcher/`, then installs them under `~/.config/pipewire/` and
-`~/.local/share/imac-audio/`. Nothing is written as root, and nothing from that
-project other than those five files is used. A WirePlumber drop-in of this
-project's own, `~/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf`,
-hides the raw 4.0 device from sound pickers for as long as the tuning is
-installed.
+**No network access.** `iMacAudio.conf` and the four impulse-response WAVs are
+vendored in this repository under `assets/imac-audio/` and installed from the
+checkout into `~/.config/pipewire/imac-speaker-eq.conf.d/` and
+`~/.local/share/imac-audio/`. They were previously downloaded from
+https://github.com/taprobane99/iMac5KLinux at apply time, which tied every
+install to that project's `main` branch. See `assets/imac-audio/README.md` for
+provenance, checksums and licence.
+Two things are rewritten in the downloaded graph: the impulse-response paths,
+and the name of the chain's own output node, which desktops would otherwise
+list beside real applications. The base config beside it, which makes it a
+standalone PipeWire client, is this project's own.
+Nothing is written as root, and nothing from that project other than those
+five files is used. A WirePlumber drop-in of this project's own,
+`~/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf`,
+hides the raw 4.0 device from sound pickers and names the jack output
+**Aux Audio Output**, for as long as the tuning is installed. The switching
+helper is installed as `~/.local/bin/imac-audio-jack-switch`.
 
 Needs working built-in speakers with the
 `output:analog-surround-40+input:analog-stereo` profile. On iMac18,3, install the

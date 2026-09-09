@@ -90,7 +90,7 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns are the patcher's six modules; the suspend module **disables sleep**, rather than repairing it.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the six hardware/system modules. The suspend module **disables sleep**, rather than repairing it.
 
 | Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|---|---|
@@ -181,6 +181,20 @@ so it selects the distribution backend and checks the prerequisites:
 # Reboot before testing audio or applying speaker tuning.
 ```
 
+The audio module now includes the [headset fixes from ahmadtv's Omarchy
+patcher](https://github.com/ahmadtv/omarchy-imac5k): internal/headset microphone
+switching even during recording, usable microphone gain, serialized jack and
+stream setup, and EarPods play/pause and volume buttons. Re-run the command
+above to upgrade an older audio install. It uses a pinned source revision and
+a separate DKMS version, so the old `0.2` build cannot be mistaken for the fix.
+Linux **6.17+** is required; the headset changes were tested upstream on
+iMac18,3 with 7.1.9, and the driver has been compile-tested here on 7.2.3.
+This fork's integration has offline tests; physical
+headset validation on its other kernels and Fedora remains outstanding.
+
+Upstream reports an unresolved high-pitched sound on jack insertion.
+See [headphone setup and checks](docs/headphones.md).
+
 Then, optionally, the speaker tuning:
 
 ```bash
@@ -189,11 +203,29 @@ Then, optionally, the speaker tuning:
 
 The four speakers are two woofers and two tweeters, which the driver presents as a 4-channel card and everything else drives as a plain stereo pair. This switches the card to its **Analog Surround 4.0** profile and inserts a PipeWire filter-chain that crosses over at 3.8 kHz, EQs the two ways separately and convolves each with a measured impulse response — [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s tuning, measured with a calibrated microphone. Only that project's `Audio/` files are used; its kernel, display and GRUB work is not touched.
 
-It needs two LV2 plugin sets — `lsp-plugins-lv2` and `bankstown` (AUR) — and offers to install them. The files are downloaded at apply time rather than shipped here, so the tuning is always the upstream one. Everything lands in your home directory: `~/.config/pipewire/pipewire.conf.d/imac-audio.conf` and `~/.local/share/imac-audio/`, with nothing written as root.
+It needs two LV2 plugin sets. `lsp-plugins-lv2` comes from your distribution's repositories; `bankstown` is in nobody's repositories, so the module offers to build it from source with `cargo` into `~/.lv2` — **no AUR helper needed**, on Arch or anywhere else, since the AUR package does nothing but run the same build. If either is already installed, it is used as-is. The tuning itself ships in this repository under `assets/imac-audio/`, so applying it needs no network and a given release always installs the tuning it was tested with. It used to be downloaded from upstream's `main` at apply time, which meant every install depended on whatever `main` happened to be — that file was rewritten three times inside one hour on 2026-09-03. See [`assets/imac-audio/README.md`](assets/imac-audio/README.md) for provenance, checksums and licence. Everything lands in your home directory: `~/.config/pipewire/imac-speaker-eq.conf.d/imac-audio.conf` and `~/.local/share/imac-audio/`, with nothing written as root.
 
 While the tuning is installed, the raw 4.0 device is hidden from sound pickers (a WirePlumber rule marks it internal, so the chain still feeds it but nothing offers it): selected directly it plays the tweeter half of the crossover and sounds thin. `--remove eq` puts the card profile, the default sink and that device back.
 
+The chain's own output is a playback stream, so desktops otherwise list it next to real applications while the speakers play. Omarchy's audio panel already skips a tuning's output but recognises it by name, so the installer renames that node into its convention; on other desktops it is a node name nothing reads.
+
+### Headphones
+
+Plug headphones into the iMac's jack and **iMac Speakers disappears**, replaced by **Aux Audio Output** — the jack, with no tuning applied. Unplug and the speakers come straight back. Whatever was playing follows in both directions.
+
+This is necessary rather than cosmetic. The headphone port exists only in the card's stereo profiles, so plugging in moves the card off Analog Surround 4.0. The tuning is a filter graph rather than a device, so it survives that move, stays selectable, and its four channels get folded into the two the jack has — the crossover summed back together, over headphones it was never measured for.
+
+So the tuning runs as its own service, `imac-speaker-eq.service`, and `imac-audio-jack.service` stops it while the jack is in use. Both follow `pipewire.service`. Detection is event-driven, through PipeWire's own port availability — no polling, no root, and no `input` group membership needed.
+
+An output you chose yourself is left alone: if you have sent audio to Bluetooth or HDMI, the jack does not steal it back. Only streams on the sink being taken away are carried across.
+
+One consequence worth knowing: with the tuning stopped and headphones out, the only built-in output is the hidden 4.0 device, so if `imac-speaker-eq.service` fails to start you get silence rather than untuned speakers. `--status` reports that as `partial`; `journalctl --user -u imac-speaker-eq` says why.
+
 **On loudness.** The hidden hardware output is set to **100% (0 dB)**; use **iMac Speakers** to control listening volume. Before raising the hardware level, the installer lowers the visible slider to 45% if it is higher, preserving quieter settings. WirePlumber remembers the hardware level, and `--remove eq` restores the level saved on first apply. Re-applying with the hardware already at 100% leaves the visible slider alone.
+
+Unplug headphones before applying or repairing speaker tuning. The patcher
+refuses to raise the speaker hardware level while the card reports connected
+headphones — that level is for the internal drivers.
 
 Older installs could leave the hidden output at 40% (about −24 dB), making the speakers much too quiet even with the visible EQ slider at 100%. Re-run `./scripts/imac-patcher --apply eq` to correct that. The tuning itself still includes woofer attenuation, compression, limiting and frequency correction, so equal slider positions need not match the loudness of an untuned output.
 
@@ -293,7 +325,7 @@ This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://githu
 
 Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
 
-Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1 and fetched from that repository at apply time rather than vendored here.
+Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1, and is carried here under `assets/imac-audio/` byte-identical to [commit `5069f81`](https://github.com/taprobane99/iMac5KLinux/tree/5069f81eeb4af129480604762f39f9eaec9898d7/Audio). That project publishes no licence; if you are its author and would rather it were not carried here, open an issue and it will be removed.
 
 ### Contributors
 

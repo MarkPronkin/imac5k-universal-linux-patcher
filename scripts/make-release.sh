@@ -30,7 +30,7 @@ cd "$REPO_DIR"
 
 # Paths the installed tool actually reads. Keep in sync with install.sh's sanity
 # check, which fails the install if scripts/imac-patcher is missing.
-PATHS=(install.sh scripts patches configs docs README.md DEPENDENCIES.md LICENSE)
+PATHS=(install.sh scripts patches configs assets docs README.md DEPENDENCIES.md LICENSE)
 
 DIST="${REPO_DIR}/dist"
 PREFIX="${NAME}-${VERSION}"

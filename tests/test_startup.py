@@ -232,7 +232,8 @@ esac''')
         self.assertIn("color missing dependencies: python3 kscreen-doctor", result.stdout)
         self.assertIn("grubby", result.stdout)
         self.assertIn("dracut", result.stdout)
-        self.assertIn("eq missing dependencies: pactl pw-cli wpctl curl systemctl", result.stdout)
+        # No curl: the tuning is vendored, so applying eq needs no network.
+        self.assertIn("eq missing dependencies: pactl pw-cli wpctl systemctl", result.stdout)
         self.assertNotIn("command not found", result.stderr)
 
     def test_help_and_version_do_not_offer_module_dependencies(self):

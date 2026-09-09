@@ -264,63 +264,219 @@ mkdir -p "$LOGDIR" "$CACHE" || exit 1
 # ═══════════════════════ module: audio ═════════════════════════════════════
 AUDIO_REPO=https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
 AUDIO_SRC="${CACHE}/imac18-3-cs8409-linux-audio"
-mod_audio_title() { echo "Speakers & microphone (CS8409)"; }
+# The headset patch is verified against this exact tree. Use a distinct DKMS
+# version so an existing 0.2 registration cannot silently reuse an old build.
+# Bump AUDIO_DKMS_VERSION whenever the bundled driver changes.
+AUDIO_PIN=be90113a7638eb264b2ff5acfe888cd72c8364c6
+AUDIO_PATCH="${REPO_DIR}/patches/cs8409-headset-capture.patch"
+AUDIO_DKMS=snd_hda_macbookpro
+AUDIO_DKMS_VERSION=0.2.imac5k1
+AUDIO_MODULES_DIR=/usr/lib/modules
+AUDIO_DKMS_TREE=/var/lib/dkms
+mod_audio_title() { echo "Speakers, headphones & mics"; }
 mod_audio_tier()  { echo safe; }
-mod_audio_desc()  { echo "The in-kernel driver finds no speaker output on this board. Installs the hardware-gated DKMS driver so it also survives kernel updates."; }
+mod_audio_desc()  { echo "Installs the iMac18,3 CS8409 driver with headset capture, microphone gain, live plug/unplug switching and EarPods remote buttons. DKMS rebuilds it after kernel updates; reboot after installation."; }
+
+audio_kernel_supported() {
+    local version=${1%%-*} major minor
+    major=${version%%.*}; minor=${version#*.}; minor=${minor%%.*}
+    [[ $major =~ ^[0-9]+$ && $minor =~ ^[0-9]+$ ]] || return 1
+    # Older kernels use a different HDA patch which lacks the new spec fields.
+    (( major > 6 || (major == 6 && minor >= 17) ))
+}
+
+audio_check_hardware() {
+    imac_audio_supported || { warn "The bundled CS8409 driver supports only iMac18,3; keep this model's existing audio driver."; return 1; }
+    local codec
+    for codec in /sys/bus/hdaudio/devices/*/chip_name; do
+        [[ -f $codec && $(cat "$codec") == CS8409* ]] && return 0
+    done
+    warn "CS8409 codec was not detected."
+    return 1
+}
+
+audio_target_kernels() {
+    # On rolling Arch the running kernel's headers may have been replaced.
+    # Build every installed supported kernel with headers, including a pending
+    # update, without making the old running kernel a prerequisite.
+    local dir kernel
+    for dir in "$AUDIO_MODULES_DIR"/*; do
+        [[ -f $dir/build/Module.symvers ]] || continue
+        kernel=${dir##*/}
+        audio_kernel_supported "$kernel" && printf '%s\n' "$kernel"
+    done
+    return 0
+}
+
+audio_installed_is_ours() {
+    # Resolve the actual module depmod selected, not the first .ko found on
+    # disk: another DKMS package can install the same module name.
+    local path params
+    path=$(modinfo -k "$1" -n snd_hda_codec_cs8409 2>/dev/null) || return 1
+    [[ $path == */updates/* || $path == */extra/* ]] || return 1
+    params=$(modinfo -F parm "$path" 2>/dev/null) || return 1
+    [[ $'\n'$params == *$'\n'headset_buttons:* ]]
+}
+
+audio_live_is_patched() {
+    # A freshly replaced .ko does not tell us what is already in memory.
+    [[ -r /sys/module/snd_hda_codec_cs8409/parameters/headset_buttons ]] || return 1
+    local live installed
+    live=$(cat /sys/module/snd_hda_codec_cs8409/srcversion 2>/dev/null) || return 1
+    installed=$(modinfo -k "$KREL" -F srcversion snd_hda_codec_cs8409 2>/dev/null) || return 1
+    [[ -n $live && $live == "$installed" ]]
+}
+
+audio_kernel_ready() {
+    local status line
+    status=$(dkms status -m "$AUDIO_DKMS" -v "$AUDIO_DKMS_VERSION" -k "$1" 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        if [[ $line == "$AUDIO_DKMS/$AUDIO_DKMS_VERSION, $1, "*": installed"* ]]; then
+            audio_installed_is_ours "$1"
+            return
+        fi
+    done <<< "$status"
+    return 1
+}
+
+audio_conflicts() {
+    # Read config text, never source a rival package's shell code. Leave its
+    # files and package registration to the owning package manager.
+    local status name version rest conf
+    status=$(dkms status 2>/dev/null) || return 1
+    while IFS='/,:' read -r name version rest; do
+        [[ -n $name && $name != "$AUDIO_DKMS" ]] || continue
+        [[ $name =~ ^[a-zA-Z0-9_.+-]+$ && $version =~ ^[a-zA-Z0-9_.+-]+$ ]] || continue
+        conf="$AUDIO_DKMS_TREE/$name/$version/source/dkms.conf"
+        if grep -Eqi 'BUILT_MODULE_NAME.*cs8409' "$conf" 2>/dev/null; then
+            printf '%s/%s\n' "$name" "$version"
+        fi
+    done <<< "$status"
+}
+
 mod_audio_detect() {
     imac_audio_supported || { echo n/a; return; }
-    # NB: capture then match. "cmd | grep -q" is unsafe under `set -o pipefail`:
-    # grep -q exits on first match, the producer takes SIGPIPE, and pipefail
-    # then reports the pipeline as failed despite the match succeeding.
-    local dkms_ok=0 live_oot=0 dkms_out mods path
-    dkms_out="$(dkms status 2>/dev/null)"
-    mods="$(lsmod 2>/dev/null)"
-    path="$(modinfo -n snd_hda_codec_cs8409 2>/dev/null)"
-    [[ $dkms_out == *"snd_hda_macbookpro"*"${KREL}"*"installed"* ]] && dkms_ok=1
-    # The in-kernel codec driver has the SAME module name, and this board loads
-    # it either way -- so "snd_hda_codec_cs8409 is loaded" proves nothing about
-    # which driver is live. DKMS installs under .../updates/; the resolved path
-    # is what tells the two apart. Without this the stock module reads as an
-    # applied patch on a machine that has never had dkms installed.
-    [[ $'\n'$mods == *$'\n'snd_hda_codec_cs8409* && $path == */updates/* ]] && live_oot=1
-    if (( dkms_ok && live_oot )); then echo applied
-    elif (( live_oot )); then echo partial     # working now, but DKMS can't rebuild it
-    elif (( dkms_ok )); then echo partial      # registered, stock module still live: reboot
+    local status path kernels kernel ready=1 any=0
+    status=$(dkms status -m "$AUDIO_DKMS" 2>/dev/null)
+    path=$(modinfo -k "$KREL" -n snd_hda_codec_cs8409 2>/dev/null)
+    [[ -n $status || $path == */updates/* || $path == */extra/* ]] && any=1
+    kernels=$(audio_target_kernels)
+    [[ -n $kernels ]] || kernels=$KREL
+    while IFS= read -r kernel; do
+        audio_kernel_ready "$kernel" || ready=0
+    done <<< "$kernels"
+    [[ -z $(audio_conflicts) ]] || ready=0
+    if (( ready )) && audio_live_is_patched; then echo applied
+    elif (( any )); then echo partial
     else echo not-applied; fi
 }
-mod_audio_apply() {
-    imac_audio_supported || { warn "The bundled CS8409 driver supports only iMac18,3; keep this model's existing audio driver."; return 1; }
-    # The upstream DKMS pre_build downloads kernel source with wget, and its
-    # failure is silent (exit 0) -- the build then dies later with a bogus
-    # "external module directory does not exist" make error. Check everything
-    # the install actually needs up front.
-    local pkg missing=()
-    for pkg in dkms linux-headers wget base-devel git; do
-        pacman -Q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
-    done
-    if ((${#missing[@]})); then
-        warn "missing packages: ${missing[*]}"
-        confirm "Install them now?" || return 1
-        sudo pacman -S --needed --noconfirm "${missing[@]}" || return 1
-    fi
-    # A prior install may be registered but broken (source dir vanished, e.g. it
-    # lived in /tmp). Clear that first so the installer can re-register cleanly.
-    if dkms status 2>/dev/null | grep -q "snd_hda_macbookpro.*broken"; then
-        say "removing broken DKMS registration"
-        sudo dkms remove snd_hda_macbookpro/0.2 --all 2>/dev/null || true
-    fi
-    if [[ -d "$AUDIO_SRC/.git" ]]; then
-        say "updating driver source"; git -C "$AUDIO_SRC" pull --ff-only 2>&1 | tail -2
-    else
+
+audio_prepare_source() {   # export into $1; keep edits in the cached clone intact
+    [[ -f $AUDIO_PATCH ]] || { warn "audio patch missing: $AUDIO_PATCH"; return 1; }
+    if [[ ! -d $AUDIO_SRC/.git ]]; then
         say "cloning driver source into $AUDIO_SRC"
-        git clone --depth 1 "$AUDIO_REPO" "$AUDIO_SRC" 2>&1 | tail -2 || return 1
+        git clone --no-checkout "$AUDIO_REPO" "$AUDIO_SRC" || return 1
     fi
-    ( cd "$AUDIO_SRC" && sudo ./install-imac18-3.sh ) || return 1
-    say "installed — a reboot is needed for the new module to load"
+    if ! git -C "$AUDIO_SRC" cat-file -e "${AUDIO_PIN}^{commit}" 2>/dev/null; then
+        git -C "$AUDIO_SRC" fetch --depth 1 origin "$AUDIO_PIN" || return 1
+    fi
+    say "preparing pinned audio driver ${AUDIO_PIN:0:12} with headset fixes"
+    git -C "$AUDIO_SRC" archive "$AUDIO_PIN" | tar -x -C "$1" || return 1
+    patch -d "$1" -p1 --dry-run --batch --forward --fuzz=0 < "$AUDIO_PATCH" >/dev/null || {
+        warn "headset patch does not apply to the pinned driver; no driver was replaced"; return 1;
+    }
+    patch -d "$1" -p1 --batch --forward --fuzz=0 < "$AUDIO_PATCH" || return 1
+    sed -i "s/^PACKAGE_VERSION=\"0.2\"$/PACKAGE_VERSION=\"${AUDIO_DKMS_VERSION}\"/" "$1/dkms.conf" || return 1
+    grep -Fxq "PACKAGE_VERSION=\"${AUDIO_DKMS_VERSION}\"" "$1/dkms.conf"
 }
+
+audio_install_driver() (
+    # DKMS add copies the prepared tree into /usr/src. A failed download/patch
+    # never removes the installed driver, and future rebuilds need no cache.
+    local kernels kernel conflicts status stage
+    kernels=$(audio_target_kernels)
+    [[ -n $kernels ]] || { warn "No supported kernel with matching headers found (audio needs Linux 6.17+)."; return 1; }
+    conflicts=$(audio_conflicts) || { warn "Could not inspect DKMS registrations."; return 1; }
+    [[ -z $conflicts ]] || {
+        warn "Conflicting CS8409 DKMS package(s): $conflicts"
+        warn "Remove the conflicting driver with its package manager, then retry audio."
+        return 1
+    }
+    stage=$(mktemp -d "${CACHE}/audio-build.XXXXXX") || return 1
+    trap 'rm -rf "$stage"' EXIT
+    audio_prepare_source "$stage" || return 1
+    status=$(dkms status -m "$AUDIO_DKMS" -v "$AUDIO_DKMS_VERSION") || return 1
+    [[ $status != *broken* ]] || {
+        warn "Broken registration: run sudo dkms remove $AUDIO_DKMS/$AUDIO_DKMS_VERSION --all, then retry."
+        return 1
+    }
+    if [[ -z $status ]]; then
+        sudo dkms add "$stage" || return 1
+    fi
+    while IFS= read -r kernel; do
+        if ! audio_kernel_ready "$kernel"; then
+            # Build before replacing the old version for this kernel. DKMS
+            # retains older versions installed for other fallback kernels.
+            sudo dkms build -m "$AUDIO_DKMS" -v "$AUDIO_DKMS_VERSION" -k "$kernel" || return 1
+            sudo dkms install -m "$AUDIO_DKMS" -v "$AUDIO_DKMS_VERSION" -k "$kernel" --force || return 1
+        fi
+        audio_kernel_ready "$kernel" || { warn "The patched CS8409 driver was not installed for $kernel."; return 1; }
+        say "headset driver installed for $kernel"
+    done <<< "$kernels"
+)
+
+audio_arch_deps() {
+    local tool pkg missing=() packages=()
+    for tool in dkms wget git gcc make patch tar xz modinfo depmod; do
+        command -v "$tool" >/dev/null && continue
+        missing+=("$tool")
+        case $tool in gcc|make) pkg=base-devel ;; modinfo|depmod) pkg=kmod ;; *) pkg=$tool ;; esac
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    done
+    [[ -n $(audio_target_kernels) ]] || packages+=(linux-headers)
+    if ((${#packages[@]})); then
+        warn "missing packages: ${packages[*]}"
+        confirm "Install them now?" || return 1
+        sudo pacman -S --needed --noconfirm "${packages[@]}" || return 1
+    fi
+    for tool in "${missing[@]}"; do
+        command -v "$tool" >/dev/null || { warn "$tool is still missing after installation."; return 1; }
+    done
+    [[ -n $(audio_target_kernels) ]] || { warn "Install headers matching an installed Linux 6.17+ kernel, then retry."; return 1; }
+}
+
+audio_refresh_initramfs() {
+    if command -v limine-mkinitcpio >/dev/null; then sudo limine-mkinitcpio
+    elif command -v mkinitcpio >/dev/null; then sudo mkinitcpio -P
+    else warn "mkinitcpio is required to refresh the installed audio modules."; return 1; fi
+}
+
+mod_audio_apply() {
+    audio_check_hardware || return 1
+    command -v limine-mkinitcpio >/dev/null || command -v mkinitcpio >/dev/null || {
+        warn "mkinitcpio is required to refresh the installed audio modules."; return 1;
+    }
+    audio_arch_deps || return 1
+    audio_install_driver || return 1
+    audio_refresh_initramfs || return 1
+    say "installed — reboot to load the headset fixes"
+}
+
+audio_remove_driver() {
+    local status name version rest versions=()
+    status=$(dkms status -m "$AUDIO_DKMS") || return 1
+    while IFS='/,:' read -r name version rest; do
+        [[ $name == "$AUDIO_DKMS" && $version =~ ^[a-zA-Z0-9_.+-]+$ ]] || continue
+        [[ " ${versions[*]} " == *" $version "* ]] || versions+=("$version")
+    done <<< "$status"
+    for version in "${versions[@]}"; do
+        sudo dkms remove "$AUDIO_DKMS/$version" --all || return 1
+    done
+}
+
 mod_audio_remove() {
-    [[ -x "$AUDIO_SRC/install.cirrus.driver.sh" ]] && ( cd "$AUDIO_SRC" && sudo ./install.cirrus.driver.sh -r )
-    sudo dkms remove snd_hda_macbookpro/0.2 --all 2>/dev/null || true
+    audio_remove_driver || return 1
+    audio_refresh_initramfs || return 1
     say "stock module restored — reboot to load it"
 }
 
@@ -332,11 +488,24 @@ mod_audio_remove() {
 # measured impulse response. Only the Audio/ part of that project is used --
 # nothing of its kernel, display or GRUB work is touched here.
 #
-# The files are fetched at apply time rather than vendored: that project
-# publishes no licence, and the audio module already installs its upstream
-# driver the same way.
-EQ_UPSTREAM="${IMAC5K_EQ_URL:-https://raw.githubusercontent.com/taprobane99/iMac5KLinux/main/Audio}"
-EQ_CONF="${HOME}/.config/pipewire/pipewire.conf.d/imac-audio.conf"
+# The tuning is vendored under assets/imac-audio rather than downloaded at
+# apply time. It used to be fetched from that project's main branch, which made
+# every install depend on whatever main happened to be: its iMacAudio.conf was
+# rewritten three times inside one hour on 2026-09-03, and a change to the graph
+# reaches users as a tuning that sounds different, or as a sink that does not
+# load at all. See assets/imac-audio/README.md for provenance and licence.
+EQ_ASSETS="${SCRIPT_DIR}/../assets/imac-audio"
+# The graph runs in a PipeWire client of its own, not in the session daemon,
+# so that headphone switching can take the tuned sink away and put it back: a
+# module loaded by the daemon lives exactly as long as the daemon does. The
+# downloaded graph stays a drop-in beside the base config, byte-identical to
+# what upstream publishes; only the base config is this tool's own.
+EQ_BASE_CONF="${HOME}/.config/pipewire/imac-speaker-eq.conf"
+EQ_CONF_DIR="${EQ_BASE_CONF}.d"
+EQ_CONF="${EQ_CONF_DIR}/imac-audio.conf"
+# Where installs from before headphone switching put the graph. Left in place
+# it would load a second, unstoppable copy of the chain.
+EQ_LEGACY_CONF="${HOME}/.config/pipewire/pipewire.conf.d/imac-audio.conf"
 # Upstream installs the impulse responses to /usr/share with sudo. They are
 # read by the user's own PipeWire daemon and referenced from a config in the
 # user's home, so they live beside it here: the whole module then needs root
@@ -347,6 +516,38 @@ EQ_IRS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/imac-audio"
 EQ_IRS=("Filters L Aug 14-MP.wav" "Filters R Aug 14-MP.wav"
         "Filters C2 Aug 16-MP.wav" "Filters LFE Aug 16-MP.wav")
 EQ_SINK=audio_effect.iMac-convolver
+# The chain's own output is a playback stream, so desktops list it beside real
+# applications: upstream calls it "iMac Speakers DSP Out" and it shows up while
+# the speakers play. Omarchy's audio panel already skips a tuning's output, but
+# recognises it by name -- any playback stream whose node.name starts with
+# "omarchy_speaker_tuning". Renaming ours into that convention is what takes it
+# out of the list; elsewhere it is just a node name nothing reads.
+EQ_DSP_NODE=omarchy_speaker_tuning_imac5k_output
+EQ_UPSTREAM_DSP_NODE=effect_output.iMac-convolver
+EQ_UNIT_DIR="${HOME}/.config/systemd/user"
+EQ_UNIT=imac-speaker-eq.service
+EQ_JACK_UNIT=imac-audio-jack.service
+EQ_JACK_SRC="${SCRIPT_DIR}/imac-audio-jack-switch"
+EQ_JACK_BIN="${HOME}/.local/bin/imac-audio-jack-switch"
+# What the jack output is called once the card leaves the 4.0 profile. The
+# tuning is measured for the internal drivers and is not applied to it.
+EQ_AUX_DESC="Aux Audio Output"
+# bankstown, the psychoacoustic bass extension the chain starts with, is
+# packaged only in the AUR and not at all for Fedora -- so this module used to
+# need an AUR helper on Arch and a manual build everywhere else. The AUR package
+# is nothing but `cargo build --release` and an install of three files, so doing
+# that here removes the helper requirement without changing what is installed.
+# MIT licensed, unlike the tuning, and unchanged upstream since 2023.
+EQ_BANKSTOWN_REPO="${IMAC5K_BANKSTOWN_URL:-https://github.com/chadmed/bankstown}"
+EQ_BANKSTOWN_PIN=e9829c9bccf5ed73768135c0ddd506f5a6690f9e   # tag 1.1.0
+EQ_BANKSTOWN_SRC="${CACHE}/bankstown"
+# LV2 hosts search here by default, so the build needs no root and --remove
+# takes it away again.
+EQ_LV2_USER_DIR="${HOME}/.lv2"
+EQ_BANKSTOWN_BUNDLE="${EQ_LV2_USER_DIR}/bankstown.lv2"
+# Written only when this module built it, so removal cannot take away a bundle
+# the user built or placed there themselves.
+EQ_BANKSTOWN_STATE="${LOGDIR}/eq-bankstown"
 EQ_HIDE_RULE="${HOME}/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf"
 EQ_PROFILE_40='output:analog-surround-40+input:analog-stereo'
 EQ_PROFILE_STATE="${LOGDIR}/eq-card-profile"
@@ -354,7 +555,7 @@ EQ_VOLUME_STATE="${LOGDIR}/eq-hardware-volume"
 
 mod_eq_title() { echo "Speaker tuning (4.0 DSP)"; }
 mod_eq_tier()  { echo safe; }
-mod_eq_desc()  { echo "The codec does no DSP at all; macOS's warmth is entirely software. Drives the woofers and tweeters as separate channels through a measured crossover, EQ and convolution chain."; }
+mod_eq_desc()  { echo "The codec does no DSP at all; macOS's warmth is entirely software. Drives the woofers and tweeters as separate channels through a measured crossover, EQ and convolution chain. Plugging headphones in hides it and exposes an untuned ${EQ_AUX_DESC}."; }
 
 # The built-in speakers are one 4-channel card: two stereo speaker pins, which
 # PulseAudio/PipeWire present as the "Analog Surround 4.0" profile. That is
@@ -367,6 +568,127 @@ eq_card() {   # prints "<card name> <active profile>"
         $1 == "'"${EQ_PROFILE_40}"':"              { has40=1 }
         /^\tActive Profile: /                      { active=$3
                                                      if (has40 && name) { print name, active; exit } }'
+}
+
+eq_headphones_present() {
+    # The raw sink can be hidden, but the card still publishes jack presence.
+    # Only a positively available headphone port on THIS card counts.
+    LC_ALL=C pactl list cards 2>/dev/null | awk -v card="$1" '
+        /^Card #/ { name="" }
+        /^\tName: / { name=$2 }
+        name == card && $1 == "analog-output-headphones:" && /, available\)$/ { found=1 }
+        END { exit !found }'
+}
+
+# The flat output the card exposes once a headphone plug has moved it off the
+# 4.0 profile. Derived from the card rather than matched by pattern: a USB DAC
+# presents an "analog-stereo" sink too, and must not be mistaken for the jack.
+eq_aux_sink() { printf 'alsa_output.%s.analog-stereo' "${1#alsa_card.}"; }
+
+eq_sink_exists() {
+    LC_ALL=C pactl list short sinks 2>/dev/null | awk -v n="$1" '$2 == n { f=1 } END { exit !f }'
+}
+
+eq_units_installed() {
+    command -v systemctl >/dev/null || return 1
+    [[ -f "${EQ_UNIT_DIR}/${EQ_UNIT}" && -f "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}" ]] || return 1
+    systemctl --user is-enabled --quiet "$EQ_UNIT" 2>/dev/null || return 1
+    systemctl --user is-enabled --quiet "$EQ_JACK_UNIT" 2>/dev/null || return 1
+}
+
+# Both units are pulled in by pipewire.service, so a restart of the audio stack
+# brings them back by itself. Stopping them first is what keeps a re-apply from
+# racing: the chain must not come up while the card is still on stereo.
+eq_stop_units() {
+    command -v systemctl >/dev/null || return 0
+    local unit
+    for unit in "$EQ_JACK_UNIT" "$EQ_UNIT"; do
+        systemctl --user stop "$unit" 2>/dev/null || true
+    done
+}
+
+eq_write_base_conf() {
+    mkdir -p "$EQ_CONF_DIR" || return 1
+    cat > "$EQ_BASE_CONF" <<'CONF'
+# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+#
+# A PipeWire client that hosts nothing but the speaker tuning graph, run by
+# imac-speaker-eq.service. The graph itself is the drop-in beside this file.
+#
+# It is here rather than in pipewire.conf.d so the tuned sink can be taken away
+# and put back with the service: a graph loaded by the daemon exists for as
+# long as the daemon does, and headphone switching needs it gone. The module
+# list below is the stock standalone-filter preamble, as shipped in
+# /usr/share/pipewire/filter-chain.conf.
+context.properties = {
+    log.level = 0
+}
+
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.*       = support/libspa-support
+}
+
+context.modules = [
+    { name = libpipewire-module-rt
+        args = { }
+        flags = [ ifexists nofail ]
+    }
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-adapter }
+]
+CONF
+}
+
+eq_install_jack_helper() {
+    [[ -f $EQ_JACK_SRC ]] || { warn "jack switching helper missing: ${EQ_JACK_SRC}"; return 1; }
+    install -Dm755 "$EQ_JACK_SRC" "$EQ_JACK_BIN"
+}
+
+# WantedBy=pipewire.service, not default.target: both follow the audio stack,
+# including a restart of it, and neither is any use without one.
+eq_write_units() {
+    mkdir -p "$EQ_UNIT_DIR" || return 1
+    cat > "${EQ_UNIT_DIR}/${EQ_UNIT}" <<'UNIT'
+# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+[Unit]
+Description=iMac 5K speaker tuning (PipeWire filter chain)
+After=pipewire.service pipewire-session-manager.service
+BindsTo=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pipewire -c imac-speaker-eq.conf
+Restart=on-failure
+Slice=session.slice
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=pipewire.service
+UNIT
+    cat > "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}" <<'UNIT'
+# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+[Unit]
+Description=iMac 5K headphone jack output switching
+After=pipewire.service pipewire-session-manager.service
+BindsTo=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/imac-audio-jack-switch
+Restart=always
+RestartSec=2
+Slice=session.slice
+
+[Install]
+WantedBy=pipewire.service
+UNIT
 }
 
 # An LV2 plugin is present when its bundle is, wherever the distribution keeps
@@ -383,20 +705,68 @@ eq_have_lv2() {   # $1 = bundle directory name
     return 1
 }
 
+# Builds the pinned release into the user's own bundle directory. A distribution
+# package, where one exists, is found by eq_have_lv2 first and nothing is built.
+eq_build_bankstown() (
+    local tool build
+    for tool in git cargo; do
+        command -v "$tool" >/dev/null || {
+            warn "${tool} is needed to build bankstown (see DEPENDENCIES.md)"; return 1; }
+    done
+    mkdir -p "$CACHE" || return 1
+    if [[ ! -d $EQ_BANKSTOWN_SRC/.git ]]; then
+        say "cloning bankstown into ${EQ_BANKSTOWN_SRC}"
+        git clone --no-checkout "$EQ_BANKSTOWN_REPO" "$EQ_BANKSTOWN_SRC" || return 1
+    fi
+    if ! git -C "$EQ_BANKSTOWN_SRC" cat-file -e "${EQ_BANKSTOWN_PIN}^{commit}" 2>/dev/null; then
+        git -C "$EQ_BANKSTOWN_SRC" fetch --depth 1 origin "$EQ_BANKSTOWN_PIN" || return 1
+    fi
+    build=$(mktemp -d "${CACHE}/bankstown-build.XXXXXX") || return 1
+    trap 'rm -rf "$build"' EXIT
+    # Exported rather than built in the cached clone, so a user's own edits or
+    # a dirty checkout there cannot end up in what is installed.
+    git -C "$EQ_BANKSTOWN_SRC" archive "$EQ_BANKSTOWN_PIN" | tar -x -C "$build" || return 1
+    say "building bankstown ${EQ_BANKSTOWN_PIN:0:12} with cargo -- this takes a minute"
+    # --locked: build the dependency versions upstream resolved, not whatever
+    # crates.io offers today.
+    ( cd "$build" && cargo build --release --locked ) || {
+        warn "bankstown did not build; see the cargo output above"; return 1; }
+    # The Makefile's install target, pointed at the user's bundle directory.
+    install -Dm755 "${build}/target/release/libbankstown.so" \
+        "${EQ_BANKSTOWN_BUNDLE}/bankstown.so" || return 1
+    install -Dm644 "${build}/bankstown.ttl" "${EQ_BANKSTOWN_BUNDLE}/bankstown.ttl" || return 1
+    install -Dm644 "${build}/manifest.ttl" "${EQ_BANKSTOWN_BUNDLE}/manifest.ttl" || return 1
+    eq_have_lv2 bankstown.lv2 || {
+        warn "bankstown was built but is not in ${EQ_LV2_USER_DIR}"; return 1; }
+    printf '%s\n' "$EQ_BANKSTOWN_PIN" > "$EQ_BANKSTOWN_STATE" || return 1
+    say "bankstown installed to ${EQ_BANKSTOWN_BUNDLE}"
+)
+
 # The card profile counts. With the card on stereo the chain still loads and
 # still produces four channels -- the two woofer ones just link to nothing, and
 # the machine plays the tweeter half of a crossover: quiet and thin, while
 # every file is in place. That is a "partial", not an "applied".
+#
+# Headphones are the exception. With the jack in use the tuning is *supposed*
+# to be stopped and the card is *supposed* to be on stereo, so looking for the
+# tuned sink and the 4.0 profile would report a working install as broken. What
+# is checked then is the state that should hold instead: the flat jack output.
 mod_eq_detect() {
     command -v pactl >/dev/null || { echo n/a; return; }
-    local conf=0 irs=1 live=0 four=0 f profile
-    [[ -f $EQ_CONF ]] && conf=1
+    local conf=0 irs=1 units=0 jack=0 output=0 f card profile
+    [[ -f $EQ_BASE_CONF && -f $EQ_CONF ]] && conf=1
     for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
-    [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] && live=1
-    read -r _ profile <<<"$(eq_card)"
-    [[ ${profile:-} == "$EQ_PROFILE_40" ]] && four=1
-    if   (( conf && irs && live && four )); then echo applied
-    elif (( conf || irs || live || four )); then echo partial
+    eq_units_installed && units=1
+    [[ -x $EQ_JACK_BIN ]] && jack=1
+    read -r card profile <<<"$(eq_card)"
+    if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
+        eq_sink_exists "$(eq_aux_sink "$card")" && output=1
+    else
+        [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] \
+            && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
+    fi
+    if   (( conf && irs && units && jack && output )); then echo applied
+    elif (( conf || irs || units || jack || output )); then echo partial
     else echo not-applied; fi
 }
 
@@ -405,13 +775,13 @@ mod_eq_detect() {
 # missing plugin does not degrade the graph -- PipeWire drops the whole filter
 # node and the sink never appears -- so both are required, not optional.
 eq_plugins() {
-    local missing=() repo=() aur=()
+    local missing=() repo=() build=0
     eq_have_lv2 lsp-plugins.lv2 || { missing+=("lsp-plugins (LV2)"); repo+=(lsp-plugins-lv2); }
-    eq_have_lv2 bankstown.lv2   || { missing+=("bankstown (LV2)");   aur+=(bankstown); }
+    eq_have_lv2 bankstown.lv2   || { missing+=("bankstown (LV2)");   build=1; }
     ((${#missing[@]})) || return 0
     warn "missing LV2 plugins: ${missing[*]}"
     ((${#repo[@]})) && say "  sudo pacman -S --needed ${repo[*]}    (dnf install on Fedora)"
-    ((${#aur[@]}))  && say "  yay -S ${aur[*]}    (or build it from https://github.com/chadmed/bankstown)"
+    ((build)) && say "  bankstown is not in any distribution repository; it is built from source"
 
     if ((${#repo[@]})); then
         if   command -v pacman >/dev/null; then
@@ -424,31 +794,28 @@ eq_plugins() {
             warn "install the LSP LV2 plugins with your package manager, then re-run"; return 1
         fi
     fi
-    # bankstown is packaged in the AUR and nowhere else; on any other
-    # distribution it is a cargo build from source, which is the user's call.
-    if ((${#aur[@]})); then
-        local helper
-        for helper in yay paru; do command -v "$helper" >/dev/null && break; helper=""; done
-        if [[ -z $helper ]]; then
-            warn "bankstown is not in any distribution repository. Build it from"
-            warn "https://github.com/chadmed/bankstown into ~/.lv2, then re-run."
-            return 1
-        fi
-        confirm "Install bankstown from the AUR with ${helper}?" || return 1
-        "$helper" -S --needed --noconfirm bankstown || return 1
+    # Built here rather than installed from the AUR: an AUR helper is an Arch-only
+    # answer, and it would leave Fedora with no answer at all. The AUR package
+    # itself only runs cargo, so this installs the same 1.1.0 build -- into the
+    # user's own ~/.lv2, so it needs no root and --remove can take it away.
+    if ((build)); then
+        confirm "Build bankstown from source into ${EQ_LV2_USER_DIR}?" || return 1
+        eq_build_bankstown || return 1
     fi
     eq_have_lv2 lsp-plugins.lv2 && eq_have_lv2 bankstown.lv2 && return 0
     warn "the plugins are still missing after the install"; return 1
 }
 
-eq_fetch() {   # upstream config and impulse responses -> $CACHE/imac-audio
-    local dest="${CACHE}/imac-audio" f
-    mkdir -p "$dest"
+# Checked before anything is installed, so a checkout missing the tuning says
+# so instead of leaving a half-installed graph that cannot load.
+eq_assets_present() {
+    local f
     for f in iMacAudio.conf "${EQ_IRS[@]}"; do
-        say "fetching ${f}"
-        curl -fsSL --retry 3 -o "${dest}/${f}" "${EQ_UPSTREAM}/${f// /%20}" \
-            || { warn "could not download ${f} from ${EQ_UPSTREAM}"; return 1; }
-        [[ -s "${dest}/${f}" ]] || { warn "${f} came back empty"; return 1; }
+        [[ -s "${EQ_ASSETS}/${f}" ]] || {
+            warn "the speaker tuning is missing from this checkout: ${EQ_ASSETS}/${f}"
+            warn "re-install the tool, or fetch the release archive again."
+            return 1
+        }
     done
 }
 
@@ -464,15 +831,18 @@ mod_eq_apply() {
         fi
         return 1
     }
-    command -v curl >/dev/null || { warn "curl is needed to fetch the tuning"; return 1; }
+    if eq_headphones_present "$card"; then
+        warn "Unplug headphones before applying speaker EQ; its tuning and hardware level are for the internal speakers."
+        return 1
+    fi
     command -v pw-cli >/dev/null && command -v wpctl >/dev/null || {
         warn "pw-cli and wpctl are needed to set the hidden speaker volume (install PipeWire tools and WirePlumber)"
         return 1
     }
-    eq_plugins || return 1
-    eq_fetch   || return 1
+    eq_assets_present || return 1
+    eq_plugins        || return 1
 
-    local src="${CACHE}/imac-audio" f
+    local src="$EQ_ASSETS" f
     for f in "${EQ_IRS[@]}"; do
         install -Dm644 "${src}/${f}" "${EQ_IRS_DIR}/${f}" || return 1
     done
@@ -480,7 +850,19 @@ mod_eq_apply() {
     sed -i "s|${EQ_UPSTREAM_IRS_DIR}/|${EQ_IRS_DIR}/|g" "$EQ_CONF" || return 1
     grep -qs -- "${EQ_IRS_DIR}/" "$EQ_CONF" || {
         warn "the upstream config no longer points at ${EQ_UPSTREAM_IRS_DIR} -- check ${EQ_CONF}"; return 1; }
-    eq_write_hide_rule || return 1
+    # Cosmetic, unlike the paths above, so a config that no longer carries the
+    # name upstream used is worth saying out loud but not worth refusing over.
+    sed -i "s|\"${EQ_UPSTREAM_DSP_NODE}\"|\"${EQ_DSP_NODE}\"|" "$EQ_CONF" || return 1
+    grep -qs -- "$EQ_DSP_NODE" "$EQ_CONF" \
+        || warn "could not rename the tuning's output node; it will be listed as an application"
+    eq_write_base_conf || return 1
+    eq_write_hide_rule "$card" || return 1
+    eq_install_jack_helper || return 1
+    eq_write_units || return 1
+    # An install from before headphone switching loaded the same graph in the
+    # daemon. Left behind it is a second copy of the chain that no service can
+    # stop, so the tuned sink would never go away for the jack.
+    rm -f "$EQ_LEGACY_CONF"
 
     # Remember what the card was on, so --remove can put it back rather than
     # guessing at stereo. Written once: re-applying must not overwrite it with
@@ -488,6 +870,11 @@ mod_eq_apply() {
     if [[ ! -f $EQ_PROFILE_STATE && -n ${profile:-} && $profile != "$EQ_PROFILE_40" ]]; then
         printf '%s\n' "$profile" > "$EQ_PROFILE_STATE"
     fi
+    # Order matters here. The units are stopped first so that a re-apply does
+    # not bring the chain up against whichever profile WirePlumber restores;
+    # the profile is selected while nothing is running; the units start last,
+    # onto a card that is already where the tuning expects it.
+    eq_stop_units
     eq_restart_pipewire
     # Only now: WirePlumber re-applies its own stored profile as it comes back,
     # so a profile selected before the restart is quietly undone -- the graph
@@ -496,6 +883,9 @@ mod_eq_apply() {
     # it afterwards also stores it as the preference, so it survives a reboot.
     eq_select_profile || {
         warn "could not select ${EQ_PROFILE_40} on ${card}"; return 1; }
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable --now "$EQ_UNIT" "$EQ_JACK_UNIT" >/dev/null 2>&1 || {
+        warn "could not start ${EQ_UNIT} and ${EQ_JACK_UNIT}"; return 1; }
     # The daemon answers before it has finished loading the filter graph.
     local i
     for i in $(seq 10); do
@@ -506,8 +896,9 @@ mod_eq_apply() {
         eq_set_hardware_volume "$card" || return 1
         pactl set-default-sink "$EQ_SINK" 2>/dev/null && say "default output set to the tuned sink"
         say "hardware output is at 100%; adjust listening volume with iMac Speakers"
+        say "headphones now hide it and expose ${EQ_AUX_DESC}, untuned"
     else
-        warn "the tuned sink did not appear -- see: journalctl --user -u pipewire -n 40"
+        warn "the tuned sink did not appear -- see: journalctl --user -u ${EQ_UNIT} -n 40"
         return 1
     fi
 }
@@ -526,6 +917,10 @@ eq_node_volume() {
 }
 
 eq_set_hardware_volume() {
+    if eq_headphones_present "$1"; then
+        warn "Unplug headphones before adjusting the speaker hardware level."
+        return 1
+    fi
     local hw tuned volume visible i
     for i in $(seq 10); do
         hw=$(eq_node_id "alsa_output.${1#alsa_card.}.analog-surround-40")
@@ -577,16 +972,32 @@ eq_restore_hardware_volume() {
 # quiet -- so it is marked internal while the tuning is installed. It stays a
 # real node the chain links to; it is only the pickers that lose it, because
 # the PulseAudio layer exposes media.class "Audio/Sink" and nothing else.
-eq_write_hide_rule() {
+# Both the description and the nick are set: pickers differ on which they show,
+# and Omarchy's shows the nick, which ALSA fills in with the codec's own name.
+eq_write_hide_rule() {   # $1 = card
     mkdir -p "$(dirname "$EQ_HIDE_RULE")" || return 1
-    cat > "$EQ_HIDE_RULE" <<'RULE'
-# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+    cat > "$EQ_HIDE_RULE" <<RULE
+# Written by imac-patcher; removed by \`imac-patcher --remove eq\`.
+#
 # Hides the raw 4.0 speaker device, which the DSP chain feeds, from sound
 # pickers: selected directly it plays the tweeter half of a crossover.
+#
+# The second rule names the same card's stereo device, which is what the card
+# exposes once a headphone plug has moved it off the 4.0 profile. Matched by
+# exact name rather than by pattern: a USB DAC also presents an "analog-stereo"
+# sink, and renaming that one would be wrong.
 monitor.alsa.rules = [
   {
     matches = [ { node.name = "~alsa_output.*analog-surround-40" } ]
     actions = { update-props = { media.class = "Audio/Sink/Internal" } }
+  }
+  {
+    matches = [ { node.name = "$(eq_aux_sink "$1")" } ]
+    actions = { update-props = {
+      node.description = "${EQ_AUX_DESC}"
+      node.nick = "${EQ_AUX_DESC}"
+      device.icon-name = "audio-headphones"
+    } }
   }
 ]
 RULE
@@ -610,7 +1021,21 @@ mod_eq_remove() {
     # Restore while the hidden 4.0 node still exists, before exposing hardware
     # as the user's output again. Old installs have no saved volume to restore.
     eq_restore_hardware_volume "$card" || return 1
-    rm -f "$EQ_CONF" "$EQ_HIDE_RULE"
+    if command -v systemctl >/dev/null; then
+        systemctl --user disable --now "$EQ_UNIT" "$EQ_JACK_UNIT" >/dev/null 2>&1 || true
+        rm -f "${EQ_UNIT_DIR}/${EQ_UNIT}" "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}"
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
+    rm -f "$EQ_CONF" "$EQ_BASE_CONF" "$EQ_LEGACY_CONF" "$EQ_HIDE_RULE" "$EQ_JACK_BIN"
+    # Only a bundle this module built. A distribution's package is the package
+    # manager's to remove, and one the user built themselves is theirs.
+    if [[ -f $EQ_BANKSTOWN_STATE ]]; then
+        rm -rf "$EQ_BANKSTOWN_BUNDLE" && rm -f "$EQ_BANKSTOWN_STATE"
+        rmdir "$EQ_LV2_USER_DIR" 2>/dev/null || true
+    fi
+    # Only if this module is the last thing in it; a drop-in directory the user
+    # put something else in is theirs.
+    rmdir "$EQ_CONF_DIR" 2>/dev/null || true
     rm -rf "$EQ_IRS_DIR"
     eq_restart_pipewire
     # After the restart, for the same reason as in apply.
@@ -627,8 +1052,9 @@ mod_eq_remove() {
     [[ -n ${hw:-} ]] && pactl set-default-sink "$hw" && say "default output restored to ${hw}"
 }
 
-# The config is read by the PipeWire daemon at startup, not by a unit of its
-# own, so it takes a restart of the session's audio stack to load or unload.
+# WirePlumber reads its rules at startup, so a changed hide/naming rule takes a
+# restart of the session's audio stack. The tuning and jack units are pulled in
+# by pipewire.service and come back with it on their own.
 eq_restart_pipewire() {
     say "restarting the audio stack"
     # One unit at a time: a session that runs, say, no pipewire-pulse must not
@@ -1032,10 +1458,17 @@ startup_deps_note() {
         case "$id" in
             audio)
                 imac_audio_supported || continue
-                tools=(dkms modinfo lsmod wget git gcc make patch)
+                tools=(dkms modinfo wget git gcc make patch tar xz depmod)
                 ((fedora)) && tools+=(dracut mokutil)
-                [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files") ;;
-            eq) tools=(pactl pw-cli wpctl curl systemctl) ;;
+                if ((fedora)); then
+                    [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files")
+                else
+                    [[ -n $(audio_target_kernels) ]] || missing+=("matching kernel development files")
+                fi ;;
+            eq) tools=(pactl pw-cli wpctl systemctl)
+                # Only when there is something to build: a machine that already
+                # has bankstown packaged needs no Rust toolchain.
+                eq_have_lv2 bankstown.lv2 || tools+=(git cargo) ;;
             color)
                 if ((kde)); then tools=(python3 kscreen-doctor)
                 elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
@@ -1075,7 +1508,7 @@ eq_prereq_note() {   # $1 = EQ state from the current status snapshot
     [[ $1 == applied || $1 == n/a ]] && return 0
     local missing=()
     eq_have_lv2 lsp-plugins.lv2 || missing+=(lsp-plugins-lv2)
-    eq_have_lv2 bankstown.lv2   || missing+=("bankstown(AUR)")
+    eq_have_lv2 bankstown.lv2   || missing+=("bankstown(built from source)")
     ((${#missing[@]})) || return 0
     printf '  eq needs %s — it offers to install them when you apply it\n' "${missing[*]}"
 }

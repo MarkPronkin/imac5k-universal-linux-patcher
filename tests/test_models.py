@@ -58,7 +58,7 @@ preflight
                 self.assertEqual(result.returncode == 0, model == "iMac18,3")
                 if model == "iMac18,3":
                     continue
-                result = self.run_shell(model, "CACHE=/tmp\n" + audio + "mod_audio_detect\nmod_audio_apply")
+                result = self.run_shell(model, f"CACHE=/tmp\nREPO_DIR='{ROOT}'\n" + audio + "mod_audio_detect\nmod_audio_apply")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
                 self.assertIn("existing audio driver", result.stdout)

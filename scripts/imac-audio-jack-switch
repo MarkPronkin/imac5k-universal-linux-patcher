@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Installed by imac-patcher (`--apply eq`); removed by `--remove eq`.
+#
+# Swaps the built-in output between the tuned speaker sink and a flat headphone
+# sink as the jack is used.
+#
+# WirePlumber already does the hardware half of this on its own: the headphone
+# port exists only in the card's stereo profiles, so plugging in moves the card
+# off Analog Surround 4.0, and unplugging moves it back. What it cannot do is
+# take the tuning away. The speaker chain is a filter graph, not a device -- it
+# survives the profile change, stays selectable, and its four-channel output
+# gets folded into the two channels the jack has. That fold is the crossover
+# summed back together over headphones it was never measured for.
+#
+# So: the tuning runs as its own service, and this stops it while the jack is
+# in use. The speaker sink then genuinely disappears rather than sitting in the
+# picker sounding wrong, and the raw stereo sink -- renamed by the WirePlumber
+# rule the same module installs -- is the only built-in output left.
+set -uo pipefail
+
+EQ_UNIT=imac-speaker-eq.service
+EQ_SINK=audio_effect.iMac-convolver
+PROFILE_40='output:analog-surround-40+input:analog-stereo'
+SETTLE=${IMAC_JACK_SETTLE:-0.4}
+TIMEOUT=${IMAC_JACK_TIMEOUT:-20}   # half-second tries; the card takes a moment
+
+log() { printf 'imac-audio-jack-switch: %s\n' "$*"; }
+
+# pactl translates card, port and profile labels; every match below is against
+# the untranslated identifiers.
+pa() { LC_ALL=C pactl "$@" 2>/dev/null; }
+
+# The built-in speaker card is the one offering the four-channel profile -- the
+# same test the EQ module uses. It holds whichever profile is active, so this
+# resolves the card with headphones in or out.
+speaker_card() {
+    pa list cards | awk '
+        /^Card #/                     { name=""; has40=0 }
+        /^\tName: /                   { name=$2 }
+        $1 == "'"${PROFILE_40}"':"    { has40=1 }
+        /^\tActive Profile: /         { if (has40 && name) { print name; exit } }'
+}
+
+active_profile() {
+    pa list cards | awk -v card="$1" '
+        /^Card #/             { name="" }
+        /^\tName: /           { name=$2 }
+        name == card && /^\tActive Profile: / { print $3; exit }'
+}
+
+# Only a positively available headphone port on this card counts. "unknown" is
+# what a jack that cannot report insertion says, and it must not read as in use.
+headphones_present() {
+    pa list cards | awk -v card="$1" '
+        /^Card #/   { name="" }
+        /^\tName: / { name=$2 }
+        name == card && $1 == "analog-output-headphones:" && /, available\)$/ { found=1 }
+        END { exit !found }'
+}
+
+# The flat sink is whatever the card exposes once it is off the 4.0 profile.
+# Derived from the card name rather than matched by pattern: a USB DAC's sink
+# is also an "analog-stereo" one, and must not be mistaken for the jack.
+aux_sink() { printf 'alsa_output.%s.analog-stereo' "${1#alsa_card.}"; }
+
+sink_exists() { pa list short sinks | awk -v n="$1" '$2 == n { found=1 } END { exit !found }'; }
+
+wait_for_sink() {
+    local i
+    for i in $(seq "$TIMEOUT"); do
+        sink_exists "$1" && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+wait_for_profile() {
+    local i
+    for i in $(seq "$TIMEOUT"); do
+        [[ $(active_profile "$1") == "$2" ]] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+# Streams already sent somewhere else -- Bluetooth, HDMI, a USB DAC -- are the
+# user's choice and are left alone. Only what is on the sink about to vanish,
+# or stranded on the dummy sink, is carried across.
+inputs_on() {   # $1... = sink names
+    # pactl reports a stream's sink as a numeric id, so map ids to names first.
+    local wanted=" $* " map
+    map=$(pa list short sinks | awk '{ print $1 "=" $2 }')
+    pa list sink-inputs | awk -v wanted="$wanted" -v map="$map" '
+        BEGIN { n=split(map, rows, "\n"); for (i=1; i<=n; i++) { split(rows[i], kv, "="); name[kv[1]]=kv[2] } }
+        /^Sink Input #/ { id=$3; sub(/^#/, "", id) }
+        /^\tSink: /     { if (index(wanted, " " name[$2] " ")) print id }'
+}
+
+move_inputs() {   # $1 = target sink, $2... = stream ids
+    local target=$1 id; shift
+    for id in "$@"; do
+        pa move-sink-input "$id" "$target" || log "could not move stream ${id} to ${target}"
+    done
+}
+
+# Taking the default over is only right while it is still ours. If the user has
+# picked Bluetooth or HDMI in the meantime, that choice outranks the jack.
+claim_default() {   # $1 = new default, $2... = sinks we are allowed to replace
+    local new=$1 current s; shift
+    current=$(pa get-default-sink)
+    [[ $current == "$new" ]] && return 0
+    for s in "$@"; do
+        if [[ $current == "$s" ]]; then
+            pa set-default-sink "$new" && log "default output -> ${new}"
+            return 0
+        fi
+    done
+    log "default output left on ${current}"
+    return 0
+}
+
+to_headphones() {
+    local card=$1 aux carried
+    aux=$(aux_sink "$card")
+    log "headphones in"
+    # Wait for WirePlumber to move the card off the four-channel profile: the
+    # flat sink does not exist until it has, and stopping the tuning before
+    # there is anywhere else to go leaves the streams on a dummy sink.
+    wait_for_sink "$aux" || { log "flat sink ${aux} never appeared; leaving the tuning alone"; return 1; }
+    carried=$(inputs_on "$EQ_SINK" auto_null)
+    systemctl --user stop "$EQ_UNIT" || log "could not stop ${EQ_UNIT}"
+    claim_default "$aux" "$EQ_SINK" auto_null
+    # shellcheck disable=SC2086
+    [[ -n $carried ]] && move_inputs "$aux" $carried
+    return 0
+}
+
+to_speakers() {
+    local card=$1 aux carried
+    aux=$(aux_sink "$card")
+    log "headphones out"
+    carried=$(inputs_on "$aux" auto_null)
+    # The chain links to the four-channel device as it starts; started before
+    # the card is back on that profile, it has nothing to attach to.
+    wait_for_profile "$card" "$PROFILE_40" || log "card is not on ${PROFILE_40}; starting the tuning anyway"
+    systemctl --user start "$EQ_UNIT" || { log "could not start ${EQ_UNIT}"; return 1; }
+    wait_for_sink "$EQ_SINK" || { log "tuned sink never appeared; see journalctl --user -u ${EQ_UNIT}"; return 1; }
+    claim_default "$EQ_SINK" "$aux" auto_null
+    # shellcheck disable=SC2086
+    [[ -n $carried ]] && move_inputs "$EQ_SINK" $carried
+    return 0
+}
+
+apply_state() {   # $1 = card, $2 = "in"/"out"
+    if [[ $2 == in ]]; then to_headphones "$1"; else to_speakers "$1"; fi
+}
+
+main() {
+    command -v pactl >/dev/null || { log "pactl is required"; exit 1; }
+    systemctl --user cat "$EQ_UNIT" >/dev/null 2>&1 || {
+        log "${EQ_UNIT} is not installed; nothing to switch"; exit 0; }
+
+    local card state want
+    # The audio stack may still be starting up with the session.
+    local i
+    for i in $(seq 60); do
+        card=$(speaker_card); [[ -n $card ]] && break
+        sleep 1
+    done
+    [[ -n ${card:-} ]] || { log "no built-in speaker card offering ${PROFILE_40}"; exit 1; }
+    log "watching ${card}"
+
+    # Reconcile once at startup: the jack may already be in use at login, or
+    # from before this service was restarted.
+    if headphones_present "$card"; then state=in; else state=out; fi
+    apply_state "$card" "$state"
+
+    # Card events carry port availability; pactl reports them without polling.
+    while IFS= read -r _; do
+        sleep "$SETTLE"
+        card=$(speaker_card); [[ -n $card ]] || continue
+        if headphones_present "$card"; then want=in; else want=out; fi
+        [[ $want == "$state" ]] && continue
+        state=$want
+        apply_state "$card" "$state"
+    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered "on card")
+
+    log "pactl subscribe ended"
+    exit 1   # the unit restarts; a dead watcher would silently strand the jack
+}
+
+main "$@"

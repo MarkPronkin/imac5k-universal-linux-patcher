@@ -55,35 +55,17 @@ mod_suspend_remove() {
     fedora_suspend_drop_no_cstates
     say "sleep re-enabled"
 }
+audio_target_kernels() {
+    # Fedora's explicit kernel-devel preflight targets the running kernel.
+    audio_kernel_supported "$KREL" && printf '%s\n' "$KREL"
+}
 mod_audio_apply() {
     fedora_mutable || return 1
     imac_audio_supported || { warn "The bundled CS8409 driver supports only iMac18,3; keep this model's existing audio driver."; return 1; }
-    local codec found=0
-    for codec in /sys/bus/hdaudio/devices/*/chip_name; do
-        [[ -f $codec && $(cat "$codec") == CS8409* ]] && found=1
-    done
-    ((found)) || { warn "CS8409 codec was not detected."; return 1; }
-    fedora_deps dkms "kernel-devel-${KREL}" gcc make patch wget git elfutils-libelf-devel openssl-devel mokutil || return 1
-    if [[ -d $AUDIO_SRC/.git ]]; then
-        git -C "$AUDIO_SRC" pull --ff-only || return 1
-    else
-        git clone --depth 1 "$AUDIO_REPO" "$AUDIO_SRC" || return 1
-    fi
-    # Use DKMS directly: the upstream wrapper assumes updates/dkms and loops
-    # over every kernel, sometimes hiding a failed build behind a later success.
-    # DKMS copies this checkout to /usr/src; future builds do not need the cache.
-    local status
-    status=$(dkms status -m snd_hda_macbookpro -v 0.2) || return 1
-    if [[ $status == *broken* ]]; then
-        warn "Broken audio registration: run sudo dkms remove snd_hda_macbookpro/0.2 --all, then retry."
-        return 1
-    fi
-    if [[ -z $status ]]; then
-        sudo dkms add "$AUDIO_SRC" || return 1
-    fi
-    sudo dkms install -m snd_hda_macbookpro -v 0.2 -k "$KREL" || return 1
-    status=$(dkms status -m snd_hda_macbookpro -v 0.2 -k "$KREL") || return 1
-    [[ $status == *installed* ]] || { warn "Audio DKMS build failed for ${KREL}."; return 1; }
+    audio_check_hardware || return 1
+    audio_kernel_supported "$KREL" || { warn "The headset driver requires Linux 6.17+."; return 1; }
+    fedora_deps dkms "kernel-devel-${KREL}" gcc make patch wget git tar xz kmod dracut elfutils-libelf-devel openssl-devel mokutil || return 1
+    audio_install_driver || return 1
     local sb
     sb=$(mokutil --sb-state 2>/dev/null || true)
     if [[ $sb == *'SecureBoot enabled'* ]]; then
@@ -97,7 +79,7 @@ mod_audio_apply() {
 }
 mod_audio_remove() {
     fedora_mutable || return 1
-    sudo dkms remove snd_hda_macbookpro/0.2 --all || return 1
+    audio_remove_driver || return 1
     # DKMS removal affects every installed kernel; update their initramfs too.
     sudo dracut --regenerate-all --force || return 1
     say "Stock audio modules restored; reboot."

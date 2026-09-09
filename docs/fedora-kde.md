@@ -217,18 +217,22 @@ the initramfs.
 ./scripts/imac-patcher --apply eq color suspend
 ```
 
-**Audio** verifies the iMac model and the CS8409 codec, then registers the
-upstream driver with DKMS directly rather than through its install wrapper —
+**Audio** verifies the iMac model, CS8409 codec and Linux 6.17+ kernel, then
+registers the pinned upstream driver plus the headset patch with DKMS directly rather than through its install wrapper —
 the wrapper assumes `updates/dkms` and loops over every installed kernel, which
 can hide a failed build behind a later success. DKMS keeps its own source copy
 under `/usr/src`, so later kernels rebuild without the cache. An existing
-registration is reused, and the initramfs is rebuilt at the end. Reboot before
-testing speakers and microphone.
+patched registration is reused; an older `0.2` install is upgraded to
+`0.2.imac5k1`. The initramfs is rebuilt at the end. Reboot before testing
+speakers, headphones and microphone. The patch adds live microphone switching,
+gain fixes and EarPods remote buttons; Fedora hardware verification remains
+outstanding. See [headphone setup](headphones.md).
 
 **Tuning** (`eq`) switches the speaker card to Analog Surround 4.0 and loads a
 PipeWire filter-chain over it. `lsp-plugins` comes from Fedora's repositories;
-`bankstown` does not exist as a Fedora package and has to be built from
-https://github.com/chadmed/bankstown into `~/.lv2` first, or the module stops
+`bankstown` exists as no distribution's package, so the module offers to build
+it from https://github.com/chadmed/bankstown into `~/.lv2` with `cargo`, which
+works the same way on Fedora as on Arch. Decline and the module stops
 and says so rather than installing a graph that cannot load.
 
 **Colour** selects the internal panel's **EDID** colour profile through

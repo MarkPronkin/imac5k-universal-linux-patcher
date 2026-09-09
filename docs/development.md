@@ -31,6 +31,9 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
 | `test_eq.py`, `test_suspend.py` | Speaker routing/volume restoration and sleep masks with old boot-argument cleanup |
+| `test_audio_jack.py` | Headphone jack detection, which streams follow the jack, and the two switching transitions |
+| `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |
+| `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
 | `test_release.py` | Reproducible archives, checksum validation, launchers, upgrades, version pruning and uninstall |
 
@@ -41,6 +44,9 @@ tracked changes without altering the working tree or index. New runtime files
 must be staged before release tests can include them in that snapshot. Inspect
 the files and stage only the intended additions; never use a stash operation
 that moves your working changes out of the checkout.
+
+The driver tests use a tiny local Git fixture to exercise the installer
+without downloading or compiling a kernel.
 
 The additional startup tests require `bubblewrap` and Linux user namespaces.
 They mount the host read-only, hide host commands, substitute test hardware and
@@ -68,12 +74,20 @@ or successful boot on a particular iMac; record hardware validation separately.
 |---|---|
 | `scripts/imac-patcher` | CLI, menu, module orchestration and the base Omarchy implementations |
 | `scripts/lib/platform.sh` | Model, GPU, distribution and desktop detection |
+| `scripts/imac-audio-jack-switch` | Swaps the built-in output between the tuned speaker sink and the untuned jack output, installed by the `eq` module |
 | `scripts/lib/fedora.sh` | Fedora module overrides using DNF, DKMS, dracut and GRUB |
 | `scripts/lib/kde.sh`, `scripts/kde-display.py` | KDE colour handling through KScreen |
 | `scripts/patch-imac5k-amdgpu.sh`, `scripts/fedora-imac5k` | Platform-specific graphics builds, installation and restore |
 | `scripts/imac-alt-entry`, `scripts/imac-test-entry`, `scripts/95-limine-esp-hygiene` | Omarchy/Limine boot helpers |
 | `install.sh`, `scripts/make-release.sh` | Download/install a release and build its reproducible archive |
 | `patches/`, `configs/` | Kernel patches and configuration templates |
+| `assets/imac-audio/` | The vendored speaker tuning: upstream's config and four impulse responses, byte-identical to the commit its README names |
+
+Two files are carried verbatim from upstream and must stay byte-identical:
+`patches/cs8409-headset-capture.patch` and `assets/imac-audio/iMacAudio.conf`.
+`git diff --check` reports upstream's own trailing whitespace in both — do not
+"fix" it. For the tuning, `VendoredTuningTests` fails if you do.
+
 
 Platform overrides load after the base definitions; KDE overrides load last.
 Shared changes belong in the base implementation, with overrides only where
