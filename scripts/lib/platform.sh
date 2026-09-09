@@ -22,8 +22,29 @@ imac_has_amdgpu() {
 imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 
 imac_is_fedora() { ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); }
+imac_is_arch() { ( . /etc/os-release; [[ ${ID:-} == arch || " ${ID_LIKE:-} " == *" arch "* ]] ); }
 imac_is_atomic() { [[ -e /run/ostree-booted ]]; }
 imac_is_kde() { local desktop=${XDG_CURRENT_DESKTOP:-}; [[ ${desktop,,} == *kde* ]]; }
+# Bootloaders are identified by the configs they maintain, never by installed
+# tools: /etc/default/limine for Limine, /etc/default/grub for GRUB.
+imac_has_limine() { [[ -f /etc/default/limine ]]; }
+imac_has_grub() { [[ -f /etc/default/grub ]]; }
+# Arch-family system booting GRUB (Arch, EndeavourOS, CachyOS, ...). Limine wins
+# when both configs exist, so an Omarchy install keeps its backend even with a
+# stale /etc/default/grub left over from another setup.
+imac_is_arch_grub() { ! imac_is_fedora && imac_is_arch && imac_has_grub && ! imac_has_limine; }
+# The Arch-style kernel package base ("linux", "linux-lts", "linux-cachyos",
+# ...), from packaging metadata every such kernel ships. Headers for it are the
+# "<pkgbase>-headers" package.
+imac_kernel_pkgbase() {
+    local krel=${1:-$(uname -r)} pkgbase
+    pkgbase=$(cat "/usr/lib/modules/${krel}/pkgbase" 2>/dev/null) || pkgbase=linux
+    [[ $pkgbase =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || return 1
+    printf '%s\n' "$pkgbase"
+}
+imac_kernel_uses_clang() {
+    grep -qx 'CONFIG_CC_IS_CLANG=y' "/usr/lib/modules/${1:-$(uname -r)}/build/.config" 2>/dev/null
+}
 imac_require_limine() {
     if imac_is_fedora || [[ ! -f /etc/default/limine ]]; then
         echo "This helper requires an Omarchy/Limine installation. On Fedora use imac-patcher --apply/--remove 5k." >&2

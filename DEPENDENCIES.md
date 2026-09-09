@@ -1,7 +1,7 @@
 # Dependencies
 
 Everything `imac-patcher` and its helper scripts need, per module and distro.
-Package names are given for **Arch/Omarchy** (pacman) and **Fedora** (dnf)
+Package names are given for **Arch/Omarchy/EndeavourOS/CachyOS** (pacman) and **Fedora** (dnf)
 where they differ.
 
 ## Core (imac-patcher itself)
@@ -55,10 +55,27 @@ Preflight checks for these tools and offers to install missing ones:
 | patch | patch |
 | cpio | cpio |
 | depmod, modinfo, lsmod | kmod |
-| kernel headers for the running kernel | linux-headers |
-| limine-mkinitcpio (or mkinitcpio) | limine / mkinitcpio |
+| kernel headers for the running kernel | `<pkgbase>-headers` (`linux-headers`, `linux-cachyos-headers`, etc.) |
+| limine-mkinitcpio (Limine backend) | limine-mkinitcpio-hook |
+| mkinitcpio (GRUB backend) | mkinitcpio |
+| grub-mkconfig (GRUB backend) | grub |
+| clang, ld.lld, llvm-ar/nm/objcopy/objdump/readelf/strip (Clang-built GRUB kernels) | clang, lld, llvm |
 
 Also: ~8 GB free disk and 20–40 min compile time. Kernel series 7.1.x/7.2.x only.
+
+The headers package comes from `/usr/lib/modules/$(uname -r)/pkgbase`, so custom
+kernels use their own headers. A package install must provide headers for the
+exact running kernel; after a kernel update, reboot before patching. GRUB
+builds use that installed Kbuild tree and its configuration, including Clang
+when `CONFIG_CC_IS_CLANG=y`. Their boot layout must have matching
+`/boot/vmlinuz-<pkgbase>` and `/boot/initramfs-<pkgbase>.img` files and a
+mkinitcpio preset. Arch-family dracut/UKI-only layouts are refused.
+
+The GRUB variants of `imac-alt-entry` and `imac-test-entry` also use `lsinitcpio`
+(from mkinitcpio), libarchive’s `bsdtar`/`bsdcpio`, zstd, xz/gzip, kmod, and
+coreutils. `imac-alt-entry add` needs rsync to stage its private module tree.
+The helpers use the installed mkinitcpio configuration and explicitly include
+amdgpu; they do not change bootloader selection. See [Arch/GRUB](docs/arch-grub.md).
 
 ### Fedora (`scripts/fedora-imac5k`, see docs/fedora-kde.md)
 
@@ -79,7 +96,7 @@ update Fedora, reboot, and retry. Fedora Kinoite/Atomic is not supported.
 | Tool | Arch package | Fedora package |
 |---|---|---|
 | dkms | dkms | dkms |
-| kernel headers | linux-headers | kernel-devel-$(uname -r) |
+| kernel headers | `<pkgbase>-headers` | kernel-devel-$(uname -r) |
 | wget | wget | wget |
 | git | git | git |
 | gcc, make, patch | base-devel | gcc, make, patch |
@@ -169,6 +186,8 @@ driver; the bundled audio installer supports only iMac18,3.
 - Omarchy: the Limine/mkinitcpio stack from the boot module, used only when
   cleaning up a leftover `idle=poll` drop-in (`limine-mkinitcpio`, `objcopy`
   for verification)
+- Arch-family GRUB: `grub-mkconfig` (package `grub`) — removes the argument
+  from `/etc/default/grub` and verifies the generated kernel entry
 - Fedora: `grubby` — removes a leftover `idle=poll` argument from the current
   kernel's GRUB entry
 
@@ -177,7 +196,7 @@ driver; the bundled audio installer supports only iMac18,3.
 - limine (the package provides `/usr/share/limine/BOOTX64.EFI`)
 - objcopy (binutils) — classifies the EFI fallback binary
 - limine-mkinitcpio or mkinitcpio — rebuilds the initramfs/UKI
-- N/A on Fedora (GRUB); detection returns n/a there
+- N/A on Fedora and Arch-family GRUB; detection returns n/a there
 
 ## scripts/verify.sh (optional probes)
 

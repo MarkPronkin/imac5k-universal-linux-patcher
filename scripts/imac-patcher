@@ -433,7 +433,7 @@ audio_arch_deps() {
         case $tool in gcc|make) pkg=base-devel ;; modinfo|depmod) pkg=kmod ;; *) pkg=$tool ;; esac
         [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
     done
-    [[ -n $(audio_target_kernels) ]] || packages+=(linux-headers)
+    [[ -n $(audio_target_kernels) ]] || packages+=("$(imac_kernel_pkgbase)-headers")
     if ((${#packages[@]})); then
         warn "missing packages: ${packages[*]}"
         confirm "Install them now?" || return 1
@@ -1177,8 +1177,8 @@ mod_suspend_apply() {
     suspend_drop_no_cstates
 }
 mod_suspend_remove() {
-    sudo systemctl unmask "${SLEEP_TARGETS[@]}"
-    suspend_drop_no_cstates
+    sudo systemctl unmask "${SLEEP_TARGETS[@]}" || return 1
+    suspend_drop_no_cstates || return 1
     say "sleep re-enabled"
 }
 
@@ -1275,6 +1275,9 @@ mod_5k_detect() {
 }
 mod_5k_preflight() {
     imac_has_amdgpu || { warn "The 5K display patch requires a GPU using amdgpu."; return 1; }
+    imac_has_limine || imac_is_arch_grub || {
+        warn "The 5K installer requires Omarchy/Limine or Arch-family GRUB with mkinitcpio."; return 1;
+    }
     local ok=1 missing=() pkgs=()
     if [[ " $SUPPORTED_5K_SERIES " != *" $KSERIES "* ]]; then
         warn "kernel ${KREL}: the 5K patch is verified only for series ${SUPPORTED_5K_SERIES}."
@@ -1285,14 +1288,23 @@ mod_5k_preflight() {
     fi
     # Build dependencies. The underlying installer only checks gcc, so a missing
     # bc/pahole surfaces as a confusing failure 20 minutes into a compile.
-    local t
-    for t in gcc make ld bc pahole flex bison zstd curl tar; do
+    local t tools=(gcc make ld strip objcopy bc pahole flex bison zstd curl tar patch xz cpio modinfo depmod)
+    if imac_is_arch_grub; then tools+=(mkinitcpio grub-mkconfig); else tools+=(limine-mkinitcpio); fi
+    if imac_is_arch_grub && imac_kernel_uses_clang "$KREL"; then
+        tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
+    fi
+    for t in "${tools[@]}"; do
         command -v "$t" >/dev/null || missing+=("$t")
     done
     if (( ${#missing[@]} )); then
         warn "missing build tools: ${missing[*]}"
         for t in "${missing[@]}"; do case $t in
-            gcc|make|ld|flex|bison) pkgs+=(base-devel) ;;
+            gcc|make|ld|strip|objcopy|flex|bison) pkgs+=(base-devel) ;;
+            modinfo|depmod) pkgs+=(kmod) ;;
+            grub-mkconfig) pkgs+=(grub) ;;
+            limine-mkinitcpio) pkgs+=(limine-mkinitcpio-hook) ;;
+            ld.lld) pkgs+=(lld) ;;
+            llvm-*) pkgs+=(llvm) ;;
             *)                      pkgs+=("$t") ;;
         esac; done
         # de-duplicate
@@ -1304,15 +1316,27 @@ mod_5k_preflight() {
     else
         say "build tools present"
     fi
+    for t in "${tools[@]}"; do
+        command -v "$t" >/dev/null || { warn "$t is still missing."; ok=0; }
+    done
+    local headers_pkg
+    headers_pkg="$(imac_kernel_pkgbase "$KREL")-headers"
     if [[ -e "/usr/lib/modules/${KREL}/build/Module.symvers" ]]; then
         say "kernel headers present"
     else
-        warn "linux-headers missing for ${KREL}"
-        if confirm "Install linux-headers now?"; then
-            sudo pacman -S --needed --noconfirm linux-headers || ok=0
+        warn "${headers_pkg} missing for ${KREL}"
+        if confirm "Install ${headers_pkg} now?"; then
+            sudo pacman -S --needed --noconfirm "$headers_pkg" || ok=0
         else ok=0; fi
     fi
     local free_gb
+    [[ -e "/usr/lib/modules/${KREL}/build/Module.symvers" ]] || {
+        warn "Headers must match the running kernel exactly; reboot after a kernel update, then retry."
+        ok=0
+    }
+    if imac_is_arch_grub; then
+        grub_read_cmdlines && grub_require_layout || ok=0
+    fi
     free_gb=$(df --output=avail -BG "$HOME" 2>/dev/null | tail -1 | tr -dc 0-9)
     if (( ${free_gb:-0} >= 8 )); then say "disk space: ${free_gb}G free"
     else warn "only ${free_gb:-?}G free — the kernel source tree needs roughly 8G"; ok=0; fi
@@ -1331,24 +1355,27 @@ mod_5k_apply() {
     local log="$LOGDIR/apply-5k-$(date +%Y%m%d-%H%M%S).log"
     sudo "$INSTALLER_5K" 2>&1 | tee "$log" || return 1
     if boot_config_has "$VIDEO_4K" && confirm "Remove the 4K fallback parameter (required for real 5K)?"; then
-        remove_4k_fallback
+        remove_4k_fallback || return 1
     fi
-    sync_boot_files && verify_cmdline 'amdgpu.tiled_stitch=1' "$VIDEO_4K"
+    sync_boot_files && verify_cmdline 'amdgpu.tiled_stitch=1' "$VIDEO_4K" || return 1
     say "reboot to activate"
 }
 mod_5k_remove() {
     sudo "$INSTALLER_5K" --restore || return 1
-    sudo rm -f "$STITCH_DROPIN"
+    remove_stitch_boot_config || return 1
+    if ! boot_config_has "$VIDEO_4K" && confirm "Re-add the 4K fallback (recommended without 5K)?"; then
+        add_4k_fallback || return 1
+    fi
+    sync_boot_files && verify_cmdline "" 'amdgpu.tiled_stitch=1' || return 1
+    say "reboot to return to stock"
+}
+remove_stitch_boot_config() {
+    sudo rm -f "$STITCH_DROPIN" || return 1
     # Older layouts appended the parameter straight into /etc/default/limine.
     if grep -qs 'amdgpu.tiled_stitch=1' "$LIMINE_DEFAULT"; then
-        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-restore-$(date +%s)"
-        sudo sed -i 's| amdgpu.tiled_stitch=1||' "$LIMINE_DEFAULT"
+        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-restore-$(date +%s)" || return 1
+        sudo sed -i 's| amdgpu.tiled_stitch=1||' "$LIMINE_DEFAULT" || return 1
     fi
-    if ! boot_config_has "$VIDEO_4K" && confirm "Re-add the 4K fallback (recommended without 5K)?"; then
-        add_4k_fallback
-    fi
-    sync_boot_files && verify_cmdline "" 'amdgpu.tiled_stitch=1'
-    say "reboot to return to stock"
 }
 
 # ── boot helpers ───────────────────────────────────────────────────────────
@@ -1445,8 +1472,10 @@ verify_cmdline() {   # $1 must be present, $2 must be absent
     say "embedded cmdline verified"
 }
 
-# Fedora implementations use DNF, dracut and GRUB; KDE uses KScreen.
+# Fedora implementations use DNF, dracut and GRUB/BLS; Arch-family systems
+# booting GRUB get /etc/default/grub + grub-mkconfig; KDE uses KScreen.
 if imac_is_fedora; then source "${SCRIPT_DIR}/lib/fedora.sh"; fi
+if imac_is_arch_grub; then source "${SCRIPT_DIR}/lib/arch-grub.sh"; fi
 if imac_is_kde; then source "${SCRIPT_DIR}/lib/kde.sh"; fi
 
 # ── generic driver ─────────────────────────────────────────────────────────
@@ -1482,9 +1511,10 @@ show_status() {
 startup_deps_note() {
     # This audit must not depend on a module's successful detection: absent
     # pactl/python3 can make detection return n/a or nothing at all.
-    local id tool reported=0 fedora=0 kde=0 tools=() missing=()
+    local id tool reported=0 fedora=0 kde=0 archgrub=0 tools=() missing=()
     imac_is_fedora && fedora=1
     imac_is_kde && kde=1
+    imac_is_arch_grub && archgrub=1
     for id in "${MODULES[@]}"; do
         [[ ${MODULE_STATES[$id]} == applied ]] && continue
         tools=(); missing=()
@@ -1492,7 +1522,8 @@ startup_deps_note() {
             audio)
                 imac_audio_supported || continue
                 tools=(dkms modinfo wget git gcc make patch tar xz depmod)
-                ((fedora)) && tools+=(dracut mokutil)
+                if ((fedora)); then tools+=(dracut mokutil)
+                elif ((archgrub)); then tools+=(mkinitcpio); fi
                 if ((fedora)); then
                     [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files")
                 else
@@ -1507,15 +1538,20 @@ startup_deps_note() {
                 elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
             suspend)
                 tools=(systemctl)
-                ((fedora)) && tools+=(grubby) ;;
+                ((fedora)) && tools+=(grubby)
+                ((archgrub)) && tools+=(grub-mkconfig) ;;
             boot)
                 ((fedora)) && continue
+                ((archgrub)) && continue
                 [[ -f $LIMINE_DEFAULT ]] || continue
                 tools=(objcopy limine-mkinitcpio) ;;
             5k)
                 [[ ${MODULE_STATES[$id]} == n/a ]] && continue
                 tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod)
                 if ((fedora)); then tools+=(rpm rpmbuild koji python3 dracut grubby mokutil)
+                elif ((archgrub)); then
+                    tools+=(zstd cpio mkinitcpio grub-mkconfig)
+                    imac_kernel_uses_clang "$KREL" && tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
                 else tools+=(zstd cpio limine-mkinitcpio); fi
                 [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files") ;;
         esac

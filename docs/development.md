@@ -35,6 +35,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
+| `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
 | `test_release.py` | Reproducible archives, checksum validation, launchers, upgrades, version pruning and uninstall |
 
 Tests replace system commands or use temporary directories. They do not apply
@@ -75,10 +76,13 @@ or successful boot on a particular iMac; record hardware validation separately.
 | `scripts/imac-patcher` | CLI, menu, module orchestration and the base Omarchy implementations |
 | `scripts/lib/platform.sh` | Model, GPU, distribution and desktop detection |
 | `scripts/imac-audio-jack-switch` | Swaps the built-in output between the tuned speaker sink and the untuned jack output, installed by the `eq` module |
+| `scripts/lib/grub.sh` | Arch GRUB command-line edits, generated menu selection, custom test entries and mkinitcpio image helpers |
+| `scripts/lib/arch-grub.sh` | Arch-family GRUB module overrides; Limine boot repair is n/a |
 | `scripts/lib/fedora.sh` | Fedora module overrides using DNF, DKMS, dracut and GRUB |
 | `scripts/lib/kde.sh`, `scripts/kde-display.py` | KDE colour handling through KScreen |
 | `scripts/patch-imac5k-amdgpu.sh`, `scripts/fedora-imac5k` | Platform-specific graphics builds, installation and restore |
-| `scripts/imac-alt-entry`, `scripts/imac-test-entry`, `scripts/95-limine-esp-hygiene` | Omarchy/Limine boot helpers |
+| `scripts/imac-alt-entry`, `scripts/imac-test-entry` | Isolated module test entries and promotion for Limine and Arch-family GRUB |
+| `scripts/95-limine-esp-hygiene` | Omarchy/Limine ESP maintenance |
 | `install.sh`, `scripts/make-release.sh` | Download/install a release and build its reproducible archive |
 | `patches/`, `configs/` | Kernel patches and configuration templates |
 | `assets/imac-audio/` | The vendored speaker tuning: upstream's config and four impulse responses, byte-identical to the commit its README names |
@@ -90,6 +94,10 @@ Two files are carried verbatim from upstream and must stay byte-identical:
 
 
 Platform overrides load after the base definitions; KDE overrides load last.
+Backend precedence is Fedora, then Limine, then Arch-family GRUB. Bootloader
+selection uses configuration presence, never installed commands. GRUB tests
+use temporary boot files and fake `grub-mkconfig`/`mkinitcpio` commands; they
+must not regenerate this development machine’s boot configuration.
 Shared changes belong in the base implementation, with overrides only where
 the platform behaves differently. Check both implementations when changing
 the module contract or a patch stack.

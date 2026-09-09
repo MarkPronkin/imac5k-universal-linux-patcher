@@ -32,7 +32,19 @@ source "${SCRIPT_DIR}/lib/platform.sh"
 if imac_is_fedora; then
     exec "${SCRIPT_DIR}/fedora-imac5k" "$@"
 fi
-imac_require_limine
+# Two Arch-family backends: Limine (Omarchy) and GRUB. GRUB edits the cmdline
+# in /etc/default/grub + grub-mkconfig instead of limine-entry-tool drop-ins.
+GRUB=0
+if imac_has_limine; then
+    :
+elif imac_is_arch_grub; then
+    GRUB=1
+    source "${SCRIPT_DIR}/lib/grub.sh"
+else
+    echo "This installer needs an Omarchy/Limine or Arch-family GRUB installation." >&2
+    echo "On Fedora use: imac-patcher --apply 5k" >&2
+    exit 1
+fi
 # Which stack to build. "lean" (default since 2026-09-07): the lean core (the
 # upstream candidate) plus the stitch layer -- same features as the verbose
 # stack minus its logging -- plus the post-commit link-health recovery that
@@ -61,12 +73,20 @@ MODDIR="/usr/lib/modules/${KREL}/kernel/drivers/gpu/drm/amd/amdgpu"
 BUILDLINK="/usr/lib/modules/${KREL}/build"
 
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run with sudo: sudo $0 ${*:-}"
 
+if ((GRUB)); then
+	command -v mkinitcpio >/dev/null || die "install mkinitcpio first (this GRUB backend requires mkinitcpio presets)"
+	command -v grub-mkconfig >/dev/null || die "install the grub package first"
+	grub_read_cmdlines || die "unsupported GRUB command-line configuration; nothing installed"
+	grub_require_layout || die "unsupported or stale GRUB boot layout"
+fi
+
 # ── restore mode ───────────────────────────────────────────────────────────
-find_amdgpu() { find "$(dirname "$MODDIR")" -maxdepth 2 -name 'amdgpu.ko*' ! -name '*.stock-backup' 2>/dev/null | head -1; }
+find_amdgpu() { find "$(dirname "$MODDIR")" -maxdepth 2 \( -name amdgpu.ko -o -name amdgpu.ko.zst -o -name amdgpu.ko.xz \) 2>/dev/null | head -1; }
 if [[ "${1:-}" == "--restore" ]]; then
 	AMDKO="$(find_amdgpu)" || true
 	BAK="${AMDKO}.stock-backup"
@@ -74,12 +94,15 @@ if [[ "${1:-}" == "--restore" ]]; then
 	say "restoring stock amdgpu module"
 	cp -v "$BAK" "$AMDKO"
 	depmod "$KREL"
-	if [[ -f /etc/limine-entry-tool.d/imac5k-stitch.conf ]]; then
+	if ((GRUB)); then
+		grub_cmdline_remove 'amdgpu.tiled_stitch=1'
+	elif [[ -f /etc/limine-entry-tool.d/imac5k-stitch.conf ]]; then
 		say "removing the amdgpu.tiled_stitch drop-in"
 		rm -f /etc/limine-entry-tool.d/imac5k-stitch.conf
 	fi
 	say "rebuilding initramfs"
-	if command -v limine-mkinitcpio >/dev/null; then limine-mkinitcpio; else mkinitcpio -P; fi
+	if ((GRUB)); then mkinitcpio -P; grub_regen
+	elif command -v limine-mkinitcpio >/dev/null; then limine-mkinitcpio; else mkinitcpio -P; fi
 	say "done — reboot to run the stock module."
 	exit 0
 fi
@@ -100,7 +123,14 @@ EOF
 fi
 
 command -v gcc >/dev/null || die "install build tools first:  pacman -S --needed base-devel bc cpio pahole"
-[[ -e "$BUILDLINK/Module.symvers" ]] || die "install kernel headers first:  pacman -S linux-headers  (needed so the module matches this kernel)"
+[[ -e "$BUILDLINK/Module.symvers" ]] || die "install kernel headers first:  pacman -S $(imac_kernel_pkgbase "$KREL")-headers  (needed so the module matches this kernel)"
+MAKE_ARGS=()
+if ((GRUB)) && imac_kernel_uses_clang "$KREL"; then
+	for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
+		command -v "$tool" >/dev/null || die "missing $tool — install clang llvm lld for this kernel"
+	done
+	MAKE_ARGS+=(LLVM=1)
+fi
 
 # ── fetch matching kernel source (for the driver .c files) ─────────────────
 mkdir -p "$WORK"; cd "$WORK"
@@ -118,6 +148,12 @@ cd "$SRC"
 
 # ── configure to match the running kernel exactly (vermagic + symbols) ─────
 say "configuring to match the running kernel"
+if ((GRUB)); then
+	# CachyOS and other custom kernels change configuration and internal ABI.
+	# Use their prepared Kbuild tree directly, including Clang/LTO settings.
+	# Regenerating a kernel.org .config can silently discard those settings.
+	BUILTREL="$(make "${MAKE_ARGS[@]}" -s -C "$BUILDLINK" kernelrelease)"
+else
 cp "$BUILDLINK/.config" .config
 cp "$BUILDLINK/Module.symvers" Module.symvers 2>/dev/null || true
 # Arch's kernel release is e.g. 7.2.2-arch1-1 while kernel.org source builds
@@ -129,6 +165,7 @@ scripts/config --disable LOCALVERSION_AUTO 2>/dev/null || true
 scripts/config --set-str LOCALVERSION "" 2>/dev/null || true
 make olddefconfig >/dev/null
 BUILTREL="$(make -s kernelrelease)"
+fi
 [[ "$BUILTREL" == "$KREL" ]] || die "computed kernelrelease '$BUILTREL' != running '$KREL' — refusing to build a module that won't load"
 say "kernelrelease matches running kernel: $BUILTREL"
 
@@ -164,19 +201,30 @@ for extra in "${EXTRA_PATCHES[@]}"; do
 done
 
 # ── build just the amdgpu module ───────────────────────────────────────────
-say "preparing build (fast)"
-make modules_prepare >/dev/null
 say "building amdgpu module — this is the slow part (~20-40 min)"
+if ((GRUB)); then
+	make "${MAKE_ARGS[@]}" -C "$BUILDLINK" -j"$(nproc)" \
+		M="$PWD/drivers/gpu/drm/amd/amdgpu" \
+		"CFLAGS_amdgpu_trace_points.o=-I$PWD/include/trace" modules \
+		|| die "module build failed against the installed kernel headers"
+else
+make modules_prepare >/dev/null
 make -j"$(nproc)" M=drivers/gpu/drm/amd/amdgpu modules \
 	|| make -j"$(nproc)" drivers/gpu/drm/amd/amdgpu/amdgpu.ko \
 	|| die "module build failed"
+fi
 
 BUILT="$(find drivers/gpu/drm/amd/amdgpu -name amdgpu.ko | head -1)"
 [[ -f "$BUILT" ]] || die "built amdgpu.ko not found"
 
 # quick sanity: vermagic must match the running kernel or it won't load
 VM="$(modinfo -F vermagic "$BUILT" 2>/dev/null | awk '{print $1}')"
-[[ "$VM" == "$KREL" ]] || say "WARNING: built vermagic '$VM' != running '$KREL' — module may need --force; test on the clone first."
+[[ "$VM" == "$KREL" ]] || die "built vermagic '$VM' != running '$KREL' — refusing to install"
+if ((GRUB)); then
+	EXPECTED_VM="$(modinfo -k "$KREL" -F vermagic amdgpu)"
+	[[ "$(modinfo -F vermagic "$BUILT")" == "$EXPECTED_VM" ]] \
+		|| die "built module ABI flags differ from the installed kernel — refusing to install"
+fi
 
 # ── install (compressed to match Arch's .ko.zst) with a stock backup ───────
 AMDKO="$(find_amdgpu)" || die "stock amdgpu module not found under $MODDIR"
@@ -203,22 +251,31 @@ depmod "$KREL"
 # silent no-op, and the parameter never reached the cmdline -- while the next
 # run's grep, looking in the same one file, kept reporting it as missing.
 # Write our own drop-in instead, the way Omarchy's own hardware quirks do.
-LIMINE_DROPIN_DIR=/etc/limine-entry-tool.d
-STITCH_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-stitch.conf"
-if grep -qs 'amdgpu.tiled_stitch=1' /etc/default/limine "$LIMINE_DROPIN_DIR"/*.conf; then
-	say "amdgpu.tiled_stitch=1 already in the boot config"
+# On GRUB the equivalent is GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub,
+# applied by grub-mkconfig (grub_cmdline_add does both).
+if ((GRUB)); then
+	grub_cmdline_add 'amdgpu.tiled_stitch=1' || die "could not set amdgpu.tiled_stitch=1 in the GRUB cmdline"
 else
-	say "adding amdgpu.tiled_stitch=1 to the default cmdline ($STITCH_DROPIN)"
-	mkdir -p "$LIMINE_DROPIN_DIR"
-	cat > "$STITCH_DROPIN" <<'DROPIN'
+	LIMINE_DROPIN_DIR=/etc/limine-entry-tool.d
+	STITCH_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-stitch.conf"
+	if grep -qs 'amdgpu.tiled_stitch=1' /etc/default/limine "$LIMINE_DROPIN_DIR"/*.conf; then
+		say "amdgpu.tiled_stitch=1 already in the boot config"
+	else
+		say "adding amdgpu.tiled_stitch=1 to the default cmdline ($STITCH_DROPIN)"
+		mkdir -p "$LIMINE_DROPIN_DIR"
+		cat > "$STITCH_DROPIN" <<'DROPIN'
 # Written by imac-patcher (iMac native 5K). Delete this file to drop the
 # parameter, or run: imac-patcher --remove 5k
 KERNEL_CMDLINE[default]+=" amdgpu.tiled_stitch=1"
 DROPIN
+	fi
 fi
 
 say "rebuilding initramfs (bakes the patched module in)"
-if command -v limine-mkinitcpio >/dev/null; then limine-mkinitcpio; else mkinitcpio -P; fi
+if ((GRUB)); then mkinitcpio -P; grub_regen
+elif command -v limine-mkinitcpio >/dev/null; then limine-mkinitcpio; else mkinitcpio -P; fi
+
+if (( ! GRUB )); then
 
 # Remove shadowing limine.conf copies. Limine >= 10.3.0 loads the FIRST config
 # in its search order, so a copy at EFI/limine/ or EFI/BOOT/ overrides
@@ -251,6 +308,7 @@ if [[ -f "$UKI" && -f "$FALLBACK" ]]; then
 		cp -f "$UKI" "$FALLBACK"
 	fi
 	rm -f "$probe"
+fi
 fi
 sync
 

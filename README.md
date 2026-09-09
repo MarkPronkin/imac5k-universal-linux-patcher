@@ -111,13 +111,14 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 
 | Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
-| **Arch Linux** | ⚪ Conditional: Omarchy/Limine setup | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
+| **Arch Linux** | ⚪ Untested: GRUB/mkinitcpio; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
+| **EndeavourOS / CachyOS** | ⚪ Conditional: GRUB + mkinitcpio | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
 | **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
 | **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 | **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 
-Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
+Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. GRUB test entries and promotion are implemented; hardware boot validation is still pending. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
 Fedora specifics — dependencies, Secure Boot signing, recovery, and how the backend is wired in — are in the **[Fedora KDE guide](docs/fedora-kde.md)**. Fedora Kinoite/Atomic is not supported.
 
@@ -162,7 +163,7 @@ Fedora uses its matching source RPM.
 
 The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md).
 
-- 🛠️ **Build tools and kernel headers** — `base-devel bc pahole linux-headers`. The patcher checks for these up front and offers to install anything missing, rather than failing part-way through a compile.
+- 🛠️ **Build tools and kernel headers** — `base-devel bc pahole` plus the running kernel’s headers (`linux-headers`, `linux-lts-headers`, `linux-cachyos-headers`, etc., selected from its `pkgbase`). Clang-built GRUB kernels also need `clang llvm lld`. The patcher checks for these up front and offers to install anything missing, rather than failing part-way through a compile.
 - 💾 **About 8 GB of disk** for the kernel source tree.
 - ⏱️ **20–40 minutes** for the first build. Re-runs (e.g. after a kernel update) reuse the tree and are much faster.
 
@@ -276,7 +277,7 @@ An earlier release tried `idle=poll` instead; it hung the same way. Applying or 
 
 - A Retina 5K iMac from the [model table](#models-and-module-availability). Other Macs, including 21.5-inch 4K and 24-inch 4.5K iMacs, remain outside the normal model gate.
 - Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
-- Omarchy (Limine + Hyprland) or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
+- Omarchy (Limine + Hyprland), Arch/EndeavourOS/CachyOS with GRUB + mkinitcpio, or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
 - Nothing to install by hand: on startup the patcher checks the handful of basics it needs (`grep`, `sed`, `awk`, `findutils`, `coreutils`, `sudo`) and offers to install any that are missing. Each patch checks its own heavier dependencies when you run it. The full list is in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## 📦 Updating and removing the tool
@@ -302,13 +303,13 @@ Uninstalling removes the tool, **not the patches** — those outlive it, so reve
 
 ## 🛟 Safety
 
-On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery) — the Limine specifics below are Omarchy's.
+On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery). On Arch-family GRUB systems, use the [Arch/GRUB guide](docs/arch-grub.md#restore-and-recovery). The Limine recovery steps below apply to Omarchy.
 
 Use `--remove` to reverse an applied module, following its recovery instructions
 where manual steps are needed. Boot-related changes print their recovery steps
 *before* running. A new `amdgpu` build can be tried through
 `scripts/imac-alt-entry add <name> <module>`, which boots it from its own
-hash-pinned Limine entry while preserving the default (see
+hash-pinned Limine entry or a separate GRUB initramfs entry while preserving the default (see
 [`patches/README.md`](patches/README.md)). If a boot change goes wrong, boot the
 Limine snapshot entry, restore `/etc/default/limine.backup`, re-run
 `limine-mkinitcpio`, and reboot.

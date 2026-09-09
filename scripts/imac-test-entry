@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# imac-test-entry — boot a risky amdgpu build from its own Limine entry, so the
+# imac-test-entry — boot a risky amdgpu build from its own boot entry, so the
 # default entry always stays on something known to work.
 #
 # The problem this solves: installing a patched amdgpu module overwrites the
@@ -24,6 +24,11 @@
 # limine-mkinitcpio run is untested. Either way the failure direction is the
 # safe one -- what you lose is the test, what you keep is a known-good default.
 #
+# On Arch-family GRUB systems the same two slots are a cloned grub.cfg entry in
+# /etc/grub.d/40_custom plus a separate initramfs image
+# (/boot/initramfs-<pkgbase>-imac-5ktest.img). The default entry keeps booting
+# the stock image, and grub-mkconfig carries the test block across regens.
+#
 #   imac-test-entry stage <known-good-amdgpu.ko.zst>
 #       Current UKI becomes the test entry. The module you name is installed as
 #       the default and the default UKI is rebuilt around it.
@@ -33,8 +38,10 @@
 #   imac-test-entry status       What each entry currently boots.
 #
 set -euo pipefail
-if ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); then
-    echo "This helper is for Omarchy/Limine, not Fedora GRUB." >&2
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+source "${SCRIPT_DIR}/lib/platform.sh"
+if imac_is_fedora; then
+    echo "This helper is for Omarchy/Limine and Arch-family GRUB, not Fedora." >&2
     exit 1
 fi
 
@@ -49,6 +56,7 @@ CONF="${ESP}/limine.conf"
 MARKER="/Test - 5K boot fixes"
 
 say() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 need_root() { [[ $EUID -eq 0 ]] || die "run with sudo: sudo $0 $*"; }
@@ -170,6 +178,137 @@ describe_module() {  # describe_module <path-to-.ko.zst>
 	[[ $syms == *"forcing initial modeset"* ]]    && marks+=("early modeset")
 	[[ $syms == *"link-health"* ]]                && marks+=("link health")
 	((${#marks[@]})) && (IFS=', '; echo "${marks[*]} [${sv:0:8}]") || echo "stock [${sv:0:8}]"
+}
+
+# ── GRUB backend (Arch family) ─────────────────────────────────────────────
+# Same two slots, different mechanics: the test build lives in its own
+# initramfs image and a cloned grub.cfg entry in /etc/grub.d/40_custom; the
+# default entry keeps booting the stock image, so a bad test build is escaped
+# by simply rebooting into the default.
+if imac_is_arch_grub; then
+	source "${SCRIPT_DIR}/lib/grub.sh"
+	PKGBASE="$(imac_kernel_pkgbase "$KREL")"
+	DEFAULT_IMG="$GRUB_BOOT_DIR/initramfs-${PKGBASE}.img"
+	TESTNAME=5ktest
+	TESTIMG="$(grub_image_path "$TESTNAME")"
+
+	grub_stage() {   # $1 = known-good amdgpu.ko[.zst] to make the default
+		need_root "$@"
+		GOOD="${1:-}"
+		[[ -f ${GOOD:-} ]] || die "usage: sudo $0 stage <known-good-amdgpu.ko.zst>
+	The currently installed module is treated as the build under test; the
+	module you name here becomes the default. Typical source: the .prev-5k or
+	.stock-backup kept beside the installed module."
+		grub_require_layout || die "unsupported or stale GRUB boot layout"
+		[[ -f $MODULE ]] || die "no installed module at $MODULE"
+		command -v mkinitcpio >/dev/null || die "mkinitcpio not found"
+
+		WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+		grub_prepare_module "$GOOD" "$WORK/good.ko.zst" || die "invalid known-good module"
+		say "building the test initramfs around the installed (under-test) module"
+		grub_build_image "$WORK/test.img" >"$WORK/mk.log" 2>&1 \
+			|| { tail -20 "$WORK/mk.log"; die "mkinitcpio failed"; }
+		grub_image_module "$WORK/test.img" "$WORK/test.ko.zst" \
+			|| die "no amdgpu module inside the test image"
+		[[ $(zstd -dcf "$WORK/test.ko.zst" | b2sum) == $(zstd -dcf "$MODULE" | b2sum) ]] \
+			|| die "test image does not carry the installed module"
+		install -m644 "$WORK/test.img" "$TESTIMG"
+
+		say "installing the known-good module as the default"
+		cp -f "$MODULE" "$MODULE.prev-stage"
+		cp -f "$WORK/good.ko.zst" "$MODULE"
+		depmod "$KREL"
+		mkinitcpio -P >"$WORK/mk-default.log" 2>&1 \
+			|| { tail -20 "$WORK/mk-default.log"; die "mkinitcpio failed"; }
+
+		grub_image_module "$DEFAULT_IMG" "$WORK/default.ko.zst" || die "no module in the rebuilt default image"
+		[[ $(zstd -dcf "$WORK/default.ko.zst" | b2sum) == $(zstd -dcf "$WORK/good.ko.zst" | b2sum) ]] \
+			|| die "rebuilt default image does not carry the known-good module; previous module at $MODULE.prev-stage"
+
+		grub_clone_entry "$TESTNAME" "$TESTIMG" || die "could not add the GRUB test entry"
+		say "done — default boots known-good, '/Test - 5ktest' boots the build under test"
+		grub_status
+	}
+
+	grub_promote() {
+		need_root
+		grub_require_layout || die "unsupported or stale GRUB boot layout"
+		grub_entry_exists "$TESTNAME" || die "no test entry present — nothing to promote"
+		[[ -f $TESTIMG ]] || die "no test image at $TESTIMG"
+		WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+
+		say "promoting the test build to the permanent default"
+		grub_image_module "$TESTIMG" "$WORK/new.ko.zst" || die "no amdgpu module inside $TESTIMG"
+		vm="$(modinfo -F vermagic "$WORK/new.ko.zst" 2>/dev/null | awk '{print $1}')"
+		[[ $vm == "$KREL" ]] || die "module vermagic '$vm' != running kernel '$KREL'"
+		cp -f "$MODULE" "$MODULE.prev-promote"
+		cp -f "$WORK/new.ko.zst" "$MODULE"
+		depmod "$KREL"
+		mkinitcpio -P >"$WORK/mk.log" 2>&1 \
+			|| { tail -20 "$WORK/mk.log"; die "mkinitcpio failed"; }
+
+		say "verifying the rebuilt default image carries the promoted module"
+		grub_image_module "$DEFAULT_IMG" "$WORK/def.ko.zst" \
+			|| die "no module in the rebuilt default image"
+		[[ $(zstd -dcf "$WORK/def.ko.zst" | b2sum) == $(zstd -dcf "$WORK/new.ko.zst" | b2sum) ]] \
+			|| die "rebuilt default image does not carry the promoted module (see $WORK/mk.log)"
+
+		grub_drop_entry "$TESTNAME"
+		rm -f "$TESTIMG"
+		say "done — the tested build is now the default; test entry removed"
+		grub_status
+	}
+
+	grub_drop() {
+		need_root
+		say "discarding the test build"
+		grub_drop_entry "$TESTNAME"
+		rm -f "$TESTIMG"
+		say "done — default is unchanged and still known-good"
+		grub_status
+	}
+
+	grub_status() {
+		printf '\n  \033[1mBoot entries\033[0m  (kernel %s)\n\n' "$KREL"
+		local tmp
+		tmp="$(mktemp)"
+		if [[ -f $DEFAULT_IMG ]] && grub_image_module "$DEFAULT_IMG" "$tmp" 2>/dev/null; then
+			printf '  %-26s %s\n' "default (${PKGBASE})" "$(describe_module "$tmp")"
+		fi
+		if grub_entry_exists "$TESTNAME" && [[ -f $TESTIMG ]]; then
+			: > "$tmp"
+			grub_image_module "$TESTIMG" "$tmp" 2>/dev/null || true
+			printf '  %-26s %s\n' "test entry (GRUB)" "$([[ -s $tmp ]] && describe_module "$tmp" || echo '?')"
+		else
+			printf '  %-26s %s\n' "test entry (GRUB)" "none"
+		fi
+		rm -f "$tmp"
+
+		printf '\n  \033[1mRunning now\033[0m\n\n'
+		klog="$(journalctl -k -b 0 --no-pager 2>/dev/null || true)"
+		printf '  %-26s %s\n' "loaded amdgpu" \
+			"$(grep -qi 'panel latch teardown\|forcing initial modeset' <<<"$klog" \
+				&& echo 'test build (fix log lines present)' || echo 'no fix log lines this boot')"
+		if grep -q 'APPLE5K: link-health build=' <<<"$klog"; then
+			verdict="$(grep -o 'APPLE5K: link-health \(PASS\|FAIL\|disarmed\).*' <<<"$klog" | tail -1)"
+			printf '  %-26s %s\n' "post-commit link health" "${verdict:-armed, no verdict yet}"
+			printf '  %-26s %s\n' "" "journalctl -k -b 0 | grep 'APPLE5K: link-health'"
+		fi
+		printf '\n'
+	}
+
+	case "${1:-status}" in
+	stage)   grub_stage "${2:-}" ;;
+	promote) grub_promote ;;
+	drop)    grub_drop ;;
+	status)  grub_status ;;
+	*) die "unknown command '${1}'. Try: stage <module> | promote | drop | status" ;;
+	esac
+	exit 0
+fi
+imac_has_limine || {
+	echo "This helper needs an Omarchy/Limine or Arch-family GRUB installation." >&2
+	exit 1
 }
 
 case "${1:-status}" in

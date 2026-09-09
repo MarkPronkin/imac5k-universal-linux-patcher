@@ -73,6 +73,8 @@ esac''')
         (gpu / "driver").symlink_to("/sys/bus/pci/drivers/amdgpu")
         self.os_release = self.root / "os-release"
         self.os_release.write_text("ID=arch\n")
+        self.defaults = self.root / "default"
+        self.defaults.mkdir()
 
     def stub(self, name, body):
         path = self.available / name
@@ -99,8 +101,14 @@ done
 '''}[mode])
 
     def launch(self, *args, missing=(), answer="", fedora=False, desktop="", terminal=False,
-               symlink=False, gum=False, both_managers=False):
-        self.os_release.write_text("ID=fedora\n" if fedora else "ID=arch\n")
+               symlink=False, gum=False, both_managers=False, distro="arch", grub=False, limine=False):
+        self.os_release.write_text("ID=fedora\n" if fedora else f"ID={distro}\nID_LIKE=arch\n")
+        for name, enabled in (("grub", grub), ("limine", limine)):
+            path = self.defaults / name
+            if enabled:
+                path.write_text('GRUB_CMDLINE_LINUX_DEFAULT="quiet"\n' if name == "grub" else "")
+            else:
+                path.unlink(missing_ok=True)
         commands = self.commands - set(missing)
         if not both_managers:
             commands -= {"pacman"} if fedora else {"dnf"}
@@ -120,7 +128,8 @@ esac''')
         cmd = [BWRAP, "--unshare-all", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
                "--bind", str(self.root), str(self.root), "--tmpfs", "/usr/bin",
                "--ro-bind", str(self.available), str(self.available),
-               "--ro-bind", str(self.sys), "/sys", "--ro-bind", str(self.os_release), "/etc/os-release"]
+               "--ro-bind", str(self.sys), "/sys", "--ro-bind", str(self.os_release), "/etc/os-release",
+               "--ro-bind", str(self.defaults), "/etc/default"]
         if Path("/usr/sbin").resolve() != Path("/usr/bin").resolve():
             cmd += ["--tmpfs", "/usr/sbin"]
         for command in sorted(commands):
@@ -235,6 +244,32 @@ esac''')
         # No curl: the tuning is vendored, so applying eq needs no network.
         self.assertIn("eq missing dependencies: pactl pw-cli wpctl systemctl", result.stdout)
         self.assertNotIn("command not found", result.stderr)
+
+    def test_arch_family_grub_uses_its_backend_and_dependencies(self):
+        for distro in ("arch", "endeavouros", "cachyos"):
+            with self.subTest(distro=distro):
+                result = self.launch("--status", distro=distro, grub=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                line = next(line for line in result.stdout.splitlines() if "5k missing dependencies:" in line)
+                self.assertIn("grub-mkconfig", line)
+                self.assertIn("mkinitcpio", line)
+                self.assertNotIn("limine", result.stdout)
+                boot = next(line for line in result.stdout.splitlines() if "Boot config hygiene" in line)
+                self.assertIn("n/a", boot)
+                self.assertNotIn("command not found", result.stderr)
+
+    def test_limine_takes_precedence_over_a_stale_grub_config(self):
+        result = self.launch("--status", distro="cachyos", grub=True, limine=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("limine-mkinitcpio", result.stdout)
+        self.assertNotIn("grub-mkconfig", result.stdout)
+
+    def test_fedora_takes_precedence_over_arch_like_and_boot_configs(self):
+        result = self.launch("--status", fedora=True, grub=True, limine=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("grubby", result.stdout)
+        self.assertNotIn("grub-mkconfig", result.stdout)
+        self.assertNotIn("limine-mkinitcpio", result.stdout)
 
     def test_help_and_version_do_not_offer_module_dependencies(self):
         for arg in ("--help", "--version"):
