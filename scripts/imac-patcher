@@ -1261,15 +1261,14 @@ mod_5k_tier()  { echo boot; }
 mod_5k_desc()  { echo "Wakes the panel's second tile, stitches both into one 5120x2880 output and genlocks them. Rebuilds the amdgpu module for the running kernel (stock module backed up)."; }
 mod_5k_detect() {
     local moddir="/usr/lib/modules/${KREL}/kernel/drivers/gpu/drm/amd"
-    local backup swapped=0 conf=0 live=0 res=""
+    local backup swapped=0 conf=0 live=0
     backup="$(find "$moddir" -name 'amdgpu.ko*.stock-backup' 2>/dev/null | head -1)"
     [[ -n "$backup" ]] && swapped=1
     # Keep installed patches removable even if the GPU driver fails to load.
     ((swapped)) || imac_has_amdgpu || { echo n/a; return; }
     boot_config_has 'amdgpu.tiled_stitch=1' && conf=1
     grep -q 'amdgpu.tiled_stitch=1' /proc/cmdline 2>/dev/null && live=1
-    command -v hyprctl >/dev/null && res="$(hyprctl monitors 2>/dev/null | grep -oE '5120x2880' | head -1)"
-    if (( swapped && conf && live )) && [[ "$res" == "5120x2880" ]]; then echo applied
+    if (( swapped && conf && live )) && imac_panel_has_stitched_mode; then echo applied
     elif (( swapped || conf || live )); then echo partial
     else echo not-applied; fi
 }

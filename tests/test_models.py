@@ -1,6 +1,7 @@
 """Model admission and module compatibility, without touching host settings."""
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +118,36 @@ readlink() {{ echo /sys/bus/pci/drivers/{driver}; }}
 imac_has_amdgpu
 ''')
                 self.assertEqual(result.returncode == 0, driver == "amdgpu")
+
+
+    def test_stitched_mode_probe_reads_the_panel_not_the_compositor(self):
+        """The 5K module read `partial` on KDE because it probed hyprctl."""
+        for modes, expected in (("5120x2880", 0), ("2560x2880", 1), ("", 1)):
+            with self.subTest(modes=modes or "none"):
+                with tempfile.TemporaryDirectory() as drm:
+                    panel = Path(drm) / "card1-eDP-1"
+                    panel.mkdir()
+                    (panel / "modes").write_text(
+                        modes + "\n1920x1080\n" if modes else "")
+                    result = self.run_shell("iMac18,3",
+                                            "IMAC_DRM_DIR=%s\nimac_panel_has_stitched_mode\n" % drm)
+                    self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_five_k_detect_reports_applied_without_a_compositor_query(self):
+        detect = PATCHER[PATCHER.index("mod_5k_detect() {"):
+                         PATCHER.index("mod_5k_preflight() {")]
+        self.assertNotIn("hyprctl", detect)
+        for stitched, expected in (("return 0", "applied"), ("return 1", "partial")):
+            with self.subTest(stitched=stitched):
+                result = self.run_shell("iMac18,3", detect + """
+KREL=test
+find() { echo /lib/modules/test/amdgpu.ko.zst.stock-backup; }
+grep() { return 0; }
+boot_config_has() { return 0; }
+imac_panel_has_stitched_mode() { %s; }
+mod_5k_detect
+""" % stitched)
+                self.assertEqual(result.stdout.strip(), expected, result.stderr)
 
 
 if __name__ == "__main__":

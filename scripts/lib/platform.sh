@@ -17,6 +17,18 @@ imac_has_amdgpu() {
     done
     return 1
 }
+# Whether the panel is running stitched. The mode is a property of the driver,
+# not of the compositor: the root eDP connector advertises 5120x2880 only once
+# the second tile has been folded in. Reading it from sysfs works on every
+# desktop and from a TTY, where hyprctl and kscreen-doctor report nothing.
+IMAC_DRM_DIR="${IMAC_DRM_DIR:-/sys/class/drm}"
+imac_panel_has_stitched_mode() {
+    local modes
+    for modes in "$IMAC_DRM_DIR"/card*-eDP-*/modes; do
+        [[ -r $modes ]] && grep -qx '5120x2880' "$modes" && return 0
+    done
+    return 1
+}
 # The bundled driver has board-specific CS8409 initialization and its own
 # iMac18,3 gate. Other models must retain their existing audio drivers.
 imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
