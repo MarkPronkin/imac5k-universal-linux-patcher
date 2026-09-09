@@ -51,6 +51,14 @@ the panel's application list as "iMac Speakers DSP Out" whenever the speakers
 play. Omarchy already skips a tuning's output but recognises it by node name,
 so the installer renames that node into its convention.
 
+That output is pinned to the hidden 4.0 speaker device (`target.object` plus
+`node.dont-move`), so plugging in another output — a USB DAC, Bluetooth, HDMI —
+cannot pull the speaker tuning onto it. Installs from before the pin followed
+the default device instead, and played the folded crossover through whatever
+was plugged in; re-run `./scripts/imac-patcher --apply eq` to fix one.
+Re-applying also leaves a default output you chose yourself alone, rather than
+claiming it for the speakers.
+
 With the tuning stopped and headphones out, the only built-in output is the
 hidden 4.0 device. If `imac-speaker-eq.service` fails to start you therefore
 get silence rather than untuned speakers; `--status` reports `partial` and

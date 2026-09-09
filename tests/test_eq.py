@@ -40,12 +40,18 @@ AUX_SINK = ("61\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire"
 
 # A stand-in for the vendored tuning, so these tests do not depend on the real
 # graph's contents. It carries what apply rewrites: the upstream impulse-response
-# paths, and the names of both of the chain's nodes.
+# paths, the names of both of the chain's nodes, and the playback properties the
+# speaker-device pin is inserted into.
 ASSET_CONF = '''"node.name": "audio_effect.iMac-convolver",
 "node.name": "effect_output.iMac-convolver",
 "filename": [ "/usr/share/imac-audio/Filters L Aug 14-MP.wav" ]
 "filename": [ "/usr/share/imac-audio/Filters LFE Aug 16-MP.wav" ]
+            "playback.props": {
 '''
+# What apply pins the chain's output to, so a change of the default device --
+# plugging in a USB DAC, say -- cannot move the measured tuning onto it.
+SPEAKER_TARGET = "alsa_output.pci-0000_00_1f.3.analog-surround-40"
+PINNED_CONF = f'"target.object": "{SPEAKER_TARGET}"\n'
 IRS = ("Filters L Aug 14-MP.wav", "Filters R Aug 14-MP.wav",
        "Filters C2 Aug 16-MP.wav", "Filters LFE Aug 16-MP.wav")
 
@@ -147,12 +153,15 @@ EQ_ASSETS="{self.assets}"
 eq_plugins() {{ :; }}
 '''
 
-    def stub_pactl(self, four_channel_profile=True, active=STEREO, sinks=""):
+    def stub_pactl(self, four_channel_profile=True, active=STEREO, sinks="",
+                   default="alsa_output.pci-0000_00_1f.3.analog-stereo"):
         """A pactl that remembers the profile it was told to select, so the
         order of "restart, then select" can be checked the way the audio
-        server enforces it."""
+        server enforces it. It also remembers the default sink, so claiming it
+        can be checked against what the user had chosen."""
         profiles = FOUR_CHANNEL_PROFILE_LINE if four_channel_profile else ""
         (self.root / "card-profile").write_text(active)   # what the card is on now
+        (self.root / "default-sink").write_text(default)  # what the user listens to
         cards = PACTL_CARDS.format(profiles=profiles, active="$active")   # expanded by the heredoc
         path = self.bin / "pactl"
         path.write_text(f'''#!/usr/bin/env bash
@@ -168,7 +177,8 @@ EOF
     "list short sinks")   printf '%s' '{sinks}' ;;
     "set-card-profile "*) echo "SET-PROFILE $3"; echo "SET-PROFILE $3" >> "{self.trace}"
                           printf '%s' "$3" > "$state" ;;
-    "set-default-sink "*) echo "SET-DEFAULT $2" ;;
+    "get-default-sink")   cat "{self.root}/default-sink" ;;
+    "set-default-sink "*) echo "SET-DEFAULT $2"; printf '%s' "$2" > "{self.root}/default-sink" ;;
 esac
 ''')
         path.chmod(0o755)
@@ -189,6 +199,21 @@ confirm() {{ printf 'PROMPTED: %s\\n' "$1"; return 1; }}   # declines, installs 
 '''
         return subprocess.run(["bash", "-c", harness + module() + command],
                               text=True, capture_output=True, timeout=10)
+
+    def install_eq(self, pin=True):
+        """The shell preamble for an installed tuning, for detect/remove tests.
+        With pin=False the config is left as an install from before the chain's
+        output was pinned to the speaker device."""
+        write = f"printf '%s' '{PINNED_CONF}' >" if pin else "touch"
+        return f'''
+mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR"
+touch "$EQ_BASE_CONF"
+{write} "$EQ_CONF"
+for f in "${{EQ_IRS[@]}}"; do touch "${{EQ_IRS_DIR}}/${{f}}"; done
+eq_write_units
+eq_install_jack_helper
+systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
+'''
 
     def test_the_speaker_card_is_the_one_offering_a_4_0_profile(self):
         self.stub_pactl()
@@ -212,14 +237,7 @@ confirm() {{ printf 'PROMPTED: %s\\n' "$1"; return 1; }}   # declines, installs 
         self.assertEqual(self.run_eq("mod_eq_detect").stdout.strip(), "not-applied")
 
         # config and impulse responses in place, but the sink is not loaded
-        setup = '''
-mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR"
-touch "$EQ_CONF" "$EQ_BASE_CONF"
-for f in "${EQ_IRS[@]}"; do touch "${EQ_IRS_DIR}/${f}"; done
-eq_write_units
-eq_install_jack_helper
-systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
-mod_eq_detect'''
+        setup = self.install_eq() + "mod_eq_detect"
         self.assertEqual(self.run_eq(setup).stdout.strip(), "partial")
 
         # Everything installed and the sink loaded, but the card is still on
@@ -230,6 +248,14 @@ mod_eq_detect'''
 
         self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
         self.assertEqual(self.run_eq(setup).stdout.strip(), "applied")
+
+    def test_an_unpinned_output_needs_reapplying(self):
+        # An install from before the chain's output was pinned to the speaker
+        # device has every file in place and the sink loaded, but WirePlumber
+        # re-links that output with the default device -- onto a USB DAC, say.
+        # It needs re-applying, so it is a "partial", not an "applied".
+        self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
+        self.assertEqual(self.run_eq(self.install_eq(pin=False) + "mod_eq_detect").stdout.strip(), "partial")
 
     def test_the_plugin_search_survives_an_unset_lv2_path(self):
         # `set -u` makes expanding an unset LV2_PATH fatal to the whole
@@ -459,14 +485,7 @@ exit 0'''
         # With the jack in use the tuning is *meant* to be stopped and the card
         # *meant* to be on stereo. Looking for the tuned sink and the 4.0
         # profile then would report a working install as broken.
-        installed = '''
-mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR"
-touch "$EQ_CONF" "$EQ_BASE_CONF"
-for f in "${EQ_IRS[@]}"; do touch "${EQ_IRS_DIR}/${f}"; done
-eq_write_units
-eq_install_jack_helper
-systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
-mod_eq_detect'''
+        installed = self.install_eq() + "mod_eq_detect"
         self.with_headphones(sinks=AUX_SINK)
         self.assertEqual(self.run_eq(installed).stdout.strip(), "applied")
 
@@ -539,6 +558,54 @@ eq_restart_pipewire() { :; }
 mod_eq_apply''')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("will be listed as an application", result.stdout)
+
+    def test_the_chains_output_is_pinned_to_the_speaker_device(self):
+        # Without a target, WirePlumber links the chain's output to the default
+        # device and re-links it every time the default changes: plug in a USB
+        # DAC and the measured crossover and EQ play on the DAC.
+        self.stub_pactl(sinks=TUNED_SINK)
+        result = self.run_eq(self.stage_assets() + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply
+echo "--- installed config ---"
+cat "$EQ_CONF"''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = result.stdout.split("--- installed config ---")[1]
+        self.assertIn(f'"target.object": "{SPEAKER_TARGET}"', config)
+        self.assertIn('"node.dont-move": "true"', config)
+
+    def test_apply_fails_when_the_output_cannot_be_pinned(self):
+        # Pinning is functional, not cosmetic: a config with no playback
+        # properties to anchor to installs a chain that follows the default
+        # device onto whatever the user plugs in.
+        self.stub_pactl(sinks=TUNED_SINK)
+        result = self.run_eq(self.stage_assets(
+            conf=ASSET_CONF.replace('"playback.props": {', 'no anchor')) + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not pin the tuning", result.stdout)
+
+    def test_apply_claims_the_default_from_a_built_in_output(self):
+        self.stub_pactl(sinks=TUNED_SINK)
+        result = self.run_eq(self.stage_assets() + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"SET-DEFAULT {TUNED_SINK.split()[1]}", result.stdout)
+
+    def test_apply_leaves_a_chosen_external_default_alone(self):
+        # Re-applying while the user listens through a USB DAC must not yank
+        # their output back to the speakers.
+        self.stub_pactl(sinks=TUNED_SINK,
+                        default="alsa_output.usb-AudioQuest_DragonFly.analog-stereo")
+        result = self.run_eq(self.stage_assets() + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("SET-DEFAULT", result.stdout)
+        self.assertIn("default output left on alsa_output.usb-AudioQuest_DragonFly.analog-stereo",
+                      result.stdout)
 
     def test_apply_stops_when_the_vendored_tuning_is_missing(self):
         # A checkout without the assets would otherwise install a graph whose
@@ -667,13 +734,15 @@ class VendoredTuningTests(unittest.TestCase):
                 self.assertEqual(actual, digest, f"{name} differs from its recorded checksum")
 
     def test_the_config_still_carries_what_apply_rewrites(self):
-        # Apply rewrites the impulse-response paths and the output node name.
-        # If a future update to the vendored file drops either, the rewrite
-        # silently stops applying.
+        # Apply rewrites the impulse-response paths and the output node name,
+        # and pins the output to the speaker device inside the playback
+        # properties. If a future update to the vendored file drops any of
+        # these, a rewrite silently stops applying.
         config = (self.ASSETS / "iMacAudio.conf").read_text()
         self.assertIn("/usr/share/imac-audio/", config)
         self.assertIn('"effect_output.iMac-convolver"', config)
         self.assertIn('"audio_effect.iMac-convolver"', config)
+        self.assertIn('"playback.props": {', config)
 
 
 if __name__ == "__main__":

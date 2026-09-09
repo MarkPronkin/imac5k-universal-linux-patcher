@@ -1,5 +1,30 @@
 # Headphone fixes — handoff, 2026-09-09
 
+## Fifth round: tuning followed the default device onto USB outputs
+
+The user reported that with a USB DAC (an AudioQuest DragonFly) plugged in,
+selecting iMac Speakers played through the DAC with the speaker tuning
+applied. The cause: the vendored graph sets no `target.object` on the chain's
+playback node, so WirePlumber treated it like any other stream and re-linked
+it to the default device whenever the default changed. Verified live: the
+four `omarchy_speaker_tuning_imac5k_output` channels were linked into the
+DragonFly's two.
+
+**Fix, all in `scripts/imac-patcher`:** apply inserts `target.object` (the
+card-derived `alsa_output.<card>.analog-surround-40`) and `node.dont-move`
+into `playback.props`, like the IR-path and node-name rewrites — but the pin
+is functional, so a config without the `"playback.props": {` anchor fails the
+apply. Detect requires the pin for `applied`, so pre-pin installs report
+`partial`. Apply also no longer unconditionally claims the default sink: the
+new `eq_claim_default` claims it only from a built-in output, the tuned sink
+or `auto_null`, mirroring the jack switcher's rule.
+
+Verified on this machine: re-applied with the DragonFly plugged in, all four
+channels linked to the hidden 4.0 device and none to the DAC; switching the
+default to the DAC left the links in place; `--status` reports `applied`.
+Suite: **160 tests, no failures**. Still uncommitted, on top of the state
+below.
+
 ## Request and stopping point
 
 Two rounds of work, both on 2026-09-09.

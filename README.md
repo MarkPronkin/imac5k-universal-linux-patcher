@@ -209,6 +209,8 @@ While the tuning is installed, the raw 4.0 device is hidden from sound pickers (
 
 The chain's own output is a playback stream, so desktops otherwise list it next to real applications while the speakers play. Omarchy's audio panel already skips a tuning's output but recognises it by name, so the installer renames that node into its convention; on other desktops it is a node name nothing reads.
 
+That output is pinned to the hidden 4.0 speaker device, so plugging in or choosing another output — a USB DAC, Bluetooth, HDMI — cannot pull the speaker tuning onto it. Installs from before the pin followed the default device instead, and played the folded crossover through whatever was plugged in. `--status` reports such an install as `partial`; re-run `./scripts/imac-patcher --apply eq` to fix it. Re-applying leaves a default output you chose yourself alone.
+
 ### Headphones
 
 Plug headphones into the iMac's jack and **iMac Speakers disappears**, replaced by **Aux Audio Output** — the jack, with no tuning applied. Unplug and the speakers come straight back. Whatever was playing follows in both directions.

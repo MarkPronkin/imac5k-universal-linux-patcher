@@ -589,6 +589,22 @@ eq_sink_exists() {
     LC_ALL=C pactl list short sinks 2>/dev/null | awk -v n="$1" '$2 == n { f=1 } END { exit !f }'
 }
 
+# The tuned sink becomes the default only over a built-in output or the dummy
+# sink: re-applying while the user listens through a USB DAC or Bluetooth must
+# not yank their output back. The jack switcher's claim_default makes the same
+# call on plug and unplug.
+eq_claim_default() {   # $1 = card
+    local current
+    current=$(LC_ALL=C pactl get-default-sink 2>/dev/null)
+    case "$current" in
+        "$EQ_SINK") return 0 ;;
+        ""|auto_null|*"${1#alsa_card.}"*)
+            pactl set-default-sink "$EQ_SINK" 2>/dev/null \
+                && say "default output set to the tuned sink" ;;
+        *) say "default output left on ${current}" ;;
+    esac
+}
+
 eq_units_installed() {
     command -v systemctl >/dev/null || return 1
     [[ -f "${EQ_UNIT_DIR}/${EQ_UNIT}" && -f "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}" ]] || return 1
@@ -753,19 +769,26 @@ eq_build_bankstown() (
 # is checked then is the state that should hold instead: the flat jack output.
 mod_eq_detect() {
     command -v pactl >/dev/null || { echo n/a; return; }
-    local conf=0 irs=1 units=0 jack=0 output=0 f card profile
+    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 f card profile
     [[ -f $EQ_BASE_CONF && -f $EQ_CONF ]] && conf=1
     for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
     eq_units_installed && units=1
     [[ -x $EQ_JACK_BIN ]] && jack=1
     read -r card profile <<<"$(eq_card)"
+    # An install from before the chain's output was pinned to the 4.0 device
+    # has every file in place but follows the default device onto USB DACs; it
+    # needs re-applying, so the pin counts toward "applied".
+    if [[ -n ${card:-} && -f $EQ_CONF ]] && grep -qs -- \
+            "\"target.object\": \"alsa_output.${card#alsa_card.}.analog-surround-40\"" "$EQ_CONF"; then
+        pin=1
+    fi
     if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
         eq_sink_exists "$(eq_aux_sink "$card")" && output=1
     else
         [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] \
             && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
     fi
-    if   (( conf && irs && units && jack && output )); then echo applied
+    if   (( conf && irs && units && jack && output && pin )); then echo applied
     elif (( conf || irs || units || jack || output )); then echo partial
     else echo not-applied; fi
 }
@@ -855,6 +878,16 @@ mod_eq_apply() {
     sed -i "s|\"${EQ_UPSTREAM_DSP_NODE}\"|\"${EQ_DSP_NODE}\"|" "$EQ_CONF" || return 1
     grep -qs -- "$EQ_DSP_NODE" "$EQ_CONF" \
         || warn "could not rename the tuning's output node; it will be listed as an application"
+    # Pin the chain's output to the four-channel speaker device. Upstream sets
+    # no target, so WirePlumber treats that playback node like any other
+    # stream: it links to the default device and re-links every time the
+    # default changes. Plug in a USB DAC and the measured crossover and EQ are
+    # folded into its two channels, playing on the DAC. Functional, unlike the
+    # rename above, so a config without the anchor is refused.
+    local target="alsa_output.${card#alsa_card.}.analog-surround-40"
+    sed -i "s|\"playback.props\": {|\"playback.props\": {\n                \"target.object\": \"${target}\",\n                \"node.dont-move\": \"true\",|" "$EQ_CONF" || return 1
+    grep -qs -- "\"target.object\": \"${target}\"" "$EQ_CONF" || {
+        warn "could not pin the tuning to the 4.0 speaker device -- check ${EQ_CONF}"; return 1; }
     eq_write_base_conf || return 1
     eq_write_hide_rule "$card" || return 1
     eq_install_jack_helper || return 1
@@ -894,7 +927,7 @@ mod_eq_apply() {
     done
     if [[ $(mod_eq_detect) == applied ]]; then
         eq_set_hardware_volume "$card" || return 1
-        pactl set-default-sink "$EQ_SINK" 2>/dev/null && say "default output set to the tuned sink"
+        eq_claim_default "$card"
         say "hardware output is at 100%; adjust listening volume with iMac Speakers"
         say "headphones now hide it and expose ${EQ_AUX_DESC}, untuned"
     else
