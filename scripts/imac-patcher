@@ -660,10 +660,23 @@ eq_install_jack_helper() {
 
 # WantedBy=pipewire.service, not default.target: both follow the audio stack,
 # including a restart of it, and neither is any use without one.
-eq_write_units() {
+#
+# ExecStartPre is what keeps that from starting the chain too early. `After=`
+# the session manager only means WirePlumber's unit has started, not that it
+# has enumerated the card: on a cold boot the tuning would start about three
+# milliseconds later, while WirePlumber is still a second and a half from
+# creating the device the chain targets. The chain then has nothing to link to
+# and never registers its sink -- and it does not exit, so Restart=on-failure
+# never fires and the jack helper's own `systemctl start` is a no-op against
+# the running-but-dead instance. With the raw 4.0 device hidden by this
+# module's WirePlumber rule, that leaves the session with no output at all:
+# auto_null, and an empty sound picker. So wait for the target device to exist
+# before starting, and fail loudly instead of silently if it never does.
+eq_write_units() {   # $1 = card
+    local target="alsa_output.${1#alsa_card.}.analog-surround-40"
     mkdir -p "$EQ_UNIT_DIR" || return 1
-    cat > "${EQ_UNIT_DIR}/${EQ_UNIT}" <<'UNIT'
-# Written by imac-patcher; removed by `imac-patcher --remove eq`.
+    cat > "${EQ_UNIT_DIR}/${EQ_UNIT}" <<UNIT
+# Written by imac-patcher; removed by \`imac-patcher --remove eq\`.
 [Unit]
 Description=iMac 5K speaker tuning (PipeWire filter chain)
 After=pipewire.service pipewire-session-manager.service
@@ -671,8 +684,12 @@ BindsTo=pipewire.service
 
 [Service]
 Type=simple
+# pw-cli, not pactl: this module hides the 4.0 device from the PulseAudio
+# layer, so it is absent from pactl's sink list by the time this runs.
+ExecStartPre=/usr/bin/timeout 30 /bin/sh -c 'until pw-cli ls Node 2>/dev/null | grep -qF "${target}"; do sleep 0.5; done'
 ExecStart=/usr/bin/pipewire -c imac-speaker-eq.conf
 Restart=on-failure
+RestartSec=2
 Slice=session.slice
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
@@ -765,7 +782,7 @@ eq_build_bankstown() (
 # is checked then is the state that should hold instead: the flat jack output.
 mod_eq_detect() {
     command -v pactl >/dev/null || { echo n/a; return; }
-    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 f card profile
+    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 wait=0 f card profile
     [[ -f $EQ_BASE_CONF && -f $EQ_CONF ]] && conf=1
     for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
     eq_units_installed && units=1
@@ -778,13 +795,17 @@ mod_eq_detect() {
             "\"target.object\": \"alsa_output.${card#alsa_card.}.analog-surround-40\"" "$EQ_CONF"; then
         pin=1
     fi
+    # An install from before the chain's start was gated on that same device
+    # comes up too early at boot, registers no sink, and -- with the raw device
+    # hidden -- leaves the session with no output at all. Also re-appliable.
+    grep -qs 'ExecStartPre=' "${EQ_UNIT_DIR}/${EQ_UNIT}" && wait=1
     if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
         eq_sink_exists "$(eq_aux_sink "$card")" && output=1
     else
         [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] \
             && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
     fi
-    if   (( conf && irs && units && jack && output && pin )); then echo applied
+    if   (( conf && irs && units && jack && output && pin && wait )); then echo applied
     elif (( conf || irs || units || jack || output )); then echo partial
     else echo not-applied; fi
 }
@@ -888,7 +909,7 @@ mod_eq_apply() {
     eq_write_base_conf || return 1
     eq_write_hide_rule "$card" || return 1
     eq_install_jack_helper || return 1
-    eq_write_units || return 1
+    eq_write_units "$card" || return 1
     # An install from before headphone switching loaded the same graph in the
     # daemon. Left behind it is a second copy of the chain that no service can
     # stop, so the tuned sink would never go away for the jack.

@@ -148,6 +148,15 @@ output between it and the untuned jack output as headphones are used. Both are
 `pipewire.service`; neither needs root. A session without systemd user units
 gets no headphone switching, and `--status` reports the module as `partial`.
 
+The tuning unit waits, in `ExecStartPre`, for the four-channel device its chain
+targets to exist before starting. `After=` the session manager only means
+WirePlumber's unit has started, not that it has enumerated the card, and a
+filter chain started before its target registers no sink and does not exit —
+so nothing restarts it, and with the raw device hidden the session is left with
+`auto_null` and an empty sound picker. The wait is bounded at 30 seconds and
+uses `pw-cli`, since the hidden device is absent from `pactl`'s sink list. An
+install predating the gate reports `partial` so that re-applying repairs it.
+
 Both plugin sets are required, not optional: PipeWire drops a filter node whose
 plugin is missing, and with it the whole graph, so the tuned sink simply never
 appears. `bankstown` is in no distribution's repositories, so the module

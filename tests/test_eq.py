@@ -13,6 +13,7 @@ PATCHER = ROOT / "scripts/imac-patcher"
 # Two cards as pactl prints them: the HDMI one first, so picking the card by
 # "offers a 4.0 profile" is doing real work rather than taking the first.
 FOUR_CHANNEL = "output:analog-surround-40+input:analog-stereo"
+CARD = "alsa_card.pci-0000_00_1f.3"
 STEREO = "output:analog-stereo+input:analog-stereo"
 PACTL_CARDS = """Card #51
 \tName: alsa_card.pci-0000_01_00.1
@@ -200,17 +201,20 @@ confirm() {{ printf 'PROMPTED: %s\\n' "$1"; return 1; }}   # declines, installs 
         return subprocess.run(["bash", "-c", harness + module() + command],
                               text=True, capture_output=True, timeout=10)
 
-    def install_eq(self, pin=True):
+    def install_eq(self, pin=True, wait=True):
         """The shell preamble for an installed tuning, for detect/remove tests.
         With pin=False the config is left as an install from before the chain's
-        output was pinned to the speaker device."""
+        output was pinned to the speaker device; with wait=False the unit is
+        left as one from before its start was gated on that device existing."""
         write = f"printf '%s' '{PINNED_CONF}' >" if pin else "touch"
+        legacy = "" if wait else 'sed -i "/ExecStartPre=/d" "${EQ_UNIT_DIR}/${EQ_UNIT}"'
         return f'''
 mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR"
 touch "$EQ_BASE_CONF"
 {write} "$EQ_CONF"
 for f in "${{EQ_IRS[@]}}"; do touch "${{EQ_IRS_DIR}}/${{f}}"; done
-eq_write_units
+eq_write_units {CARD}
+{legacy}
 eq_install_jack_helper
 systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
 '''
@@ -248,6 +252,35 @@ systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
 
         self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
         self.assertEqual(self.run_eq(setup).stdout.strip(), "applied")
+
+    def test_the_tuning_waits_for_the_device_it_targets_before_starting(self):
+        """Started with the card not yet enumerated, the chain registers no
+        sink and does not exit, so nothing restarts it and the hidden 4.0
+        device leaves the session with no output at all."""
+        self.stub_pactl()
+        self.run_eq("eq_write_units alsa_card.pci-0000_00_1f.3")
+        unit = (self.root / "home/.config/systemd/user/imac-speaker-eq.service").read_text()
+        pre = next(l for l in unit.splitlines() if l.startswith("ExecStartPre="))
+        # The device it waits for is the one the chain is pinned to.
+        self.assertIn("alsa_output.pci-0000_00_1f.3.analog-surround-40", pre)
+        # pactl cannot see it: this module hides it from the PulseAudio layer.
+        self.assertIn("pw-cli", pre)
+        self.assertNotIn("pactl", pre)
+        # Bounded, and it must run before the chain, not alongside it.
+        self.assertIn("timeout", pre)
+        self.assertLess(unit.index("ExecStartPre="), unit.index("ExecStart=/"))
+        # A wait that never succeeds has to fail the unit, not start it anyway.
+        self.assertIn("Restart=on-failure", unit)
+
+    def test_an_ungated_start_needs_reapplying(self):
+        # An install from before the start was gated on the target device is
+        # indistinguishable from a working one until the next boot, when the
+        # chain comes up too early and the session is left with no output.
+        self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
+        self.assertEqual(self.run_eq(self.install_eq() + "mod_eq_detect").stdout.strip(),
+                         "applied")
+        self.assertEqual(self.run_eq(self.install_eq(wait=False) + "mod_eq_detect").stdout.strip(),
+                         "partial")
 
     def test_an_unpinned_output_needs_reapplying(self):
         # An install from before the chain's output was pinned to the speaker
@@ -450,7 +483,7 @@ mod_eq_remove
         script = '''
 mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR" "$(dirname "$EQ_HIDE_RULE")"
 touch "$EQ_CONF" "$EQ_BASE_CONF" "${EQ_IRS_DIR}/one.wav" "$EQ_HIDE_RULE"
-eq_write_units
+eq_write_units alsa_card.pci-0000_00_1f.3
 eq_install_jack_helper
 systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
 printf 'output:analog-stereo+input:analog-stereo\\n' > "$EQ_PROFILE_STATE"
