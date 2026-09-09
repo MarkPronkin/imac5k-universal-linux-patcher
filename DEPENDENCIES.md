@@ -33,7 +33,15 @@ and kernel development files for modules that are not fully applied. This
 includes audio/PipeWire tools, KDE display tools, and graphics build tools;
 missing `pactl` or Python can no longer hide behind an unexplained `n/a` status.
 EQ plugin bundles are checked separately when EQ is available but not fully
-applied. This report does not install optional module dependencies. Each
+applied.
+
+The interactive run then offers to install everything that report named, as one
+package list, using the same package manager and the same tool-to-package table
+the modules use (`imac_tool_package()` in `scripts/lib/platform.sh`, mirroring
+the tables below). Kernel headers are included by package name, since they carry
+no command for the scan to find. Declining is not an error and does not stop
+startup — some of those packages belong to patches that will never be chosen —
+and `--status`, `--apply` and `--remove` never install from this report. Each
 module's full apply/build preflight still checks its prerequisites, including
 package and ABI requirements that command availability alone cannot establish.
 

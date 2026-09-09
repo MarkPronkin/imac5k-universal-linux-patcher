@@ -8,6 +8,7 @@ import unittest
 from test_patcher_menu import shell_function
 
 PATCHER = Path(__file__).resolve().parents[1] / "scripts/imac-patcher"
+PLATFORM = (Path(__file__).resolve().parents[1] / "scripts/lib/platform.sh").read_text()
 REAL = "/usr/bin"
 
 # Use the real confirmation function, including its output with piped stdin.
@@ -17,7 +18,8 @@ HAVE_GUM=0
 imac_is_fedora() { return 1; }
 say()  { printf '==> %s\\n' "$*"; }
 warn() { printf '!! %s\\n' "$*"; }
-""" + shell_function(PATCHER.read_text(), "confirm") + "\n"
+""" + shell_function(PATCHER.read_text(), "confirm") + "\n" \
+    + shell_function(PLATFORM, "imac_pkg_installer") + "\n"
 
 COREUTILS = ("readlink", "dirname", "cat", "uname", "mkdir", "install", "head", "tail",
              "cut", "sort", "tr", "cp", "mv", "rm", "ln", "mktemp", "date", "df",

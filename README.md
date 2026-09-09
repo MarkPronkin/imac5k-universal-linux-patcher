@@ -71,9 +71,10 @@ For prerequisites, see [Dependencies](DEPENDENCIES.md). For changes to the
 project itself, see the [development guide](docs/development.md).
 
 Startup confirms `Core dependencies: ready` or offers to install missing core
-tools. It also lists missing module prerequisites before the menu, including
-audio and graphics build tools; optional module dependencies are handled when
-you choose the module. Prompts remain visible when input is piped.
+tools. The interactive run then lists missing module prerequisites, including
+audio and graphics build tools, and offers to install them all in one go before
+the menu. Declining is fine: each module offers its own again when you choose
+it, and `--status` only reports. Prompts remain visible when input is piped.
 
 ## Compatibility
 

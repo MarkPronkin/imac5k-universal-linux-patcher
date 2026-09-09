@@ -238,11 +238,7 @@ core_deps_check() {
 
     warn "missing: ${missing[*]}"
     local installer=()
-    if imac_is_fedora; then
-        command -v dnf >/dev/null && installer=(sudo dnf install -y)
-    elif command -v pacman >/dev/null; then installer=(sudo pacman -S --needed --noconfirm)
-    elif command -v dnf    >/dev/null; then installer=(sudo dnf install -y)
-    fi
+    read -ra installer <<<"$(imac_pkg_installer)"
     # Without sudo there is no way to run the package manager either, so say so
     # once instead of failing again inside the install.
     if ((${#installer[@]} == 0)) || [[ " ${packages[*]} " == *" sudo "* ]]; then
@@ -430,10 +426,10 @@ audio_arch_deps() {
     for tool in dkms wget git gcc make patch tar xz modinfo depmod; do
         command -v "$tool" >/dev/null && continue
         missing+=("$tool")
-        case $tool in gcc|make) pkg=base-devel ;; modinfo|depmod) pkg=kmod ;; *) pkg=$tool ;; esac
+        pkg="$(imac_tool_package "$tool")"
         [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
     done
-    [[ -n $(audio_target_kernels) ]] || packages+=("$(imac_kernel_pkgbase)-headers")
+    [[ -n $(audio_target_kernels) ]] || packages+=("$(imac_kernel_headers_package)")
     if ((${#packages[@]})); then
         warn "missing packages: ${packages[*]}"
         confirm "Install them now?" || return 1
@@ -797,9 +793,10 @@ mod_eq_detect() {
 # bankstown is the psychoacoustic bass extension the chain starts with. A
 # missing plugin does not degrade the graph -- PipeWire drops the whole filter
 # node and the sink never appears -- so both are required, not optional.
+eq_lsp_package() { imac_is_fedora && echo lsp-plugins || echo lsp-plugins-lv2; }
 eq_plugins() {
     local missing=() repo=() build=0
-    eq_have_lv2 lsp-plugins.lv2 || { missing+=("lsp-plugins (LV2)"); repo+=(lsp-plugins-lv2); }
+    eq_have_lv2 lsp-plugins.lv2 || { missing+=("lsp-plugins (LV2)"); repo+=("$(eq_lsp_package)"); }
     eq_have_lv2 bankstown.lv2   || { missing+=("bankstown (LV2)");   build=1; }
     ((${#missing[@]})) || return 0
     warn "missing LV2 plugins: ${missing[*]}"
@@ -1297,15 +1294,7 @@ mod_5k_preflight() {
     done
     if (( ${#missing[@]} )); then
         warn "missing build tools: ${missing[*]}"
-        for t in "${missing[@]}"; do case $t in
-            gcc|make|ld|strip|objcopy|flex|bison) pkgs+=(base-devel) ;;
-            modinfo|depmod) pkgs+=(kmod) ;;
-            grub-mkconfig) pkgs+=(grub) ;;
-            limine-mkinitcpio) pkgs+=(limine-mkinitcpio-hook) ;;
-            ld.lld) pkgs+=(lld) ;;
-            llvm-*) pkgs+=(llvm) ;;
-            *)                      pkgs+=("$t") ;;
-        esac; done
+        for t in "${missing[@]}"; do pkgs+=("$(imac_tool_package "$t")"); done
         # de-duplicate
         mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | sort -u)
         say "install with:  sudo pacman -S --needed ${pkgs[*]}"
@@ -1319,7 +1308,7 @@ mod_5k_preflight() {
         command -v "$t" >/dev/null || { warn "$t is still missing."; ok=0; }
     done
     local headers_pkg
-    headers_pkg="$(imac_kernel_pkgbase "$KREL")-headers"
+    headers_pkg="$(imac_kernel_headers_package "$KREL")"
     if [[ -e "/usr/lib/modules/${KREL}/build/Module.symvers" ]]; then
         say "kernel headers present"
     else
@@ -1507,10 +1496,16 @@ show_status() {
     eq_prereq_note "${MODULE_STATES[eq]:-n/a}"
 }
 
+# Filled by the startup audit in show_status; declared here so the interactive
+# installer can read them even when the audit never ran.
+STARTUP_MISSING_TOOLS=()
+STARTUP_MISSING_PACKAGES=()
+STARTUP_NEEDS_HEADERS=0
 startup_deps_note() {
     # This audit must not depend on a module's successful detection: absent
     # pactl/python3 can make detection return n/a or nothing at all.
     local id tool reported=0 fedora=0 kde=0 archgrub=0 tools=() missing=()
+    STARTUP_MISSING_TOOLS=(); STARTUP_MISSING_PACKAGES=(); STARTUP_NEEDS_HEADERS=0
     imac_is_fedora && fedora=1
     imac_is_kde && kde=1
     imac_is_arch_grub && archgrub=1
@@ -1524,9 +1519,9 @@ startup_deps_note() {
                 if ((fedora)); then tools+=(dracut mokutil)
                 elif ((archgrub)); then tools+=(mkinitcpio); fi
                 if ((fedora)); then
-                    [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files")
+                    [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || startup_need_headers missing
                 else
-                    [[ -n $(audio_target_kernels) ]] || missing+=("matching kernel development files")
+                    [[ -n $(audio_target_kernels) ]] || startup_need_headers missing
                 fi ;;
             eq) tools=(pactl pw-cli wpctl systemctl)
                 # Only when there is something to build: a machine that already
@@ -1552,10 +1547,12 @@ startup_deps_note() {
                     tools+=(zstd cpio mkinitcpio grub-mkconfig)
                     imac_kernel_uses_clang "$KREL" && tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
                 else tools+=(zstd cpio limine-mkinitcpio); fi
-                [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || missing+=("matching kernel development files") ;;
+                [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || startup_need_headers missing ;;
         esac
         for tool in "${tools[@]}"; do
-            command -v "$tool" >/dev/null || missing+=("$tool")
+            command -v "$tool" >/dev/null && continue
+            missing+=("$tool")
+            [[ " ${STARTUP_MISSING_TOOLS[*]} " == *" $tool "* ]] || STARTUP_MISSING_TOOLS+=("$tool")
         done
         ((${#missing[@]})) || continue
         printf '  %s missing dependencies: %s\n' "$id" "${missing[*]}"
@@ -1568,14 +1565,62 @@ startup_deps_note() {
     return 0
 }
 
-# The startup gate covers what every run needs. These belong to one optional
-# patch and one of them is a source build, so they are reported here rather
-# than installed at launch on machines that will never apply it; the module
-# offers to install them at the point where they are actually needed.
+# Kernel headers carry no command of their own, so the tool scan cannot see
+# them; they are reported by name and installed from the pkgbase instead.
+startup_need_headers() {   # $1 = name of the module's display array
+    local -n display=$1
+    display+=("matching kernel development files")
+    STARTUP_NEEDS_HEADERS=1
+}
+
+# The audit above only reports. Offer the packages it found in one go, so a
+# fresh machine is ready before the menu instead of stopping for a package
+# manager part-way into a module. Interactive runs only: --status inspects.
+startup_deps_install() {
+    (( ${#STARTUP_MISSING_TOOLS[@]} || ${#STARTUP_MISSING_PACKAGES[@]} || STARTUP_NEEDS_HEADERS )) || return 0
+    local tool pkg packages=() installer=() still=()
+    for tool in "${STARTUP_MISSING_TOOLS[@]}"; do
+        pkg="$(imac_tool_package "$tool")"
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    done
+    for pkg in "${STARTUP_MISSING_PACKAGES[@]}"; do
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    done
+    if (( STARTUP_NEEDS_HEADERS )) && pkg="$(imac_kernel_headers_package "$KREL")"; then
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    fi
+    (( ${#packages[@]} )) || return 0
+    echo
+    read -ra installer <<<"$(imac_pkg_installer)"
+    if ((${#installer[@]} == 0)); then
+        warn "no supported package manager — install these, then re-run: ${packages[*]}"
+        return 1
+    fi
+    say "module prerequisites: ${packages[*]}"
+    # Declining is not a failure: every module still offers its own dependencies
+    # at the point of use, and some of these belong to patches never chosen.
+    confirm "Install them now?" || { say "skipped — each module offers its own when applied"; return 0; }
+    "${installer[@]}" "${packages[@]}" || { warn "package installation failed"; return 1; }
+    hash -r
+    for tool in "${STARTUP_MISSING_TOOLS[@]}"; do
+        command -v "$tool" >/dev/null || still+=("$tool")
+    done
+    ((${#still[@]})) && warn "still missing after the install: ${still[*]}"
+    show_status
+}
+
+# EQ's two LV2 bundles, reported apart from the tool scan because neither
+# carries a command. Only the repository one joins the startup install list:
+# bankstown is in no distribution's repositories, and the module builds it
+# rootlessly into ~/.lv2 at the point where it is actually needed.
 eq_prereq_note() {   # $1 = EQ state from the current status snapshot
     [[ $1 == applied || $1 == n/a ]] && return 0
-    local missing=()
-    eq_have_lv2 lsp-plugins.lv2 || missing+=(lsp-plugins-lv2)
+    local missing=() lsp
+    if ! eq_have_lv2 lsp-plugins.lv2; then
+        lsp="$(eq_lsp_package)"
+        missing+=("$lsp")
+        [[ " ${STARTUP_MISSING_PACKAGES[*]} " == *" $lsp "* ]] || STARTUP_MISSING_PACKAGES+=("$lsp")
+    fi
     eq_have_lv2 bankstown.lv2   || missing+=("bankstown(built from source)")
     ((${#missing[@]})) || return 0
     printf '  eq needs %s — it offers to install them when you apply it\n' "${missing[*]}"
@@ -1733,6 +1778,7 @@ pick_patches() {   # $@ = rows to offer; fills PICKED with the chosen indexes
 }
 
 show_status
+startup_deps_install
 echo
 sel=''
 if ((HAVE_GUM)); then

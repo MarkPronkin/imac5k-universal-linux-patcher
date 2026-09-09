@@ -150,7 +150,7 @@ esac''')
         return subprocess.run(cmd, input=answer, text=True, capture_output=True, timeout=15)
 
     def test_plain_launch_reports_missing_module_tools_before_the_menu(self):
-        result = self.launch(answer="4\n")
+        result = self.launch(answer="n\n4\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Core dependencies: ready", result.stdout)
         for module, command in (("audio", "dkms"), ("eq", "pactl"), ("5k", "pahole"), ("suspend", "systemctl")):
@@ -279,6 +279,46 @@ esac''')
                 self.assertNotIn("missing dependencies", result.stdout)
                 self.assertNotIn("PACKAGE_MANAGER", result.stdout)
 
+
+    def test_plain_launch_offers_the_reported_prerequisites_and_takes_no_for_an_answer(self):
+        result = self.launch(answer="n\n4\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("module prerequisites:", result.stdout)
+        self.assertIn("skipped", result.stdout)
+        self.assertNotIn("PACKAGE_MANAGER", result.stdout)
+        # Declining is not fatal: the menu still opens (select prints to stderr).
+        self.assertIn("Apply all safe patches", result.stderr)
+
+    def test_plain_launch_installs_the_reported_prerequisites_after_confirmation(self):
+        result = self.launch(answer="y\n4\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        # Package names, not command names, and the headers package the tool
+        # scan cannot see because it carries no command of its own.
+        for package in ("base-devel", "kmod", "dkms", "pahole", "libpulse", "linux-headers"):
+            self.assertIn(package, line)
+        for command in ("gcc ", "modinfo", "pactl"):
+            self.assertNotIn(command, line)
+        # A stub package manager delivers none of them, so the recheck says so
+        # and the refreshed status is printed before the menu.
+        self.assertIn("still missing after the install", result.stdout)
+        self.assertEqual(result.stdout.count("ids:"), 2)
+
+    def test_fedora_prerequisites_use_fedora_package_names(self):
+        result = self.launch(answer="y\n4\n", fedora=True, desktop="KDE")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        for package in ("dwarves", "pulseaudio-utils", "pipewire-utils", "kscreen",
+                        "rpm-build", "kernel-devel-7.2.2-startup-test"):
+            self.assertIn(package, line)
+        self.assertNotIn("base-devel", line)
+
+    def test_status_reports_prerequisites_without_installing_them(self):
+        result = self.launch("--status", answer="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("missing dependencies:", result.stdout)
+        self.assertNotIn("module prerequisites:", result.stdout)
+        self.assertNotIn("PACKAGE_MANAGER", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()

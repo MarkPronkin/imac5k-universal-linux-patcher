@@ -57,6 +57,65 @@ imac_kernel_pkgbase() {
 imac_kernel_uses_clang() {
     grep -qx 'CONFIG_CC_IS_CLANG=y' "/usr/lib/modules/${1:-$(uname -r)}/build/.config" 2>/dev/null
 }
+# One tool-to-package table for every module, so the startup installer and the
+# per-module preflights name the same packages. Names follow DEPENDENCIES.md;
+# anything unlisted is its own package name on both families.
+imac_tool_package() {   # $1 = command name
+    if imac_is_fedora; then
+        case $1 in
+            ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
+            modinfo|depmod|lsmod)   echo kmod ;;
+            pahole)                 echo dwarves ;;
+            rpmbuild)               echo rpm-build ;;
+            pactl)                  echo pulseaudio-utils ;;
+            pw-cli)                 echo pipewire-utils ;;
+            wpctl)                  echo wireplumber ;;
+            kscreen-doctor)         echo kscreen ;;
+            systemctl)              echo systemd ;;
+            grub-mkconfig)          echo grub2-tools ;;
+            hyprctl)                echo hyprland ;;
+            ld.lld)                 echo lld ;;
+            llvm-*)                 echo llvm ;;
+            *)                      echo "$1" ;;
+        esac
+        return
+    fi
+    case $1 in
+        gcc|make|ld|strip|objcopy|flex|bison) echo base-devel ;;
+        modinfo|depmod|lsmod)   echo kmod ;;
+        pactl)                  echo libpulse ;;
+        pw-cli)                 echo pipewire ;;
+        wpctl)                  echo wireplumber ;;
+        kscreen-doctor)         echo kscreen ;;
+        python3)                echo python ;;
+        systemctl)              echo systemd ;;
+        cargo)                  echo rust ;;
+        grub-mkconfig)          echo grub ;;
+        limine-mkinitcpio)      echo limine-mkinitcpio-hook ;;
+        hyprctl)                echo hyprland ;;
+        ld.lld)                 echo lld ;;
+        llvm-*)                 echo llvm ;;
+        *)                      echo "$1" ;;
+    esac
+}
+# The install command for this distribution, as a word list for `read -ra`.
+# Fedora never falls back to a pacman that happens to be installed.
+imac_pkg_installer() {
+    if imac_is_fedora; then
+        command -v dnf >/dev/null && { echo "sudo dnf install -y"; return 0; }
+    elif command -v pacman >/dev/null; then echo "sudo pacman -S --needed --noconfirm"; return 0
+    elif command -v dnf >/dev/null; then echo "sudo dnf install -y"; return 0
+    fi
+    return 1
+}
+# The headers/development package for a kernel, which carries no command of its
+# own and so never shows up in the tool scan.
+imac_kernel_headers_package() {   # $1 = kernel release, default the running one
+    local krel=${1:-$(uname -r)} pkgbase
+    if imac_is_fedora; then printf 'kernel-devel-%s\n' "$krel"; return 0; fi
+    pkgbase=$(imac_kernel_pkgbase "$krel") || return 1
+    printf '%s-headers\n' "$pkgbase"
+}
 imac_require_limine() {
     if imac_is_fedora || [[ ! -f /etc/default/limine ]]; then
         echo "This helper requires an Omarchy/Limine installation. On Fedora use imac-patcher --apply/--remove 5k." >&2

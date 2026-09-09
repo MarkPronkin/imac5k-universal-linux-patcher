@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_patcher_menu import shell_function
+
 ROOT = Path(__file__).resolve().parents[1]
 PATCHER = (ROOT / "scripts/imac-patcher").read_text()
 PLATFORM = (ROOT / "scripts/lib/platform.sh").read_text()
@@ -149,6 +151,26 @@ mod_5k_detect
 """ % stitched)
                 self.assertEqual(result.stdout.strip(), expected, result.stderr)
 
+
+    def test_eq_repo_plugin_is_named_per_distribution_and_queued_for_startup(self):
+        """lsp-plugins-lv2 is the Arch name; Fedora ships it as lsp-plugins."""
+        code = (shell_function(PATCHER, "eq_lsp_package") + "\n"
+                + shell_function(PATCHER, "eq_prereq_note") + "\n")
+        for fedora, expected in ((False, "lsp-plugins-lv2"), (True, "lsp-plugins")):
+            with self.subTest(fedora=fedora):
+                result = self.run_shell("iMac18,3", """
+imac_is_fedora() { return %d; }
+STARTUP_MISSING_PACKAGES=()
+eq_have_lv2() { return 1; }
+""" % (0 if fedora else 1) + code + """
+eq_prereq_note not-applied
+printf 'QUEUED %s\\n' "${STARTUP_MISSING_PACKAGES[*]}"
+""")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"eq needs {expected} bankstown(built from source)", result.stdout)
+                # Only the repository half is queued; bankstown is a source build.
+                self.assertIn(f"QUEUED {expected}", result.stdout)
+                self.assertNotIn("bankstown", result.stdout.split("QUEUED")[1])
 
 if __name__ == "__main__":
     unittest.main()
