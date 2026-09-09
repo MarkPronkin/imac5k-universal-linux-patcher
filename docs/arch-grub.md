@@ -2,8 +2,12 @@
 
 Arch Linux, EndeavourOS, CachyOS and other distributions declaring
 `ID_LIKE=arch` can use the 5K installer with **GRUB and mkinitcpio**. This
-backend has offline regression coverage; booting and native 5K on these
-combinations have not yet been validated on hardware.
+backend has offline regression coverage, and the install-and-boot path is
+hardware-validated on CachyOS — iMac18,3, `linux-cachyos` 7.2.3, KDE Plasma
+Wayland — where native 5K, audio, speaker tuning, colour and the sleep block
+all come up after the reboot. The staged test entries and promotion described
+below have not been exercised on hardware, and neither has EndeavourOS or plain
+Arch, though both use this same backend.
 
 ## Supported setup
 

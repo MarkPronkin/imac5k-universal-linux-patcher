@@ -80,7 +80,7 @@ it, and `--status` only reports. Prompts remain visible when input is piped.
 
 Read both tables together: a patch needs a compatible model **and** distribution setup.
 
-- ✅ **Verified** — hardware-tested by this project, currently on iMac18,3 running Omarchy.
+- ✅ **Verified** — hardware-tested by this project on iMac18,3, running Omarchy (Limine + Hyprland) and CachyOS (GRUB + KDE Plasma Wayland).
 - ⚪ **Build-tested** — build, install and restore checks passed, without confirming the result on hardware.
 - ⚪ **Conditional** — additional setup is required and that combination is untested.
 - ⚪ **Untested** — an implementation exists but hardware behaviour is unconfirmed.
@@ -112,14 +112,15 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 
 | Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
-| **Arch Linux** | ⚪ Untested: GRUB/mkinitcpio; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
-| **EndeavourOS / CachyOS** | ⚪ Conditional: GRUB + mkinitcpio | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
+| **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
+| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ✅ **Verified workaround** | ➖ N/A on GRUB |
+| **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
 | **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
 | **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 | **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 
-Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. GRUB test entries and promotion are implemented; hardware boot validation is still pending. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
+Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. The install-and-boot path is hardware-validated on CachyOS; the staged test entries and promotion are implemented and covered offline, but have not been exercised on hardware. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
 Fedora specifics — dependencies, Secure Boot signing, recovery, and how the backend is wired in — are in the **[Fedora KDE guide](docs/fedora-kde.md)**. Fedora Kinoite/Atomic is not supported.
 
