@@ -45,6 +45,7 @@ AUX_SINK = ("61\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire"
 # speaker-device pin is inserted into.
 ASSET_CONF = '''"node.name": "audio_effect.iMac-convolver",
 "node.name": "effect_output.iMac-convolver",
+"node.virtual": "true",
 "filename": [ "/usr/share/imac-audio/Filters L Aug 14-MP.wav" ]
 "filename": [ "/usr/share/imac-audio/Filters LFE Aug 16-MP.wav" ]
             "playback.props": {
@@ -52,7 +53,9 @@ ASSET_CONF = '''"node.name": "audio_effect.iMac-convolver",
 # What apply pins the chain's output to, so a change of the default device --
 # plugging in a USB DAC, say -- cannot move the measured tuning onto it.
 SPEAKER_TARGET = "alsa_output.pci-0000_00_1f.3.analog-surround-40"
-PINNED_CONF = f'"target.object": "{SPEAKER_TARGET}"\n'
+PINNED_CONF = f'''"target.object": "{SPEAKER_TARGET}"
+"node.virtual": "false"
+'''
 IRS = ("Filters L Aug 14-MP.wav", "Filters R Aug 14-MP.wav",
        "Filters C2 Aug 16-MP.wav", "Filters LFE Aug 16-MP.wav")
 
@@ -281,6 +284,42 @@ systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"
                          "applied")
         self.assertEqual(self.run_eq(self.install_eq(wait=False) + "mod_eq_detect").stdout.strip(),
                          "partial")
+
+    def test_the_tuned_sink_presents_itself_as_a_real_output(self):
+        """node.virtual is what makes pipewire-pulse withhold the sink's
+        HARDWARE flag, and desktop pickers list only hardware sinks. With the
+        raw device hidden by this module, a virtual sink means an empty picker
+        on a machine whose speakers are playing through this very chain."""
+        self.stub_pactl(sinks=TUNED_SINK)
+        result = self.run_eq(self.stage_assets() + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply
+echo "--- installed config ---"
+cat "$EQ_CONF"''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = result.stdout.split("--- installed config ---")[1]
+        self.assertIn('"node.virtual": "false"', config)
+        self.assertNotIn('"node.virtual": "true"', config)
+
+    def test_apply_fails_when_the_sink_cannot_be_made_a_real_output(self):
+        # Silently shipping a sink no picker will show is worse than stopping:
+        # sound works, so nothing else reveals it.
+        self.stub_pactl(sinks=TUNED_SINK)
+        conf = ASSET_CONF.replace('"node.virtual": "true",', '"node.virtual": 1,')
+        result = self.run_eq(self.stage_assets(conf=conf) + "mod_eq_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("would not appear in sound pickers", result.stdout)
+
+    def test_a_virtual_sink_install_needs_reapplying(self):
+        # Indistinguishable from a working install by ear, so detection is the
+        # only thing that surfaces it.
+        self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
+        self.assertEqual(self.run_eq(self.install_eq() + "mod_eq_detect").stdout.strip(),
+                         "applied")
+        legacy = self.install_eq().replace(
+            'printf \'%s\' \'' + PINNED_CONF + '\'',
+            'printf \'%s\' \'' + PINNED_CONF.replace('"false"', '"true"') + '\'')
+        self.assertEqual(self.run_eq(legacy + "mod_eq_detect").stdout.strip(), "partial")
 
     def test_an_unpinned_output_needs_reapplying(self):
         # An install from before the chain's output was pinned to the speaker
@@ -776,6 +815,9 @@ class VendoredTuningTests(unittest.TestCase):
         self.assertIn('"effect_output.iMac-convolver"', config)
         self.assertIn('"audio_effect.iMac-convolver"', config)
         self.assertIn('"playback.props": {', config)
+        # The sink presents itself as a real output only because apply flips
+        # this; upstream ships it "true", which hides it from sound pickers.
+        self.assertIn('"node.virtual": "true"', config)
 
 
 if __name__ == "__main__":

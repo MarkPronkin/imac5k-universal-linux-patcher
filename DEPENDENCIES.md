@@ -176,9 +176,15 @@ checkout into `~/.config/pipewire/imac-speaker-eq.conf.d/` and
 https://github.com/taprobane99/iMac5KLinux at apply time, which tied every
 install to that project's `main` branch. See `assets/imac-audio/README.md` for
 provenance, checksums and licence.
-Two things are rewritten in the downloaded graph: the impulse-response paths,
-and the name of the chain's own output node, which desktops would otherwise
-list beside real applications. The base config beside it, which makes it a
+Three things are rewritten in the vendored graph: the impulse-response paths,
+the name of the chain's own output node, which desktops would otherwise list
+beside real applications, and `node.virtual`, which upstream ships as `true`.
+That property makes pipewire-pulse withhold the sink's PulseAudio `HARDWARE`
+flag, and desktop pickers list only hardware sinks — so with the raw 4.0 device
+hidden, KDE's sound settings showed no output device at all while the speakers
+were playing through this very chain. Apply sets it `false` and refuses if it
+cannot, since a sink no picker will show is invisible to everything except the
+ear. An install predating that reports `partial` so re-applying repairs it. The base config beside it, which makes it a
 standalone PipeWire client, is this project's own.
 Nothing is written as root, and nothing from that project other than those
 five files is used. A WirePlumber drop-in of this project's own,

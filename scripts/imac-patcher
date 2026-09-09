@@ -782,7 +782,7 @@ eq_build_bankstown() (
 # is checked then is the state that should hold instead: the flat jack output.
 mod_eq_detect() {
     command -v pactl >/dev/null || { echo n/a; return; }
-    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 wait=0 f card profile
+    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 wait=0 real=0 f card profile
     [[ -f $EQ_BASE_CONF && -f $EQ_CONF ]] && conf=1
     for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
     eq_units_installed && units=1
@@ -799,13 +799,16 @@ mod_eq_detect() {
     # comes up too early at boot, registers no sink, and -- with the raw device
     # hidden -- leaves the session with no output at all. Also re-appliable.
     grep -qs 'ExecStartPre=' "${EQ_UNIT_DIR}/${EQ_UNIT}" && wait=1
+    # And one from before the sink presented itself as a real output has no
+    # entry in the desktop's sound picker at all. Also repaired by re-applying.
+    grep -qs -- '"node.virtual": "false"' "$EQ_CONF" && real=1
     if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
         eq_sink_exists "$(eq_aux_sink "$card")" && output=1
     else
         [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] \
             && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
     fi
-    if   (( conf && irs && units && jack && output && pin && wait )); then echo applied
+    if   (( conf && irs && units && jack && output && pin && wait && real )); then echo applied
     elif (( conf || irs || units || jack || output )); then echo partial
     else echo not-applied; fi
 }
@@ -902,6 +905,17 @@ mod_eq_apply() {
     # default changes. Plug in a USB DAC and the measured crossover and EQ are
     # folded into its two channels, playing on the DAC. Functional, unlike the
     # rename above, so a config without the anchor is refused.
+    # "node.virtual" is what tells the PulseAudio layer this is not a real
+    # output device, and pipewire-pulse then withholds the sink's HARDWARE
+    # flag. Desktop pickers filter on exactly that: KDE's lists only hardware
+    # sinks, so the tuned sink was absent from Plasma's output list while the
+    # raw 4.0 device was hidden by the rule above -- an empty picker, on a
+    # machine whose speakers were playing through this very chain. It is a
+    # virtual device in the sense the property means, but it is also the only
+    # output the user has, so it has to present as a real one.
+    sed -i 's|"node.virtual": "true"|"node.virtual": "false"|' "$EQ_CONF" || return 1
+    grep -qs -- '"node.virtual": "false"' "$EQ_CONF" || {
+        warn "could not mark the tuned sink as a real output -- it would not appear in sound pickers"; return 1; }
     local target="alsa_output.${card#alsa_card.}.analog-surround-40"
     sed -i "s|\"playback.props\": {|\"playback.props\": {\n                \"target.object\": \"${target}\",\n                \"node.dont-move\": \"true\",|" "$EQ_CONF" || return 1
     grep -qs -- "\"target.object\": \"${target}\"" "$EQ_CONF" || {
