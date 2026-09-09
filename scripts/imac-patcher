@@ -1347,6 +1347,10 @@ mod_5k_apply() {
     fi
     sync_boot_files && verify_cmdline 'amdgpu.tiled_stitch=1' "$VIDEO_4K" || return 1
     say "reboot to activate"
+    # Defined by the KDE backend only; other desktops key colour to the file
+    # they own, which the stitch does not touch.
+    declare -F color_note_after_5k >/dev/null && color_note_after_5k
+    return 0
 }
 mod_5k_remove() {
     sudo "$INSTALLER_5K" --restore || return 1

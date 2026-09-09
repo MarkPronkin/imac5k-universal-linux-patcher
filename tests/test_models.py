@@ -172,5 +172,43 @@ printf 'QUEUED %s\\n' "${STARTUP_MISSING_PACKAGES[*]}"
                 self.assertIn(f"QUEUED {expected}", result.stdout)
                 self.assertNotIn("bankstown", result.stdout.split("QUEUED")[1])
 
+    def test_colour_apply_refuses_while_the_stitch_is_only_configured(self):
+        """Applied before the stitch reboot, KDE drops the profile with the old panel."""
+        kde = (ROOT / "scripts/lib/kde.sh").read_text()
+        cases = (("configured, not yet live", 0, 1, 1),
+                 ("configured and live", 0, 0, 0),
+                 ("never configured", 1, 1, 0))
+        for name, configured, stitched, expected in cases:
+            with self.subTest(case=name):
+                result = self.run_shell("iMac18,3", """
+SCRIPT_DIR=/nonexistent
+boot_config_has() { return %d; }
+imac_panel_has_stitched_mode() { return %d; }
+python3() { echo APPLIED; }
+""" % (configured, stitched) + kde + """
+mod_color_apply
+""")
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                if expected:
+                    self.assertIn("5K stitch is configured but not active yet", result.stdout)
+                    self.assertIn("--apply color", result.stdout)
+                    self.assertNotIn("APPLIED", result.stdout)
+                else:
+                    self.assertIn("APPLIED", result.stdout)
+
+    def test_applying_5k_tells_kde_users_to_re_apply_colour_after_the_reboot(self):
+        kde = (ROOT / "scripts/lib/kde.sh").read_text()
+        for state, expected in (("applied", True), ("not-applied", False)):
+            with self.subTest(colour=state):
+                result = self.run_shell("iMac18,3", """
+SCRIPT_DIR=/nonexistent
+mod_color_detect() { echo %s; }
+""" % state + kde + """
+mod_color_detect() { echo %s; }
+color_note_after_5k
+""" % state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("Re-apply the colour module" in result.stdout, expected)
+
 if __name__ == "__main__":
     unittest.main()

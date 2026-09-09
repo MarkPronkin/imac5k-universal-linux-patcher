@@ -188,6 +188,13 @@ driver; the bundled audio installer supports only iMac18,3.
 - Hyprland: `hyprctl` (edits `~/.config/hypr/monitors.lua`, then reloads)
 - KDE: `python3` + `kscreen-doctor` (via `scripts/kde-display.py`, stdlib only)
 
+On KDE the setting belongs to the panel's EDID hash, not to the connector name,
+so the 5K stitch invalidates it: apply `color` after the stitch reboot. The
+module refuses while the stitch is configured but not yet active, `--apply 5k`
+says the same at the point it asks for the reboot, and the saved selection in
+`~/.local/state/imac-patcher/kde-color.json` records the panel identity it was
+taken from so `--remove` never restores one panel's setting onto another.
+
 ## Suspend module (safe tier; boot tier while retired `idle=poll` config remains)
 
 - systemd (`systemctl`) — sleep target masks

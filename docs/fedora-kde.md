@@ -243,6 +243,18 @@ touched. KScreen has to be reachable from the current Plasma Wayland session.
 No Hyprland config is written and no live KWin configuration file is
 overwritten.
 
+**Apply colour after the 5K reboot, not before.** KWin stores every per-output
+setting against the panel's EDID hash, and the stitch rewrites that EDID: after
+the reboot `eDP-1` comes back as a *different* output carrying KDE's defaults,
+and a colour profile applied beforehand stays behind on the old identity. That
+reads as the colour patch having silently failed. Nothing can carry the setting
+across — the new identity does not exist until the panel is stitched — so
+`--apply color` refuses while `amdgpu.tiled_stitch=1` is configured but not yet
+active, and `--apply 5k` reminds you to re-apply colour once you are back up.
+The saved selection records the panel identity it came from; `--remove color`
+discards a save that belongs to a panel KDE no longer configures rather than
+writing it onto the current one.
+
 **Sleep** uses the same systemd target masks as the upstream project. If you
 want KDE's Power Management UI to reflect the change, disable automatic sleep
 there as well. If the retired `idle=poll` variant left the argument on the

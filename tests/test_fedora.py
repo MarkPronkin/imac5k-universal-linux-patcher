@@ -53,6 +53,80 @@ class DisplayTests(unittest.TestCase):
                 self.assertFalse((Path(tmp) / "imac-patcher/kde-color.json").exists())
 
 
+    # A mock KScreen: one internal panel whose identity and profile can change
+    # under the script, the way the 5K stitch reboot changes them for real.
+    def kscreen(self, uuid="old-identity", current="sRGB"):
+        state = {"uuid": uuid, "profile": current}
+
+        def doctor(*args):
+            if args == ("--json",):
+                return json.dumps({"outputs": [{"id": 1, "name": "eDP-1", "connected": True}]})
+            if args == ("--outputs",):
+                return f"Output: 1 eDP-1 {state['uuid']}\n Color profile source: {state['profile']}\n"
+            state["profile"] = args[0].split(".")[-1]
+            return ""
+        return state, doctor
+
+    def run_display(self, tmp, doctor, action):
+        env = {"XDG_STATE_HOME": tmp, "XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "wayland-0"}
+        with patch.dict(os.environ, env), patch.object(display, "doctor", doctor):
+            with patch("sys.argv", ["kde-display.py", "--" + action]):
+                return display.main()
+
+    def test_panel_identity_is_read_from_the_output_header(self):
+        self.assertEqual(display.identity("Output: 1 eDP-1 516d0d05-b646\n x\n", 1), "516d0d05-b646")
+        # Older KScreen builds print no identity; absence must not look like one.
+        self.assertEqual(display.identity("Output: 1 eDP-1\n x\n", 1), "")
+
+    def test_setting_saved_before_the_stitch_is_not_restored_onto_the_new_panel(self):
+        """KWin keys the profile to the panel's EDID, which the 5K stitch rewrites."""
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, doctor = self.kscreen()
+            state = Path(tmp) / "imac-patcher/kde-color.json"
+            self.assertEqual(self.run_display(tmp, doctor, "apply"), 0)
+            self.assertEqual(panel["profile"], "EDID")
+            self.assertEqual(json.loads(state.read_text())["uuid"], "old-identity")
+            # The stitch reboot: same connector, new panel, KDE's own defaults.
+            panel.update(uuid="new-identity", profile="sRGB")
+            self.assertEqual(self.run_display(tmp, doctor, "remove"), 0)
+            # Nothing of ours is on this panel, so nothing is written to it.
+            self.assertEqual(panel["profile"], "sRGB")
+            self.assertFalse(state.exists())
+
+    def test_applying_after_the_stitch_records_the_panel_that_is_actually_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, doctor = self.kscreen()
+            state = Path(tmp) / "imac-patcher/kde-color.json"
+            self.assertEqual(self.run_display(tmp, doctor, "apply"), 0)
+            panel.update(uuid="new-identity", profile="ICC")
+            self.assertEqual(self.run_display(tmp, doctor, "apply"), 0)
+            # The stale pre-stitch save must not survive to be restored later.
+            self.assertEqual(json.loads(state.read_text()),
+                             {"output": "eDP-1", "uuid": "new-identity", "profile": "ICC"})
+            self.assertEqual(self.run_display(tmp, doctor, "remove"), 0)
+            self.assertEqual(panel["profile"], "ICC")
+
+    def test_state_files_written_before_identities_were_recorded_still_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, doctor = self.kscreen(current="EDID")
+            state = Path(tmp) / "imac-patcher/kde-color.json"
+            state.parent.mkdir(parents=True)
+            state.write_text(json.dumps({"output": "eDP-1", "profile": "ICC"}) + "\n")
+            self.assertEqual(self.run_display(tmp, doctor, "remove"), 0)
+            self.assertEqual(panel["profile"], "ICC")
+            self.assertFalse(state.exists())
+
+    def test_an_unreadable_state_file_does_not_wedge_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, doctor = self.kscreen()
+            state = Path(tmp) / "imac-patcher/kde-color.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("{ truncated")
+            self.assertEqual(self.run_display(tmp, doctor, "apply"), 0)
+            self.assertEqual(panel["profile"], "EDID")
+            self.assertEqual(json.loads(state.read_text())["profile"], "sRGB")
+
+
 MOCK = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
 name = pathlib.Path(sys.argv[0]).name
