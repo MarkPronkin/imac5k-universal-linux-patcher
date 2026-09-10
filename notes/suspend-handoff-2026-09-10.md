@@ -1,18 +1,18 @@
-# Handoff: suspend root-caused to Thunderbolt NHI; sleep hook built, not yet installed. 2026-09-10 ~17:15
+# Handoff: suspend root-caused to Thunderbolt NHI; sleep hook shipped, s2idle validated. 2026-09-10
 
 ## Owner's request and where it ended
 
 Owner: "suspend doesn't work". By end of session the hang is root-caused to
 the **Thunderbolt NHI noirq suspend** (Alpine Ridge, `0000:07:00.0`, device
-`0x15d2`), a sleep hook that unbinds/rebinds it around sleep is written and
-wired into the patcher, and the remaining validation is queued but **not
-run**. Owner also said: hibernate is NOT wanted — do not pursue it; its
-targets stay masked.
+`0x15d2`), a sleep hook that unbinds/rebinds it around sleep is written,
+wired into the patcher and installed, and a real s2idle suspend through
+systemd resumes cleanly. Owner also said: hibernate is NOT wanted — do not
+pursue it; its targets stay masked.
 
-**Stopped at:** the hook exists in the repo (`scripts/imac-tb-sleep-hook`,
-all 248 tests pass) but is **not installed on the machine**, and the
-deciding **s2idle real-suspend test has not been run**. Exact next commands
-are at the bottom.
+**Stopped at (evening):** suspend works in s2idle, and the patcher's suspend
+module owns both the hook and the s2idle default (see "Validation" below).
+The "Changes made", "Machine state" and "Next steps" sections record the
+~17:15 state, before the hook was installed.
 
 ## Findings chain (each step evidenced; kernel 7.2.3-arch1-3, linkarm module)
 

@@ -278,10 +278,14 @@ installer's tree; its unstripped `amdgpu.ko` decodes any later oops.
      with `mem_sleep_default=s2idle` in `/etc/default/limine` + rebuilt UKI;
      verified after reboot (`[s2idle]`, cmdline). Wake is slow only by the
      ~6 s SATA link recovery (known from the staged runs).
-   - **Patcher now owns the s2idle default too** (this commit): the suspend
+   - **Patcher now owns the s2idle default too** (73a7bae): the suspend
      module adds `mem_sleep_default=s2idle` on apply (Limine drop-in,
      GRUB cmdline, grubby on Fedora), requires it for applied/safe, and
      drops it on remove — without the hook an s2idle suspend would hang.
+   - **Review cleanup (evening):** a failed boot-image rebuild or grubby
+     edit now fails the module instead of ending in "reboot"; apply also
+     switches the running kernel to s2idle, since the cmdline default only
+     counts from the next boot while suspend.target is unmasked at once.
 
 `notes/imac-pm-stage.py` now finds its test window with a `/dev/kmsg` marker.
 Its timestamp filter missed the delay line because the printk clock runs
