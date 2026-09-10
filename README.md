@@ -56,7 +56,9 @@ The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
 tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
 but blocks hibernate**; select individual modules to skip it. Suspend moves to
 the `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
-hibernation setup is needed.
+hibernation setup is needed. `--apply all` applies every module not yet
+applied, boot tier included — including the long `5k` kernel-module build,
+which runs last.
 
 Commands check all arguments before running any module. Exit status is `0` for
 success or a skipped operation, `1` for a failed operation, and `2` for invalid

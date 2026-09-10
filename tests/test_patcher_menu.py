@@ -28,7 +28,7 @@ def driver():
 
 
 class MenuTests(unittest.TestCase):
-    def run_menu(self, answer, picks="1\n2\n", choice="2\n", extra=""):
+    def run_menu(self, answer, picks="1\n2\n", choice="3\n", extra=""):
         source = PATCHER.read_text()
         confirm = shell_function(source, "confirm")
         interactive = source[source.index("# ── interactive"):]
@@ -138,11 +138,28 @@ run_module() {
         self.assertEqual(result.stderr.count("PROBE_5K"), 1)
 
     def test_remove_menu_reuses_status_probes(self):
-        result = self.run_menu("", choice="3\n", picks="", extra='''
+        result = self.run_menu("", choice="4\n", picks="", extra='''
 mod_5k_detect() { echo PROBE_5K >&2; echo applied; }
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.count("PROBE_5K"), 1)
+
+    def test_apply_all_patches_runs_every_tier(self):
+        result = self.run_menu("", choice="2\n", picks="", extra='''
+MODULES=(audio color 5k)
+mod_audio_title() { echo Audio; }
+mod_audio_tier() { echo safe; }
+mod_audio_detect() { echo not-applied; }
+mod_color_title() { echo Color; }
+mod_color_tier() { echo safe; }
+mod_color_detect() { echo not-applied; }
+run_module() { echo "RUN $*"; [[ $2 != color ]]; }
+''')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("RUN apply audio", result.stdout)
+        self.assertIn("RUN apply color", result.stdout)
+        # Unlike the safe batch, the boot-tier 5k module runs too.
+        self.assertIn("RUN apply 5k", result.stdout)
 
     def test_safe_batch_retains_failure_after_a_later_success(self):
         result = self.run_menu("", choice="1\n", picks="", extra='''

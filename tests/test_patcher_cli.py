@@ -63,6 +63,7 @@ printf '%s\\n' "$ACTION" "$FORCE" "${REQUESTED_MODULES[@]}"
         for args, expected in (((), ["interactive", "0"]),
                                (("--force",), ["interactive", "1"]),
                                (("--status", "--force"), ["status", "1"]),
+                               (("--apply", "all"), ["apply", "0", "all"]),
                                (("--remove", "safe"), ["remove", "0", "safe"])):
             with self.subTest(args=args):
                 result = self.parse(*args)
@@ -73,7 +74,9 @@ printf '%s\\n' "$ACTION" "$FORCE" "${REQUESTED_MODULES[@]}"
         for args in (("--apply",), ("--remove",), ("--unknown",),
                      ("--apply", "eq", "typo"), ("--apply", "eq color"),
                      ("--apply", ""), ("--remove", "safe", "5k"),
-                     ("--apply", "eq", "safe"), ("--status", "eq"),
+                     ("--apply", "eq", "safe"), ("--apply", "all", "eq"),
+                     ("--apply", "safe", "all"), ("--remove", "all"),
+                     ("--status", "eq"),
                      ("--version", "unexpected"), ("--help", "--apply", "eq"),
                      ("--apply", "eq", "--remove", "color")):
             with self.subTest(args=args):

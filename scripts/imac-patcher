@@ -93,7 +93,8 @@ Usage: imac-patcher [--force] [COMMAND]
 
   (no command)          open the interactive menu
   --status              show the state of every module
-  --apply <id...|safe>   apply modules, or all modules currently in the safe tier
+  --apply <id...|safe|all>  apply modules: safe covers the safe tier; all covers
+                            everything not yet applied, boot tier included (5k)
   --remove <id...|safe>  remove modules, or all modules currently in the safe tier
   --version             show the installed release or checkout version
   upgrade               install the newest release of the tool
@@ -134,16 +135,19 @@ parse_args() {
                 if [[ $ACTION != apply && $ACTION != remove ]]; then
                     warn "unexpected argument: $arg (try --help)" >&2; return 2
                 fi
-                if [[ $arg != safe ]] && ! module_exists "$arg"; then
+                if [[ $arg != safe && $arg != all ]] && ! module_exists "$arg"; then
                     warn "unknown module: $arg (ids: ${MODULES[*]})" >&2; return 2
                 fi
                 REQUESTED_MODULES+=("$arg") ;;
         esac
     done
     if [[ $ACTION == apply || $ACTION == remove ]]; then
-        ((${#REQUESTED_MODULES[@]})) || { warn "--${ACTION} needs module IDs or safe" >&2; return 2; }
+        ((${#REQUESTED_MODULES[@]})) || { warn "--${ACTION} needs module IDs, safe or all" >&2; return 2; }
         if [[ " ${REQUESTED_MODULES[*]} " == *" safe "* ]] && ((${#REQUESTED_MODULES[@]} > 1)); then
             warn "use safe on its own, without other module IDs" >&2; return 2
+        fi
+        if [[ " ${REQUESTED_MODULES[*]} " == *" all "* ]] && { [[ $ACTION != apply ]] || ((${#REQUESTED_MODULES[@]} > 1)); }; then
+            warn "use all on its own with --apply" >&2; return 2
         fi
     fi
     return 0
@@ -1764,11 +1768,24 @@ run_safe_modules() {
     return "$result"
 }
 
+# Everything applicable, every tier — run_module skips the already-applied and
+# n/a ones, so this is the "finish my half-done install" batch. Order stays the
+# MODULES order, so the long 5K build runs last.
+run_all_modules() {
+    local m result=0
+    for m in "${MODULES[@]}"; do
+        run_module apply "$m" || result=1
+    done
+    return "$result"
+}
+
 case "$ACTION" in
     status) show_status; exit 0 ;;
     apply|remove)
         if [[ ${REQUESTED_MODULES[0]} == safe ]]; then
             run_safe_modules "$ACTION"
+        elif [[ ${REQUESTED_MODULES[0]} == all ]]; then
+            run_all_modules
         else
             run_modules "$ACTION" "${REQUESTED_MODULES[@]}"
         fi
@@ -1875,13 +1892,16 @@ startup_deps_install
 echo
 sel=''
 if ((HAVE_GUM)); then
-    sel=$(gum choose "Apply all safe patches" "Choose patches to apply" "Remove a patch" "Quit") || exit 0
+    sel=$(gum choose "Apply all safe patches" "Apply all patches" "Choose patches to apply" "Remove a patch" "Quit") || exit 0
 else
-    select sel in "Apply all safe patches" "Choose patches to apply" "Remove a patch" "Quit"; do break; done
+    select sel in "Apply all safe patches" "Apply all patches" "Choose patches to apply" "Remove a patch" "Quit"; do break; done
 fi
 case "$sel" in
     "Apply all safe patches")
         run_safe_modules apply
+        exit "$?" ;;
+    "Apply all patches")
+        run_all_modules
         exit "$?" ;;
     "Choose patches to apply")
         ids=(); avail=(); for m in "${MODULES[@]}"; do
