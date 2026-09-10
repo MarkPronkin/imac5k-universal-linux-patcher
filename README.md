@@ -117,7 +117,7 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 | Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
-| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ✅ **Verified workaround** | ➖ N/A on GRUB |
+| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified on GRUB | ➖ N/A on GRUB |
 | **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
 | **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
