@@ -62,6 +62,11 @@ SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-
 # module now only blocks sleep and cleans these leftovers up.
 NO_CSTATES_PARAM='idle=poll'
 NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
+# Omarchy's hibernation setup (omarchy-hibernation-setup): a mkinitcpio resume
+# hook, a resume= cmdline drop-in and a btrfs swapfile. Hibernating hard-hangs
+# this machine the same way suspend does.
+HIBERNATE_HOOK_CONF=/etc/mkinitcpio.conf.d/omarchy_resume.conf
+HIBERNATE_DROPIN="${LIMINE_DROPIN_DIR}/resume.conf"
 MODULES=(audio eq color suspend boot 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
@@ -92,7 +97,7 @@ Usage: imac-patcher [--force] [COMMAND]
   -h, --help            show this help
 
 Module IDs: audio eq color suspend boot 5k
-  suspend blocks sleep; it does not repair suspend or hibernate.
+  suspend blocks sleep and removes Omarchy hibernation; it repairs neither.
 
 --force may appear anywhere. It bypasses only the Retina 5K model gate;
 individual module compatibility checks still apply. Run as your desktop user.
@@ -1169,10 +1174,11 @@ mod_color_remove() {
 
 # ═══════════════════════ module: suspend ═══════════════════════════════════
 mod_suspend_title() { echo "Block suspend/hibernate"; }
-# Boot tier only while the retired idle=poll config is still there, since
-# cleaning it up rebuilds the boot image; a clean system gets the safe tier.
-mod_suspend_tier()  { boot_config_has "$NO_CSTATES_PARAM" && echo boot || echo safe; }
-mod_suspend_desc()  { echo "Suspend and hibernate hard-hang this machine, every time — recovery is a hard power-cycle, and idle=poll does not rescue it. Masks all four sleep targets so nothing triggers them. Also removes the retired idle=poll boot config if present, rebuilding the boot image. Leave this off if sleep works on your model."; }
+# Boot tier while the retired idle=poll config or Omarchy's hibernation setup
+# is still there, since cleaning either up rebuilds the boot image; a clean
+# system gets the safe tier.
+mod_suspend_tier()  { if boot_config_has "$NO_CSTATES_PARAM" || hibernation_setup_present; then echo boot; else echo safe; fi }
+mod_suspend_desc()  { echo "Suspend and hibernate hard-hang this machine, every time — recovery is a hard power-cycle, and idle=poll does not rescue it. Masks all four sleep targets so nothing triggers them, and on Omarchy also removes the hibernation setup (swapfile, resume hook and cmdline) via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image. Leave this off if sleep works on your model."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${SLEEP_TARGETS[@]}"; do
@@ -1180,9 +1186,46 @@ mod_suspend_detect() {
     done
     local stale=0
     boot_config_has "$NO_CSTATES_PARAM" && stale=1
-    if (( masked == ${#SLEEP_TARGETS[@]} && ! stale )); then echo applied
-    elif (( masked || stale )); then echo partial
+    local hibernating=0
+    hibernation_setup_present && hibernating=1
+    if (( masked == ${#SLEEP_TARGETS[@]} && ! stale && ! hibernating )); then echo applied
+    elif (( masked || stale || hibernating )); then echo partial
     else echo not-applied; fi
+}
+# The hook conf is the canonical marker — omarchy-hibernation-remove checks
+# only it — and the drop-in is the other artifact that survives a removal.
+hibernation_setup_present() {
+    grep -qs '^HOOKS+=(resume)$' "$HIBERNATE_HOOK_CONF" && return 0
+    grep -qs 'resume=' "$HIBERNATE_DROPIN"
+}
+# Undo Omarchy's hibernation setup with Omarchy's own tool. Its gum confirm is
+# the prompt for the destructive part (it deletes the swapfile); if the user
+# declines, the hook conf is still there and nothing else is touched.
+suspend_remove_hibernation() {
+    hibernation_setup_present || return 0
+    if ! command -v omarchy-hibernation-remove >/dev/null; then
+        warn "hibernation is set up but omarchy-hibernation-remove is missing — remove it by hand (swapfile, $HIBERNATE_HOOK_CONF, $HIBERNATE_DROPIN)"
+        return 0
+    fi
+    cat <<EOF
+
+Hibernation is set up on this machine, and hibernating hard-hangs it exactly
+like suspend. omarchy-hibernation-remove will now undo it: swapoff and delete
+/swap/swapfile and its fstab entry, remove $HIBERNATE_HOOK_CONF and rebuild
+the boot image. The swap space is not needed: zram covers ordinary swapping.
+EOF
+    omarchy-hibernation-remove || { warn "omarchy-hibernation-remove failed"; return 1; }
+    if grep -qs '^HOOKS+=(resume)$' "$HIBERNATE_HOOK_CONF"; then
+        say "hibernation removal declined — leaving the setup as it is"
+        return 0
+    fi
+    # Omarchy's tool forgets the resume= cmdline drop-in; without the hook it
+    # is inert, but it no longer belongs in the boot config.
+    if sudo test -f "$HIBERNATE_DROPIN"; then
+        sudo rm -f "$HIBERNATE_DROPIN"
+        say "removed leftover $HIBERNATE_DROPIN"
+        sync_boot_files && verify_cmdline '' 'resume='
+    fi
 }
 # The idle=poll variant left a drop-in (and on older layouts a line in
 # /etc/default/limine); applying or removing this module returns the boot
@@ -1206,8 +1249,11 @@ suspend_drop_no_cstates() {
 }
 mod_suspend_apply() {
     sudo systemctl mask "${SLEEP_TARGETS[@]}" || return 1
-    suspend_drop_no_cstates
+    suspend_drop_no_cstates || return 1
+    suspend_remove_hibernation
 }
+# Removing the module re-enables sleep but cannot restore hibernation — the
+# swapfile is gone. omarchy-hibernation-setup rebuilds it if ever wanted.
 mod_suspend_remove() {
     sudo systemctl unmask "${SLEEP_TARGETS[@]}" || return 1
     suspend_drop_no_cstates || return 1
@@ -1571,6 +1617,7 @@ startup_deps_note() {
                 elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
             suspend)
                 tools=(systemctl)
+                hibernation_setup_present && tools+=(omarchy-hibernation-remove)
                 ((fedora)) && tools+=(grubby)
                 ((archgrub)) && tools+=(grub-mkconfig) ;;
             boot)

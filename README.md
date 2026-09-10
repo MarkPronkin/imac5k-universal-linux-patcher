@@ -264,6 +264,8 @@ sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-
 
 An earlier release tried `idle=poll` instead; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — hibernating hangs exactly like suspending, and zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module re-enables sleep but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+
 ---
 
 ## 🚧 Known rough edges

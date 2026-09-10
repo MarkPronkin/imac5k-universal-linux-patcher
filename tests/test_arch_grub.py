@@ -16,12 +16,15 @@ class ArchGrubTests(unittest.TestCase):
     def run_backend(self, code):
         base = "\n".join(shell_function(PATCHER, name) for name in (
             "mod_suspend_tier", "mod_suspend_detect", "mod_suspend_apply", "mod_suspend_remove",
+            "hibernation_setup_present", "suspend_remove_hibernation",
             "mod_5k_apply", "mod_5k_remove"))
         return fixture.GrubLibTests.run_grub(self, base + f'''
 SCRIPT_DIR="{ROOT / 'scripts'}"
 NO_CSTATES_PARAM=idle=poll
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
+HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
+HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
 sudo() {{ "$@"; }}
 mkinitcpio() {{ printf 'mkinitcpio %s\\n' "$*" >> "$GRUB_CALLS"; }}
 limine-mkinitcpio() {{ echo WRONG_BACKEND >&2; return 99; }}

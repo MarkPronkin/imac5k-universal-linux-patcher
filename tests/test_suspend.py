@@ -1,7 +1,9 @@
-"""Suspend module: all four sleep targets masked, retired idle=poll cleaned up.
+"""Suspend module: all four sleep targets masked, retired idle=poll cleaned up,
+and on Omarchy the hibernation setup removed with omarchy-hibernation-remove.
 
-The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers; the
-Fedora override with a stubbed grubby. Nothing touches the host.
+The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers and a
+stubbed omarchy-hibernation-remove; the Fedora override with a stubbed grubby.
+Nothing touches the host.
 """
 from pathlib import Path
 import re
@@ -54,6 +56,8 @@ class OmarchySuspendTests(unittest.TestCase):
 LIMINE_DEFAULT={tmp}/limine-default
 LIMINE_DROPIN_DIR={tmp}/dropins
 NO_CSTATES_DROPIN={tmp}/dropins/imac5k-no-cstates.conf
+HIBERNATE_HOOK_CONF={tmp}/omarchy_resume.conf
+HIBERNATE_DROPIN={tmp}/dropins/resume.conf
 mkdir -p "$LIMINE_DROPIN_DIR"
 touch "$LIMINE_DEFAULT"
 {env}
@@ -167,6 +171,81 @@ mod_suspend_remove
             "mod_suspend_tier",
             env='printf \'KERNEL_CMDLINE[default]="quiet idle=poll"\n\' > "$LIMINE_DEFAULT"\n')
         self.assertEqual(result.stdout.strip(), "boot", result.stderr)
+
+    def test_hibernation_hook_conf_detects_partial_when_masked(self):
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() { echo masked; }
+printf 'HOOKS+=(resume)\n' > "$HIBERNATE_HOOK_CONF"
+''')
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_hibernation_dropin_alone_detects_partial(self):
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() { echo masked; }
+printf 'KERNEL_CMDLINE[default]+=" resume=/dev/mapper/root resume_offset=1"\n' > "$HIBERNATE_DROPIN"
+''')
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_hibernation_setup_alone_detects_partial(self):
+        # Hibernation configured but nothing masked yet: still not "not-applied".
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() { echo static; }
+printf 'HOOKS+=(resume)\n' > "$HIBERNATE_HOOK_CONF"
+''')
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_tier_boot_while_hibernation_setup_remains(self):
+        result = self.run_module(
+            "mod_suspend_tier",
+            env='printf \'HOOKS+=(resume)\n\' > "$HIBERNATE_HOOK_CONF"\n')
+        self.assertEqual(result.stdout.strip(), "boot", result.stderr)
+
+    def test_apply_removes_hibernation_and_the_leftover_dropin(self):
+        result = self.run_module('''
+printf 'HOOKS+=(resume)\n' > "$HIBERNATE_HOOK_CONF"
+printf 'KERNEL_CMDLINE[default]+=" resume=/dev/mapper/root resume_offset=1"\n' > "$HIBERNATE_DROPIN"
+omarchy-hibernation-remove() { rm -f "$HIBERNATE_HOOK_CONF"; echo OMARCHY-HIBERNATION-REMOVE; }
+mod_suspend_apply
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn("OMARCHY-HIBERNATION-REMOVE", result.stdout)
+        # Omarchy's tool leaves the resume= drop-in; the module removes it and
+        # rebuilds so the parameter leaves the cmdline too.
+        self.assertFalse((Path(result.tmp) / "dropins/resume.conf").exists())
+        self.assertIn("SYNC_BOOT", result.stdout)
+        self.assertIn("VERIFY present= absent=resume=", result.stdout)
+
+    def test_apply_declined_hibernation_removal_keeps_everything(self):
+        # Omarchy's tool exits 0 without touching anything when its gum
+        # confirm is declined; the module must leave the setup alone.
+        result = self.run_module('''
+printf 'HOOKS+=(resume)\n' > "$HIBERNATE_HOOK_CONF"
+printf 'KERNEL_CMDLINE[default]+=" resume=/dev/mapper/root resume_offset=1"\n' > "$HIBERNATE_DROPIN"
+omarchy-hibernation-remove() { echo DECLINED; }
+mod_suspend_apply
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(MASK_ALL, result.stdout)
+        self.assertTrue((Path(result.tmp) / "omarchy_resume.conf").exists())
+        self.assertTrue((Path(result.tmp) / "dropins/resume.conf").exists())
+        self.assertNotIn("SYNC_BOOT", result.stdout)
+
+    def test_apply_without_hibernation_never_calls_the_tool(self):
+        result = self.run_module('''
+omarchy-hibernation-remove() { echo SHOULD-NOT-RUN; }
+mod_suspend_apply
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(MASK_ALL, result.stdout)
+        self.assertNotIn("SHOULD-NOT-RUN", result.stdout)
+        self.assertNotIn("SYNC_BOOT", result.stdout)
 
 
 class FedoraSuspendTests(unittest.TestCase):
