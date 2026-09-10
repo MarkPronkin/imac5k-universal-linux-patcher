@@ -54,6 +54,8 @@ After a kernel update, reboot into the installed kernel before applying or
 promoting a module. The patched module needs to be rebuilt for each new kernel.
 
 The suspend module can remove the retired `idle=poll` parameter through GRUB.
+It also installs the Thunderbolt sleep hook and defaults the cmdline to
+`mem_sleep_default=s2idle` (deep S3 resets on wake on this hardware).
 Its main action still disables sleep; leave it off when sleep works on your
 machine.
 

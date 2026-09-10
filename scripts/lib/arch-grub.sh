@@ -40,6 +40,21 @@ suspend_drop_no_cstates() {
     say "removed stale ${NO_CSTATES_PARAM} from ${GRUB_DEFAULT_FILE} — reboot to restore idle C-states"
 }
 
+# s2idle default through the GRUB cmdline. The edits regenerate grub.cfg
+# themselves, so unlike the Limine versions there is no initramfs rebuild
+# here — same split as suspend_drop_no_cstates above.
+suspend_ensure_s2idle() {
+    grub_cmdline_has "$S2IDLE_PARAM" && return 0
+    grub_cmdline_add "$S2IDLE_PARAM" || return 1
+    verify_cmdline "$S2IDLE_PARAM" '' || return 1
+    say "defaulted suspend to s2idle (deep S3 resets on wake) — reboot for it to take effect"
+}
+suspend_drop_s2idle() {
+    grub_cmdline_has "$S2IDLE_PARAM" || return 0
+    grub_cmdline_remove "$S2IDLE_PARAM" || return 1
+    verify_cmdline '' "$S2IDLE_PARAM"
+}
+
 # The 4K fallback pins eDP-1 to a single-tile mode the stitched driver rejects.
 remove_4k_fallback() { grub_cmdline_remove "$VIDEO_4K"; }
 add_4k_fallback()    { grub_cmdline_add "$VIDEO_4K"; }

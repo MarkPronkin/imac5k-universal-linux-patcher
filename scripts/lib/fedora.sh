@@ -24,10 +24,15 @@ mod_boot_remove() { mod_boot_apply; }
 # plus migration for the retired idle=poll variant: grubby strips the argument
 # from the current kernel's BLS entry.
 mod_suspend_tier() {
-    # Boot tier only while the retired argument is on the GRUB entry.
-    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && echo boot || echo safe
+    # Boot tier while the retired argument is on the GRUB entry or the s2idle
+    # default is missing — applying either rewrites the entry.
+    local entry
+    entry="$(grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null)"
+    grep -q "$NO_CSTATES_PARAM" <<<"$entry" && { echo boot; return; }
+    grep -q "$S2IDLE_PARAM" <<<"$entry" || { echo boot; return; }
+    echo safe
 }
-mod_suspend_desc()  { echo "The suspend hard-hang was a stitch-layer driver bug, fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 9.9.11-test. Suspend is validated only to the pm_test devices stage, so treat it as experimental: a hang still means a power-cycle. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
+mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 9.9.11-test) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume. Deep S3 still resets on wake (firmware), so the module also defaults this kernel's GRUB entry to s2idle and suspend is only expected to work in that mode — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${HIBERNATE_TARGETS[@]}"; do
@@ -37,8 +42,12 @@ mod_suspend_detect() {
     [[ "$(systemctl is-enabled suspend.target 2>/dev/null)" == masked ]] && suspend_blocked=1
     local stale=0
     grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && stale=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale )); then echo applied
-    elif (( masked || suspend_blocked || stale )); then echo partial
+    local hook=0
+    [[ -x $TB_SLEEP_HOOK ]] && hook=1
+    local nos2idle=0
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$S2IDLE_PARAM" || nos2idle=1
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && hook && ! nos2idle )); then echo applied
+    elif (( masked || suspend_blocked || stale || hook )); then echo partial
     else echo not-applied; fi
 }
 fedora_suspend_drop_no_cstates() {
@@ -46,17 +55,32 @@ fedora_suspend_drop_no_cstates() {
     sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$NO_CSTATES_PARAM" || return 1
     say "removed stale ${NO_CSTATES_PARAM} from the GRUB entry"
 }
+fedora_suspend_ensure_s2idle() {
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$S2IDLE_PARAM" && return 0
+    sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --args "$S2IDLE_PARAM" || return 1
+    say "defaulted suspend to s2idle (deep S3 resets on wake) — reboot for it to take effect"
+}
+fedora_suspend_drop_s2idle() {
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$S2IDLE_PARAM" || return 0
+    sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$S2IDLE_PARAM" || return 1
+    say "removed ${S2IDLE_PARAM} from the GRUB entry"
+}
 mod_suspend_apply() {
     fedora_mutable || return 1
     sudo systemctl unmask suspend.target || return 1
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
+    sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
+    say "installed $TB_SLEEP_HOOK (unbinds the Thunderbolt NHI around sleep)"
     fedora_suspend_drop_no_cstates
+    fedora_suspend_ensure_s2idle
 }
 mod_suspend_remove() {
     fedora_mutable || return 1
     sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}"
+    sudo rm -f "$TB_SLEEP_HOOK"
     fedora_suspend_drop_no_cstates
-    say "sleep targets back to stock (suspend and hibernate unmasked)"
+    fedora_suspend_drop_s2idle
+    say "sleep targets back to stock (suspend and hibernate unmasked, Thunderbolt hook and s2idle default removed)"
 }
 audio_target_kernels() {
     # Fedora's explicit kernel-devel preflight targets the running kernel.

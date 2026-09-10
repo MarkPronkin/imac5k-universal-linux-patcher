@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Installed by imac-patcher (`--apply suspend`) to
+# /usr/lib/systemd/system-sleep/; removed by `--remove suspend`.
+#
+# The Thunderbolt NHI (Alpine Ridge, 0000:07:00.0 on the iMac18,3) hangs the
+# kernel in the noirq phase of every system sleep. Measured 2026-09-10: with
+# the driver bound, pm_test=platform freezes solid in both deep and s2idle
+# mode (power-cycle required); with it unbound, every pm_test stage passes
+# (freezer/devices/platform/processors/core). Root-causing the NHI suspend
+# itself is upstream territory; until then, sleep without it.
+#
+# systemd runs every executable in system-sleep/ with $1 = pre|post around
+# each sleep. "pre" unbinds each bound Thunderbolt PCI function and records
+# it; "post" rebinds the recorded ones. The list lives in /run (tmpfs): it
+# survives the sleep but not a reboot, and after a hang-and-power-cycle there
+# is nothing to rebind anyway.
+set -uo pipefail
+
+DRV_DIR=${IMAC_TB_DRV_DIR:-/sys/bus/pci/drivers/thunderbolt}
+STATE=${IMAC_TB_STATE_FILE:-/run/imac-tb-sleep-hook}
+
+log() { printf 'imac-tb-sleep-hook: %s\n' "$*"; }
+
+case "${1:-}" in
+pre)
+    : > "$STATE"
+    for dev in "$DRV_DIR"/0000:*; do
+        [[ -e $dev ]] || continue
+        bdf=${dev##*/}
+        # Subshell so a failed redirection is silenced too.
+        if ( echo "$bdf" > "$DRV_DIR/unbind" ) 2>/dev/null; then
+            printf '%s\n' "$bdf" >> "$STATE"
+            log "unbound $bdf for sleep"
+        else
+            log "could not unbind $bdf — this suspend may hang"
+        fi
+    done
+    ;;
+post)
+    [[ -s $STATE ]] || exit 0
+    while read -r bdf; do
+        if ( echo "$bdf" > "$DRV_DIR/bind" ) 2>/dev/null; then
+            log "rebound $bdf after resume"
+        else
+            log "could not rebind $bdf"
+        fi
+    done < "$STATE"
+    rm -f "$STATE"
+    ;;
+esac
+exit 0

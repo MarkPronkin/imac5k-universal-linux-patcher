@@ -186,7 +186,102 @@ installer's tree; its unstripped `amdgpu.ko` decodes any later oops.
      destroying the tuned sink's node: restarted within 1 s and the default was
      restored. A real resume with the fix is still untested. New tests are in
      `tests/test_audio_jack.py`.
-   - Remaining stages: `platform`, `processors`, `core`.
+   - **`platform`: HANG (2026-09-10 ~15:22), locating the real-suspend
+     failure.** First a real `systemctl suspend` hung: kernel log of that boot
+     ends at `PM: suspend entry (deep)` (48.59 s), no exit, power-cycled. The
+     staged run then reproduced it: run dir `/var/tmp/imac-pm-platform-whe4mksi`
+     (deep; only the pre-suspend files — `started.json` written, never
+     `result.json`). The previous boot's journal ends at the script's kmsg
+     marker (1237.55 s); journald froze before it could flush even
+     `PM: suspend entry`, so the journal says nothing about where it stopped.
+     Since `freezer` and `devices` pass, the hang sits in the platform phase:
+     ACPI `_PTS`/`_GTS` prepare, `dpm_suspend_late`, platform prepare_late,
+     `dpm_suspend_noirq`, or platform prepare_noirq. Booted module was the
+     resume-linkarm build (`22572AED4C06B4EB3C314CC`). **pm_trace rerun: null
+     result — Apple POST wipes it.** With `pm_trace=1` the stage hung again
+     (expected), but the next boot decoded `Magic number: 8:1:0` — user=8 is
+     impossible from any `generate_pm_trace` call site (all pass user=0 or an
+     error code), and the RTC read back `2024-01-01 00:00:16`, i.e. a
+     POST-reset RTC ~16 s old at kernel init. The `memory48: hash matches`
+     line is a coincidence: `sdbm("memory48") % 1009 == 0`, matching the wiped
+     zero field. pm_trace cannot survive a hard power cycle on this firmware.
+     Next: discriminate _PTS vs device late/noirq with
+     `platform --mode s2idle` (s2idle runs the same device walks but never
+     touches the ACPI S3 path); if that passes, a real s2idle suspend is a
+     candidate interim workaround. Fallbacks: lockup-detector→panic→ramoops
+     chain (ramoops is NOT on the current cmdline — would need re-arming),
+     DSDT `_PTS` disassembly, driver-unbind bisection over SSH.
+   - **`platform --mode s2idle`: HANG (2026-09-10 ~15:45).** Run dir
+     `/var/tmp/imac-pm-platform-*` (second one). Verified in source first: for
+     PM_SUSPEND_TO_IDLE every `platform_suspend_*` hook routes to the s2idle
+     ops (`acpi_s2idle_ops`, near no-ops on this non-LPS0 machine) and
+     `suspend_ops` (with `_PTS`) is never called — so the hang is NOT ACPI.
+     It is in `dpm_suspend_late()` or `dpm_suspend_noirq()`: a driver's
+     late/noirq callback or PCI-core default noirq work. Source survey of the
+     machine's drivers: only **thunderbolt** (`nhi_suspend_noirq` →
+     `tb_domain_suspend_noirq`, 0000:07:00.0) and **amdgpu**
+     (`amdgpu_pmops_suspend_noirq`, `amdgpu_acpi_should_gpu_reset` gate,
+     0000:01:00.0) carry noirq callbacks; tg3/brcmfmac/nvme/xhci/sdhci/mei/
+     ahci/i801 have none (PCI-core default noirq still saves state and may
+     set D3 per device). Next: unbind bisection, thunderbolt first (zero
+     collateral): `echo 0000:07:00.0 | sudo tee /sys/bus/pci/drivers/thunderbolt/unbind`
+     then rerun `platform --mode s2idle`; then amdgpu (blind — display dies,
+     read `result.json` after, reboot if the screen stays dead).
+   - **Culprit found: the Thunderbolt NHI noirq suspend.** With
+     `0000:07:00.0` unbound, `platform --mode s2idle` PASSED (run dir
+     `/var/tmp/imac-pm-platform-msnj2ef1`: late suspend complete in 0.6 ms,
+     noirq complete in 222 ms, test delay reached, success 1). Rebound and
+     rerun: HANG again (power cycle). Both directions reproduced on
+     7.2.3-arch1-3 with the linkarm module. NHI is Alpine Ridge (device
+     0x15d2). The hang is inside `nhi_suspend_noirq()`
+     (`tb_domain_suspend_noirq()` / NHI `suspend_noirq` op) — nothing else in
+     the late/noirq walk was implicated. Fix directions: (a) systemd
+     system-sleep hook unbinding the NHI pre-suspend and rebinding on resume
+     (proven mechanism, shippable now); (b) root-cause the NHI suspend on
+     this firmware (upstream Alpine Ridge suspend is a known-troubled area).
+     Still open: `processors` and `core` stages, then a real deep suspend —
+     all with the NHI unbound, since it hangs every test that includes it.
+   - **`processors` (deep, NHI unbound): PASS.** Run dir
+     `/var/tmp/imac-pm-processors-z4c03oym`.
+   - **`core` (deep, NHI unbound): HANG on first attempt, PASS on second**
+     (fresh boot, `hardlockup_panic=1`/`softlockup_panic=1`/`panic=5` armed,
+     run dir `/var/tmp/imac-pm-core-xusmaa06`). The first-attempt hang means
+     something in `arch_suspend_disable_irqs()`+`syscore_suspend()` is
+     flaky, not deterministic — untracked for now.
+   - **Real deep suspend (NHI unbound): S3 ENTERS, WAKE RESETS THE MACHINE.**
+     `echo mem > /sys/power/state` slept for real (screen/fans off); on
+     keypress the machine rebooted itself. No pstore capture despite
+     efi-pstore being registered (`efi_pstore.pstore_disable=0` added to the
+     default cmdline via /etc/default/limine — kept, harmless) — so the reset
+     is probably not a kernel panic: S3 wake is firmware territory on this
+     box (matches the old "Apple S3" suspicion, now with direct evidence).
+     The journal tail was lost in the hard reset. **Next: real s2idle**
+     (never touches S3): unbind NHI, `echo s2idle > /sys/power/mem_sleep`,
+     `echo mem > /sys/power/state`. If it wakes: ship
+     `mem_sleep_default=s2idle` + a system-sleep hook that unbinds/rebinds
+     the NHI around sleep.
+   - Remaining stages: none — all pm_test stages done; only real-mode
+     validation remains.
+   - **Thunderbolt sleep hook: implemented.** `scripts/imac-tb-sleep-hook`
+     (installed to `/usr/lib/systemd/system-sleep/`): `pre` unbinds every
+     bound Thunderbolt PCI function and records it in /run, `post` rebinds.
+     Wired into the `suspend` module of `scripts/imac-patcher` (apply/detect/
+     remove) and the Fedora override in `scripts/lib/fedora.sh`; module
+     descriptions updated. Tests: `tests/test_tb_sleep_hook.py` (6, new) plus
+     harness updates in `tests/test_suspend.py` and `tests/test_arch_grub.py`
+     (TB_SLEEP_HOOK/SCRIPT_DIR stubs); full suite 248/248 OK. Installed on
+     the machine manually (suspend.target deliberately still masked until
+     s2idle is validated — deep S3 sleeps but resets on wake).
+   - **Validated 17:13 through systemd:** `echo s2idle > /sys/power/mem_sleep`,
+     unmasked suspend.target, `systemctl suspend` → entry 17:13:35, exit
+     17:13:54, hook unbound/rebound 0000:07:00.0 (journal). Made permanent
+     with `mem_sleep_default=s2idle` in `/etc/default/limine` + rebuilt UKI;
+     verified after reboot (`[s2idle]`, cmdline). Wake is slow only by the
+     ~6 s SATA link recovery (known from the staged runs).
+   - **Patcher now owns the s2idle default too** (this commit): the suspend
+     module adds `mem_sleep_default=s2idle` on apply (Limine drop-in,
+     GRUB cmdline, grubby on Fedora), requires it for applied/safe, and
+     drops it on remove — without the hook an s2idle suspend would hang.
 
 `notes/imac-pm-stage.py` now finds its test window with a `/dev/kmsg` marker.
 Its timestamp filter missed the delay line because the printk clock runs

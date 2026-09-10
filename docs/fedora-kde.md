@@ -259,7 +259,9 @@ writing it onto the current one.
 want KDE's Power Management UI to reflect the change, disable automatic sleep
 there as well. If the retired `idle=poll` variant left the argument on the
 current kernel's GRUB entry, applying or removing the module strips it with
-grubby. `--remove suspend` lifts the masks.
+grubby. Applying also installs the Thunderbolt sleep hook and defaults the
+entry to `mem_sleep_default=s2idle` (deep S3 resets on wake); `--remove
+suspend` lifts the masks and drops both again.
 
 ---
 
