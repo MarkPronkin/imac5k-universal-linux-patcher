@@ -53,11 +53,11 @@ The preflight offers missing build tools and the correct headers package.
 After a kernel update, reboot into the installed kernel before applying or
 promoting a module. The patched module needs to be rebuilt for each new kernel.
 
-The suspend module can remove the retired `idle=poll` parameter through GRUB.
-It also installs the Thunderbolt sleep hook and defaults the cmdline to
-`mem_sleep_default=s2idle` (deep S3 resets on wake on this hardware).
-Its main action still disables sleep; leave it off when sleep works on your
-machine.
+The suspend module allows suspend and keeps hibernate blocked. Through GRUB it
+adds `mem_sleep_default=s2idle` to the kernel arguments (deep S3 resets on wake
+on this hardware) and removes the retired `idle=poll` parameter if present; it
+also installs the Thunderbolt sleep hook. Read the suspend section of the
+[README](../README.md) before applying it.
 
 ## Test entries
 

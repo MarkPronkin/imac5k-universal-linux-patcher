@@ -210,16 +210,18 @@ says the same at the point it asks for the reboot, and the saved selection in
 `~/.local/state/imac-patcher/kde-color.json` records the panel identity it was
 taken from so `--remove` never restores one panel's setting onto another.
 
-## Suspend module (safe tier; boot tier while retired `idle=poll` config remains)
+## Suspend module (boot tier while its boot config needs changing; safe tier after)
 
-- systemd (`systemctl`) — sleep target masks
-- Omarchy: the Limine/mkinitcpio stack from the boot module, used only when
-  cleaning up a leftover `idle=poll` drop-in (`limine-mkinitcpio`, `objcopy`
-  for verification)
-- Arch-family GRUB: `grub-mkconfig` (package `grub`) — removes the argument
-  from `/etc/default/grub` and verifies the generated kernel entry
-- Fedora: `grubby` — removes a leftover `idle=poll` argument from the current
-  kernel's GRUB entry
+- systemd (`systemctl`) — sleep target masks; runs the Thunderbolt sleep hook
+  the module installs in `/usr/lib/systemd/system-sleep/`
+- Omarchy: the Limine/mkinitcpio stack from the boot module
+  (`limine-mkinitcpio`, `objcopy` for verification) — writes the
+  `mem_sleep_default=s2idle` drop-in and cleans up a leftover `idle=poll` one
+- Arch-family GRUB: `grub-mkconfig` (package `grub`) — adds
+  `mem_sleep_default=s2idle` to `/etc/default/grub`, removes a leftover
+  `idle=poll`, and verifies the generated kernel entry
+- Fedora: `grubby` — adds `mem_sleep_default=s2idle` to the current kernel's
+  GRUB entry and removes a leftover `idle=poll` argument
 
 ## Boot module (boot tier, Omarchy only)
 

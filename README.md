@@ -54,9 +54,10 @@ imac-patcher --remove eq        # undo one module
 The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
 tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
-but blocks hibernate**; select individual modules to skip it. Suspend moves to
-the `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
-hibernation setup is needed. `--apply all` applies every module not yet
+but blocks hibernate**; select individual modules to skip it. Suspend stays in
+the `boot` tier until its `mem_sleep_default=s2idle` kernel argument is set,
+and while cleanup of an old `idle=poll` setting or an Omarchy hibernation setup
+is needed. `--apply all` applies every module not yet
 applied, boot tier included — including the long `5k` kernel-module build,
 which runs last.
 
@@ -137,7 +138,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
-| 😴 **Suspend** | Hibernate hard-hangs the machine; suspend hard-hung until the stitch-layer driver fix. | ⚠️ Suspend allowed (experimental), hibernate blocked — see below |
+| 😴 **Suspend** | Hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, and waking from deep S3 resets the machine. | ⚠️ Suspend allowed in s2idle (experimental), hibernate blocked — see below |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -257,20 +258,24 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm =
 
 ## 😴 Suspend — read this before you try it
 
-**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend *did* hang too, but that turned out to be a stitch-layer driver bug, not Apple firmware: a commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 9.9.11-test (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
+**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in three separate ways, each now fixed or worked around:
 
-The suspend module therefore **unmasks `suspend.target` and keeps the hibernate family masked**:
+- **The stitch-layer driver.** A commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 9.9.11-test (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
+- **The Thunderbolt controller.** Its suspend step freezes the kernel in both sleep modes. The module installs a systemd sleep hook, `/usr/lib/systemd/system-sleep/imac-tb-sleep-hook`, that detaches the controller just before sleep and reattaches it on wake.
+- **Deep sleep (S3).** With the controller detached the machine does enter S3, but waking from it resets the machine. The module therefore makes suspend-to-idle (s2idle) the default with the `mem_sleep_default=s2idle` kernel argument — a `/etc/limine-entry-tool.d/imac5k-s2idle.conf` drop-in on Omarchy (rebuilding the boot image), `/etc/default/grub` on Arch-family GRUB, grubby on Fedora — and switches the running kernel to s2idle straight away, since the argument only counts from the next boot.
+
+The suspend module also **unmasks `suspend.target` and keeps the hibernate family masked**:
 
 ```bash
 sudo systemctl unmask suspend.target
 sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ```
 
-Suspend is validated only up to the `pm_test` devices stage — treat it as experimental, keep the 5K module from 9.9.11-test or newer, and know that a hang still means a power-cycle. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
+Suspend is hardware-verified on iMac18,3 under Omarchy: `systemctl suspend` in s2idle resumed cleanly, with the hook detaching and reattaching the controller. The GRUB and Fedora paths that set the s2idle default are covered by offline tests only. Treat suspend as experimental: keep the 5K module from 9.9.11-test or newer, and know that a hang still means a power-cycle. On the test machine, waking took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hook; writing to `/sys/power/state` by hand bypasses it and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
 
 An earlier release tried `idle=poll`; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
-If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock and deletes the hook and the s2idle default, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
 
 ---
 

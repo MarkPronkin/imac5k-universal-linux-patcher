@@ -255,13 +255,13 @@ The saved selection records the panel identity it came from; `--remove color`
 discards a save that belongs to a panel KDE no longer configures rather than
 writing it onto the current one.
 
-**Sleep** uses the same systemd target masks as the upstream project. If you
-want KDE's Power Management UI to reflect the change, disable automatic sleep
-there as well. If the retired `idle=poll` variant left the argument on the
-current kernel's GRUB entry, applying or removing the module strips it with
-grubby. Applying also installs the Thunderbolt sleep hook and defaults the
-entry to `mem_sleep_default=s2idle` (deep S3 resets on wake); `--remove
-suspend` lifts the masks and drops both again.
+**Sleep** follows the Omarchy module: `suspend.target` unmasked, the hibernate
+family masked, and the Thunderbolt sleep hook installed. Applying also
+defaults the current kernel's GRUB entry to `mem_sleep_default=s2idle` with
+grubby (deep S3 resets on wake) and switches the running kernel to s2idle. If
+the retired `idle=poll` variant left the argument on that entry, applying or
+removing the module strips it. `--remove suspend` lifts the masks and removes
+the hook and the s2idle argument.
 
 ---
 

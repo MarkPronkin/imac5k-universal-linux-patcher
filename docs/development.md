@@ -30,7 +30,8 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_patcher_cli.py`, `test_patcher_driver.py`, `test_patcher_menu.py` | Argument validation, status probe reuse, fresh checks before actions, batch exit codes, and terminal input |
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
-| `test_eq.py`, `test_suspend.py` | Speaker routing/volume restoration and sleep masks with old boot-argument cleanup |
+| `test_eq.py` | Speaker routing and volume restoration |
+| `test_suspend.py`, `test_tb_sleep_hook.py` | Sleep target masks, the s2idle default and old boot-argument cleanup; the Thunderbolt sleep hook against a fake sysfs tree |
 | `test_audio_jack.py` | Headphone jack detection, which streams follow the jack, and the two switching transitions |
 | `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
