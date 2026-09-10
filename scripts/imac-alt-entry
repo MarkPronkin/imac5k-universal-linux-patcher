@@ -50,6 +50,8 @@ check_name() {
 }
 marker() { printf '/Test - %s' "$1"; }
 uki_path() { printf '%s/omarchy_linux-%s.efi' "$UKIDIR" "$1"; }
+# The kernel splits its cmdline on whitespace runs; compare cmdlines that way.
+squash_cmdline() { tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'; }
 
 # Limine >= 10.3.0 loads the FIRST limine.conf in its search order; copies at
 # EFI/limine/ or EFI/BOOT/ shadow the canonical /boot/limine.conf. Remove them.
@@ -309,8 +311,9 @@ add)
 	uki_module "$WORK/uki.efi" "$WORK/inside.ko.zst" || die "no amdgpu module found inside the built UKI"
 	[[ "$(zstd -dcf "$WORK/inside.ko.zst" | b2sum)" == "$(zstd -dcf "$MOD" | b2sum)" ]] \
 		|| die "module inside the UKI differs from the one given — refusing to install"
-	emb="$(objcopy -O binary --only-section=.cmdline "$WORK/uki.efi" /dev/stdout 2>/dev/null | tr -d '\0' | sed 's/[[:space:]]*$//')"
-	[[ $emb == "$CMDLINE" ]] || die "embedded cmdline mismatch"
+	# mkinitcpio 41 squeezes runs of spaces when it embeds the cmdline.
+	emb="$(objcopy -O binary --only-section=.cmdline "$WORK/uki.efi" /dev/stdout 2>/dev/null | tr -d '\0' | squash_cmdline)"
+	[[ $emb == "$(printf '%s' "$CMDLINE" | squash_cmdline)" ]] || die "embedded cmdline mismatch"
 
 	mkdir -p "$UKIDIR"; install -m700 "$WORK/uki.efi" "$UKI"; sync
 	remove_entry "$NAME"; add_entry "$NAME" "$UKI" "$CMDLINE" "$(basename "$SRC")"
