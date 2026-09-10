@@ -37,10 +37,12 @@ The script rebuilds **only the amdgpu module** for your *running* kernel and
 swaps it in (stock module backed up first). Re-run it after a kernel update.
 
 Since 2026-09-07 the installer builds the **lean pair** (`imac5k-lean-core-7.2.x.patch`
-+ `imac5k-stitch-layer-7.x.patch`), and since 2026-09-08 the default stack also
++ `imac5k-stitch-layer-7.x.patch`), since 2026-09-08 the default stack also
 includes the post-commit link-health recovery
 (`5k-going-down-stop-resync.patch` + `5k-post-commit-link-recovery.patch`), the
-fix for the stretched-5K boot. The verbose stack (full-stack patch + the
+fix for the stretched-5K boot, and since 2026-09-10 the three suspend fixes
+(`5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`,
+`5k-resume-arm-link-health.patch`, below). The verbose stack (full-stack patch + the
 `5k-*.patch` follow-ups) is still available: `sudo env IMAC5K_STACK=verbose
 ../scripts/patch-imac5k-amdgpu.sh`.
 
@@ -136,6 +138,9 @@ patch -p1 < patches/imac5k-lean-core-7.2.x.patch     # core (+ genlock + reboot 
 patch -p1 < patches/imac5k-stitch-layer-7.x.patch    # Hyprland stitch (+ early modeset, resync)
 patch -p1 < patches/5k-going-down-stop-resync.patch  # halt the resync worker on shutdown
 patch -p1 < patches/5k-post-commit-link-recovery.patch  # stretched-5K boot fix
+patch -p1 < patches/5k-logical-modeset-guard.patch      # stitch-layer BUG_ON fix
+patch -p1 < patches/5k-resume-drop-cached-peer.patch    # stale peer on resume
+patch -p1 < patches/5k-resume-arm-link-health.patch     # link-health after a clean resume
 ```
 
 The last two apply on top of either stack: the lean pair and the full verbose
@@ -155,6 +160,80 @@ entry (full-width password prompt, seam fine, straight Apple logo on the warm
 reboot out of it). The verbose module is kept as the `/Test - 5K-verbose-fallback`
 entry and as `amdgpu.ko.zst.prev-promote` beside the installed module; drop
 both once the lean default has run for a few days.
+
+## Crash fix: `5k-logical-modeset-guard.patch`
+
+**Status: promoted into both installers on 2026-09-10** after passing
+`pm_test` freezer and devices cycles on the `/Test - 5K-modeset-guard` entry.
+
+The stitch layer's "accept logical root modeset without reprogramming" shortcut
+(`amdgpu_dm_tiled_stitch_has_live_root_stream()`, identical in both stacks)
+judges the root stream live from the *old* CRTC state. By the time it runs, the
+disable pass of the same atomic check has already removed that stream from the
+new state, so every time the shortcut fires the kernel hits
+`BUG_ON(dm_new_crtc_state->stream == NULL)` in `dm_update_crtc_state()`. The
+oops ends the compositor's commit with the display locks held: the screen
+freezes for good, which looks like a hard hang.
+
+It fires on any commit that marks the lit panel `mode_changed` while leaving it
+on, such as HDR output metadata switched on or off, or a colorspace or
+content-type change. On 2026-09-10 it fired right after a `pm_test` freezer
+cycle, when Hyprland's first commit added an SDR-EOTF HDR metadata blob:
+
+```
+TILED_STITCH: accept logical root modeset without reprogramming connector=eDP-1 crtc=71 ...
+kernel BUG at ../display/amdgpu_dm/amdgpu_dm.c:13678!
+```
+
+The patch lets the shortcut keep only a stream the new state still holds, so
+those commits take mainline's full remove-and-add modeset, the path every boot
+already takes. It applies last, at `--fuzz=0`, on top of either full stack on
+7.2.3. Suspend testing needs it first: the only staged suspend test so far
+ended in this crash.
+
+## Resume fix: `5k-resume-drop-cached-peer.patch`
+
+**Status: promoted into both installers on 2026-09-10** after passing
+`pm_test` freezer and devices cycles on the `/Test - 5K-resume-peer` entry.
+It is built on top of `5k-logical-modeset-guard.patch`.
+
+`dm_destroy_cached_state()` releases the cached root stream before the resume
+commit, but not the stitched CRTC's `stream_peer`. The resume commit then sees
+the stale peer, skips creating a new one, and the plane split fails:
+
+```
+dc_state_add_plane: Existing stream not found; failed to attach surface!
+```
+
+`drm_atomic_helper_resume()` returns an error that `dm_resume()` ignores, and
+the stale peer's reference leaks. The panel only came back because a later
+commit took the normal path. The patch releases the peer next to the root
+stream.
+
+On the `/Test - 5K-resume-peer` entry, a `pm_test=devices` (deep) cycle
+resumed with every device callback returning 0. The resume commit itself added
+a fresh peer, with no `Existing stream not found`, and the panel came back
+normal.
+
+## Resume follow-up: `5k-resume-arm-link-health.patch`
+
+**Status: promoted into both installers on 2026-09-10** after a passing
+`pm_test=devices` cycle on the `/Test - 5K-resume-linkarm` entry. It stacks on
+`5k-post-commit-link-recovery.patch` and `5k-resume-drop-cached-peer.patch`.
+
+With the resume commit working, a resumed panel was never link-health checked
+or timing-synced. Both are queued at the end of each tiled modeset commit, and
+that queue skips commits made while `adev->in_suspend` is set, which includes
+the resume commit. The patch notes such a modeset, and a new DM `.complete`
+hook arms both once `amdgpu_device_resume()` has cleared `in_suspend`.
+
+On the `/Test - 5K-resume-linkarm` entry, a `pm_test=devices` (deep) cycle
+armed the check from the new hook right after `resume of devices complete`.
+Its first pass was healthy before `PM: suspend exit`. Hyprland's first commit
+after resume (an HDR metadata change) then forced a full tiled modeset, which
+re-armed the check, and that run reached `link-health PASS` with 0 recoveries.
+On this desktop a post-resume modeset always follows. So the resume-armed
+run's own 8/8 PASS, with no intervening modeset, has not been observed.
 
 ## Booting any build from its own entry: `scripts/imac-alt-entry`
 

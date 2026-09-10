@@ -1,0 +1,41 @@
+iMac 5K: drop the cached peer stream before the resume commit
+
+dm_destroy_cached_state() releases every cached CRTC's stream and every
+cached plane's dc_state (and dc_state_peer) so that the resume commit's
+atomic check builds fresh ones. It left the stitched root CRTC's stream_peer
+in place. The resume commit starts from the suspended state, whose CRTC has no
+stream, so the disable pass never runs and the stale peer survives into the
+enable pass. There the stitch gate sees stream_peer already set and skips
+creating a new peer, the root is added to a fresh DC context without it, and
+the plane split then fails:
+
+  dc_state_add_plane: Existing stream not found; failed to attach surface!
+
+drm_atomic_helper_resume() returns -EINVAL, which dm_resume() ignores, and
+the cached peer stream's reference leaks. The panel only came back because a
+later hotplug commit, built from the suspended state, took the normal path.
+
+Seen on iMac18,3, kernel 7.2.3, lean stack + 5k-logical-modeset-guard,
+2026-09-10: pm_test=devices (deep). This is the first devices-level resume in
+the retained journal, so it is not tied to the guard, which only acts when the
+old state still holds a stream.
+
+Release the peer next to the root stream, as the plane loop already does for
+dc_state_peer.
+
+Applies on top of either stack: this loop is mainline code in both.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -4240,6 +4240,11 @@
+ 			dc_stream_release(dm_new_crtc_state->stream);
+ 			dm_new_crtc_state->stream = NULL;
+ 		}
++		/* tiled stitch: release the cached peer (right-tile) stream too. */
++		if (dm_new_crtc_state->stream_peer) {
++			dc_stream_release(dm_new_crtc_state->stream_peer);
++			dm_new_crtc_state->stream_peer = NULL;
++		}
+ 		dm_new_crtc_state->base.color_mgmt_changed = true;
+ 	}
+

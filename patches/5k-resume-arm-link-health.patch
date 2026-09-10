@@ -1,0 +1,95 @@
+iMac 5K: arm the link-health check after a clean resume
+
+The post-commit link-health check and the tile timing sync are queued by
+amdgpu_dm_queue_tiled_resync() at the end of every commit that modesets the
+stitched root. It skips commits made while adev->in_suspend is set. The
+resume commit is one of them: dm_resume() replays the cached state from
+amdgpu_device_ip_resume(), and amdgpu_device_resume() clears in_suspend only
+at its end.
+
+Once 5k-resume-drop-cached-peer.patch made the resume commit succeed, no
+later modeset followed it, so a resumed panel was never checked or
+timing-synced. Before that fix, the failed resume commit forced a post-exit
+modeset, and that modeset armed the check.
+
+Seen on iMac18,3, kernel 7.2.3, lean stack + guard + resume-peer, 2026-09-10:
+pm_test=devices (deep). The resume commit logged "added peer slave-tile
+stream" and no "link-health armed" line followed for the rest of the boot.
+
+When the only reason for the skip is in_suspend, note the tiled modeset.
+DM's new .complete hook runs from amdgpu_pmops_complete() after
+amdgpu_device_resume() has returned, and arms the check and the sync then.
+The PM core calls .complete on every resume transition, including failed
+ones. If in_suspend is still set, the queue skips the modeset again and
+notes it again, so nothing runs while the device is down.
+
+Applies on top of 5k-post-commit-link-recovery.patch (which adds the
+link-health check) and 5k-resume-drop-cached-peer.patch.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+@@ -650,6 +650,8 @@
+ 	u8 tiled_link_recoveries;
+ 	bool tiled_sync_pending;
+ 	bool tiled_resync_stopping;
++	/* A tiled modeset ran while in_suspend was set; dm_complete() arms it. */
++	bool tiled_resume_modeset;
+ 	bool disable_hpd_irq;
+ 	bool dmcub_trace_event_en;
+ 	/**
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -2794,6 +2794,7 @@
+ 	adev->dm.tiled_link_checks = 0;
+ 	adev->dm.tiled_link_recoveries = 0;
+ 	adev->dm.tiled_sync_pending = false;
++	adev->dm.tiled_resume_modeset = false;
+ 	drm_info(adev_to_drm(adev),
+ 		 "APPLE5K: link-health build=post-commit-recovery checks=%u recoveries=%u delay_ms=%u+%u\n",
+ 		 APPLE5K_LINK_CHECKS, APPLE5K_LINK_RECOVERIES,
+@@ -4791,6 +4792,26 @@
+  * The functions to do so are provided as hooks in &struct amd_ip_funcs.
+  */
+
++/*
++ * The resume commit runs from dm_resume() while adev->in_suspend is still set,
++ * so amdgpu_dm_queue_tiled_resync() only noted its tiled modeset. The PM core
++ * calls .complete after amdgpu_device_resume() has cleared in_suspend: arm the
++ * link-health check and the tile timing sync now.
++ */
++static void dm_complete(struct amdgpu_ip_block *ip_block)
++{
++	struct amdgpu_device *adev = ip_block->adev;
++	bool modeset;
++
++	mutex_lock(&adev->dm.dc_lock);
++	modeset = adev->dm.tiled_resume_modeset;
++	adev->dm.tiled_resume_modeset = false;
++	mutex_unlock(&adev->dm.dc_lock);
++
++	if (modeset)
++		amdgpu_dm_queue_tiled_resync(adev, true);
++}
++
+ static const struct amd_ip_funcs amdgpu_dm_funcs = {
+ 	.name = "dm",
+ 	.early_init = dm_early_init,
+@@ -4802,6 +4823,7 @@
+ 	.hw_fini = dm_hw_fini,
+ 	.suspend = dm_suspend,
+ 	.resume = dm_resume,
++	.complete = dm_complete,
+ 	.is_idle = dm_is_idle,
+ 	.wait_for_idle = dm_wait_for_idle,
+ 	.check_soft_reset = dm_check_soft_reset,
+@@ -15693,6 +15715,10 @@
+ 		/* Ordinary plane commits must not postpone an already armed check. */
+ 		queue_delayed_work(system_wq, &adev->dm.tiled_resync_work,
+ 				   msecs_to_jiffies(APPLE5K_LINK_SETTLE_MS));
++	} else if (modeset && adev->in_suspend && !adev->dm.tiled_resync_stopping &&
++		   !adev->dm.dc->apple_5k_going_down && !amdgpu_in_reset(adev)) {
++		/* The resume commit. dm_complete() arms it once in_suspend clears. */
++		adev->dm.tiled_resume_modeset = true;
+ 	}
+ 	mutex_unlock(&adev->dm.dc_lock);
+ }

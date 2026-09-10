@@ -50,18 +50,23 @@ fi
 # stack minus its logging -- plus the post-commit link-health recovery that
 # repairs a tile losing DP link lock during the boot modeset (the "stretched
 # 5K desktop" fix, promoted to the default on 2026-09-08 after a passing boot).
+# Since 2026-09-10 both stacks also carry the three suspend fixes: the
+# logical-modeset guard (a stitch-layer BUG_ON on commits such as HDR metadata
+# changes), the cached-peer drop (a stale stream_peer failing the resume
+# commit), and arming link-health after a clean resume. All three passed
+# pm_test freezer and devices cycles in test entries.
 # "verbose": the original full-stack patch plus the follow-up patches, kept as
 # a fallback (IMAC5K_STACK=verbose).
 IMAC5K_STACK="${IMAC5K_STACK:-lean}"
 case "$IMAC5K_STACK" in
 lean)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-lean-core-7.2.x.patch"
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch" "${SCRIPT_DIR}/../patches/5k-logical-modeset-guard.patch" "${SCRIPT_DIR}/../patches/5k-resume-drop-cached-peer.patch" "${SCRIPT_DIR}/../patches/5k-resume-arm-link-health.patch")
 	;;
 verbose)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-amdgpu-7.2.2.patch"
 	# Applied in order, on top of PATCH_FILE. Each must apply cleanly or we abort.
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-verify-retrain.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-preserve-lock.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/5k-early-modeset.patch" "${SCRIPT_DIR}/../patches/5k-genlock-deterministic.patch" "${SCRIPT_DIR}/../patches/5k-genlock-settle-resync.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear.patch" "${SCRIPT_DIR}/../patches/5k-latch-clear-going-down-only.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-verify-retrain.patch" "${SCRIPT_DIR}/../patches/5k-slave-link-preserve-lock.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch" "${SCRIPT_DIR}/../patches/5k-logical-modeset-guard.patch" "${SCRIPT_DIR}/../patches/5k-resume-drop-cached-peer.patch" "${SCRIPT_DIR}/../patches/5k-resume-arm-link-health.patch")
 	;;
 *) echo "IMAC5K_STACK must be 'lean' or 'verbose'" >&2; exit 1 ;;
 esac

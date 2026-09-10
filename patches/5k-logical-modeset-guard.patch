@@ -1,0 +1,51 @@
+iMac 5K: never keep a root stream the disable pass already removed
+
+amdgpu_dm_tiled_stitch_has_live_root_stream() lets the enable pass of
+dm_update_crtc_state() accept a stitched-root modeset without reprogramming
+("accept logical root modeset"). It judged the stream live from the old CRTC
+state. But every flag that forces a modeset, mode_changed included, is settled
+before the disable pass, and that pass removes such a CRTC's stream from the
+DC context and clears it from the new state. Whenever the helper said yes, the
+enable pass skipped the re-add with no stream left and hit
+BUG_ON(dm_new_crtc_state->stream == NULL): an oops in the compositor's atomic
+ioctl with the modeset locks held, which freezes the display for good.
+
+Seen on iMac18,3, kernel 7.2.3, lean stack, 2026-09-10: after a pm_test
+freezer cycle, Hyprland's first commit changed the HDR output metadata (none
+to an SDR-EOTF blob), which amdgpu_dm_connector_atomic_check() turns into
+mode_changed. Any such commit on the lit panel takes the same path: HDR
+metadata on or off, or a colorspace or content-type change.
+
+Require the new state to still hold the old stream. Because the removal always
+comes first, such commits now take the full remove-and-add modeset that
+mainline performs and every boot already exercises; the shortcut no longer
+fires. Really keeping the stream would need the disable pass to skip the
+removal under the same condition.
+
+Applies on top of either stack: the helper is identical in both.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -297,10 +297,22 @@
+ 		const struct dm_crtc_state *dm_old_crtc_state,
+ 		const struct drm_crtc_state *new_crtc_state)
+ {
++	const struct dm_crtc_state *dm_new_crtc_state =
++		container_of_const(new_crtc_state, struct dm_crtc_state, base);
++
+ 	if (!aconnector || !dm_old_crtc_state || !dm_old_crtc_state->stream ||
+ 	    !new_crtc_state->active || !new_crtc_state->mode_changed)
+ 		return false;
+ 
++	/*
++	 * The disable pass of this atomic check has already removed the stream
++	 * of every CRTC that needs a modeset and cleared it from the new state.
++	 * Only a stream the new state still holds can be kept: skipping the
++	 * re-add of a removed one reaches BUG_ON(!stream) after skip_modeset.
++	 */
++	if (dm_new_crtc_state->stream != dm_old_crtc_state->stream)
++		return false;
++
+ 	return amdgpu_dm_link_is_tiled_stitch_root(aconnector->dc_link) &&
+ 	       amdgpu_dm_link_is_tiled_stitch_root(dm_old_crtc_state->stream->link);
+ }
