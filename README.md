@@ -53,9 +53,10 @@ imac-patcher --remove eq        # undo one module
 
 The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
-tier. Use `safe` by itself. It can include **`suspend`, which disables sleep**;
-select individual modules if sleep works on your machine. Suspend moves to the
-`boot` tier while cleanup of an old `idle=poll` setting is needed.
+tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
+but blocks hibernate**; select individual modules to skip it. Suspend moves to
+the `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
+hibernation setup is needed.
 
 Commands check all arguments before running any module. Exit status is `0` for
 success or a skipped operation, `1` for a failed operation, and `2` for invalid
@@ -91,9 +92,9 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the six hardware/system modules. The suspend module **disables sleep**, rather than repairing it.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the six hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|---|---|
 | iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
@@ -104,13 +105,13 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Leave block-sleep unselected if suspend works on your model.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 9.9.11-test or newer.
 
 ### 🐧 Distributions
 
 Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Block sleep (`suspend`) | Boot repair (`boot`) |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
 | **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ✅ **Verified workaround** | ➖ N/A on GRUB |
@@ -134,7 +135,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
-| 😴 **Suspend** | Hard-hangs the machine every time (Apple firmware ACPI issue). | ⚠️ Masked off — see below |
+| 😴 **Suspend** | Hibernate hard-hangs the machine; suspend hard-hung until the stitch-layer driver fix. | ⚠️ Suspend allowed (experimental), hibernate blocked — see below |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -254,17 +255,20 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm =
 
 ## 😴 Suspend — read this before you try it
 
-Suspend and hibernate **hard-hang this machine, every time**. This is an Apple firmware ACPI issue, not something a kernel parameter fixes; sleep mode, the display override, GPU power states and `idle=poll` were each ruled out by testing. Recovery is a hard power-cycle.
+**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend *did* hang too, but that turned out to be a stitch-layer driver bug, not Apple firmware: a commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 9.9.11-test (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
 
-The patcher masks the sleep targets so nothing triggers them by accident:
+The suspend module therefore **unmasks `suspend.target` and keeps the hibernate family masked**:
 
 ```bash
-sudo systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+sudo systemctl unmask suspend.target
+sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ```
 
-An earlier release tried `idle=poll` instead; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
+Suspend is validated only up to the `pm_test` devices stage — treat it as experimental, keep the 5K module from 9.9.11-test or newer, and know that a hang still means a power-cycle. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
 
-If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — hibernating hangs exactly like suspending, and zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module re-enables sleep but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+An earlier release tried `idle=poll`; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
+
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
 
 ---
 

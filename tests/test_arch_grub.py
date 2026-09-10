@@ -22,13 +22,13 @@ class ArchGrubTests(unittest.TestCase):
 SCRIPT_DIR="{ROOT / 'scripts'}"
 NO_CSTATES_PARAM=idle=poll
 VIDEO_4K='video=eDP-1:3840x2160@60e'
-SLEEP_TARGETS=(suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
+HIBERNATE_TARGETS=(hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
 sudo() {{ "$@"; }}
 mkinitcpio() {{ printf 'mkinitcpio %s\\n' "$*" >> "$GRUB_CALLS"; }}
 limine-mkinitcpio() {{ echo WRONG_BACKEND >&2; return 99; }}
-systemctl() {{ if [[ $1 == is-enabled ]]; then echo masked; else echo "systemctl $*"; fi; }}
+systemctl() {{ if [[ $1 == is-enabled ]]; then if [[ $2 == suspend.target ]]; then echo static; else echo masked; fi; else echo "systemctl $*"; fi; }}
 source "$SCRIPT_DIR/lib/arch-grub.sh"
 ''' + code)
 
@@ -51,7 +51,8 @@ source "$SCRIPT_DIR/lib/arch-grub.sh"
         result = self.run_backend("mod_suspend_tier; mod_suspend_detect; mod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines()[:2], ["boot", "partial"])
-        self.assertIn("systemctl mask suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target", result.stdout)
+        self.assertIn("systemctl unmask suspend.target", result.stdout)
+        self.assertIn("systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target", result.stdout)
         self.assertNotIn("idle=poll", self.default.read_text())
         self.assertIn("grub-mkconfig", self.mkconfig_calls())
         self.assertNotIn("mkinitcpio", self.mkconfig_calls())

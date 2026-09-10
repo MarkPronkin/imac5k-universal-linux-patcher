@@ -1,5 +1,6 @@
-"""Suspend module: all four sleep targets masked, retired idle=poll cleaned up,
-and on Omarchy the hibernation setup removed with omarchy-hibernation-remove.
+"""Suspend module: suspend.target unmasked, the hibernate family masked, the
+retired idle=poll cleaned up, and on Omarchy the hibernation setup removed with
+omarchy-hibernation-remove.
 
 The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers and a
 stubbed omarchy-hibernation-remove; the Fedora override with a stubbed grubby.
@@ -16,10 +17,11 @@ PATCHER = (ROOT / "scripts/imac-patcher").read_text()
 FEDORA = (ROOT / "scripts/lib/fedora.sh").read_text()
 
 CONSTS = "\n".join(line for line in PATCHER.splitlines()
-                   if re.match(r"^(SLEEP_TARGETS|NO_CSTATES_PARAM)=", line))
+                   if re.match(r"^(HIBERNATE_TARGETS|NO_CSTATES_PARAM)=", line))
 
-MASK_ALL = ("SYSTEMCTL mask suspend.target hibernate.target"
-            " hybrid-sleep.target suspend-then-hibernate.target")
+UNMASK_SUSPEND = "SYSTEMCTL unmask suspend.target"
+MASK_HIBERNATE = ("SYSTEMCTL mask hibernate.target"
+                  " hybrid-sleep.target suspend-then-hibernate.target")
 UNMASK_ALL = ("SYSTEMCTL unmask suspend.target hibernate.target"
               " hybrid-sleep.target suspend-then-hibernate.target")
 
@@ -67,11 +69,25 @@ touch "$LIMINE_DEFAULT"
         result.tmp = tmp
         return result
 
-    def test_all_masked_detects_applied(self):
+    def test_suspend_open_and_hibernate_masked_detects_applied(self):
+        result = self.run_module(
+            "mod_suspend_detect",
+            env='''
+systemctl() {
+    case "$2" in
+        suspend.target) echo static ;;
+        *) echo masked ;;
+    esac
+}
+''')
+        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+
+    def test_all_four_masked_detects_partial(self):
+        # The old block-everything state: suspend must be unmasked too.
         result = self.run_module(
             "mod_suspend_detect",
             env='systemctl() { echo masked; }\n')
-        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
 
     def test_stale_idle_poll_dropin_detects_partial(self):
         # All four targets masked, but the retired drop-in is still there.
@@ -98,7 +114,7 @@ printf 'KERNEL_CMDLINE[default]="quiet idle=poll"\n' > "$LIMINE_DEFAULT"
             env='''
 systemctl() {
     case "$2" in
-        suspend.target) echo static ;;
+        hibernate.target) echo static ;;
         *) echo masked ;;
     esac
 }
@@ -111,10 +127,11 @@ systemctl() {
             env='systemctl() { echo static; }\n')
         self.assertEqual(result.stdout.strip(), "not-applied", result.stderr)
 
-    def test_apply_masks_all_four(self):
+    def test_apply_unmasks_suspend_and_masks_hibernate(self):
         result = self.run_module("mod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         # No stale idle=poll: boot config stays untouched.
         self.assertNotIn("SYNC_BOOT", result.stdout)
 
@@ -124,7 +141,8 @@ printf 'KERNEL_CMDLINE[default]+=" idle=poll"\n' > "$NO_CSTATES_DROPIN"
 mod_suspend_apply
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertFalse((Path(result.tmp) / "dropins/imac5k-no-cstates.conf").exists())
         self.assertIn("SYNC_BOOT", result.stdout)
         self.assertIn("VERIFY present= absent=idle=poll", result.stdout)
@@ -214,7 +232,8 @@ omarchy-hibernation-remove() { rm -f "$HIBERNATE_HOOK_CONF"; echo OMARCHY-HIBERN
 mod_suspend_apply
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertIn("OMARCHY-HIBERNATION-REMOVE", result.stdout)
         # Omarchy's tool leaves the resume= drop-in; the module removes it and
         # rebuilds so the parameter leaves the cmdline too.
@@ -232,7 +251,8 @@ omarchy-hibernation-remove() { echo DECLINED; }
 mod_suspend_apply
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertTrue((Path(result.tmp) / "omarchy_resume.conf").exists())
         self.assertTrue((Path(result.tmp) / "dropins/resume.conf").exists())
         self.assertNotIn("SYNC_BOOT", result.stdout)
@@ -243,7 +263,8 @@ omarchy-hibernation-remove() { echo SHOULD-NOT-RUN; }
 mod_suspend_apply
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertNotIn("SHOULD-NOT-RUN", result.stdout)
         self.assertNotIn("SYNC_BOOT", result.stdout)
 
@@ -262,10 +283,21 @@ grubby() {{
         return subprocess.run(["bash", "-c", prelude + code],
                               text=True, capture_output=True, timeout=10)
 
-    def test_all_masked_detects_applied(self):
+    def test_suspend_open_and_hibernate_masked_detects_applied(self):
+        result = self.run_module('''
+systemctl() {
+    case "$2" in
+        suspend.target) echo static ;;
+        *) echo masked ;;
+    esac
+}
+mod_suspend_detect''')
+        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+
+    def test_all_four_masked_detects_partial(self):
         result = self.run_module(
             "systemctl() { echo masked; }; mod_suspend_detect")
-        self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
 
     def test_stale_idle_poll_arg_detects_partial(self):
         result = self.run_module(
@@ -273,16 +305,18 @@ grubby() {{
             grubby_has_arg=True)
         self.assertEqual(result.stdout.strip(), "partial", result.stderr)
 
-    def test_apply_masks_all_four_without_stale_arg(self):
+    def test_apply_unmasks_suspend_and_masks_hibernate_without_stale_arg(self):
         result = self.run_module("mod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertNotIn("--update-kernel", result.stdout)
 
     def test_apply_removes_stale_idle_poll_arg(self):
         result = self.run_module("mod_suspend_apply", grubby_has_arg=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(MASK_ALL, result.stdout)
+        self.assertIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn(MASK_HIBERNATE, result.stdout)
         self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --remove-args idle=poll",
                       result.stdout)
         self.assertNotIn("--args idle=poll", result.stdout)

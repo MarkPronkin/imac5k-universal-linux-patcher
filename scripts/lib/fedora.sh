@@ -27,16 +27,18 @@ mod_suspend_tier() {
     # Boot tier only while the retired argument is on the GRUB entry.
     grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && echo boot || echo safe
 }
-mod_suspend_desc()  { echo "Suspend and hibernate hard-hang this machine, every time — recovery is a hard power-cycle, and idle=poll does not rescue it. Masks all four sleep targets so nothing triggers them. Also removes the retired idle=poll argument from this kernel's GRUB entry if present. Leave this off if sleep works on your model."; }
+mod_suspend_desc()  { echo "The suspend hard-hang was a stitch-layer driver bug, fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 9.9.11-test. Suspend is validated only to the pm_test devices stage, so treat it as experimental: a hang still means a power-cycle. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
 mod_suspend_detect() {
     local masked=0
-    for t in "${SLEEP_TARGETS[@]}"; do
+    for t in "${HIBERNATE_TARGETS[@]}"; do
         [[ "$(systemctl is-enabled "$t" 2>/dev/null)" == masked ]] && (( masked++ ))
     done
+    local suspend_blocked=0
+    [[ "$(systemctl is-enabled suspend.target 2>/dev/null)" == masked ]] && suspend_blocked=1
     local stale=0
     grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && stale=1
-    if (( masked == ${#SLEEP_TARGETS[@]} && ! stale )); then echo applied
-    elif (( masked || stale )); then echo partial
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale )); then echo applied
+    elif (( masked || suspend_blocked || stale )); then echo partial
     else echo not-applied; fi
 }
 fedora_suspend_drop_no_cstates() {
@@ -46,14 +48,15 @@ fedora_suspend_drop_no_cstates() {
 }
 mod_suspend_apply() {
     fedora_mutable || return 1
-    sudo systemctl mask "${SLEEP_TARGETS[@]}" || return 1
+    sudo systemctl unmask suspend.target || return 1
+    sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
     fedora_suspend_drop_no_cstates
 }
 mod_suspend_remove() {
     fedora_mutable || return 1
-    sudo systemctl unmask "${SLEEP_TARGETS[@]}"
+    sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}"
     fedora_suspend_drop_no_cstates
-    say "sleep re-enabled"
+    say "sleep targets back to stock (suspend and hibernate unmasked)"
 }
 audio_target_kernels() {
     # Fedora's explicit kernel-devel preflight targets the running kernel.
