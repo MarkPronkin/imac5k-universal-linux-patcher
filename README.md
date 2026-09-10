@@ -54,10 +54,9 @@ imac-patcher --remove eq        # undo one module
 The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
 tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
-but blocks hibernate**; select individual modules to skip it. Suspend stays in
-the `boot` tier until its `mem_sleep_default=s2idle` kernel argument is set,
-and while cleanup of an old `idle=poll` setting or an Omarchy hibernation setup
-is needed. `--apply all` applies every module not yet
+but blocks hibernate**; select individual modules to skip it. Suspend moves to
+the `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
+hibernation setup is needed. `--apply all` applies every module not yet
 applied, boot tier included — including the long `5k` kernel-module build,
 which runs last.
 
@@ -108,7 +107,7 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 9.9.11-test or newer.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
 
 ### 🐧 Distributions
 
@@ -117,7 +116,7 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 | Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
 |---|---|---|---|---|---|---|
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
-| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified on GRUB | ➖ N/A on GRUB |
+| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB |
 | **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
 | **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
@@ -260,9 +259,9 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm =
 
 **Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in three separate ways, each now fixed or worked around:
 
-- **The stitch-layer driver.** A commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 9.9.11-test (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
+- **The stitch-layer driver.** A commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 0.1.91-alpha (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
 - **The Thunderbolt controller.** Its suspend step freezes the kernel in both sleep modes. The module installs a systemd sleep hook, `/usr/lib/systemd/system-sleep/imac-tb-sleep-hook`, that detaches the controller just before sleep and reattaches it on wake.
-- **Deep sleep (S3).** With the controller detached the machine does enter S3, but waking from it resets the machine. The module therefore makes suspend-to-idle (s2idle) the default with the `mem_sleep_default=s2idle` kernel argument — a `/etc/limine-entry-tool.d/imac5k-s2idle.conf` drop-in on Omarchy (rebuilding the boot image), `/etc/default/grub` on Arch-family GRUB, grubby on Fedora — and switches the running kernel to s2idle straight away, since the argument only counts from the next boot.
+- **Deep sleep (S3).** With the controller detached the machine does enter S3, but waking from it resets the machine. The module therefore has systemd suspend to idle (s2idle) instead: a drop-in, `/etc/systemd/sleep.conf.d/imac5k-s2idle.conf`, sets `MemorySleepMode=s2idle`, which systemd writes to `/sys/power/mem_sleep` before every suspend. It needs systemd 256 or newer (the module refuses older versions), leaves the boot configuration alone and takes effect at once.
 
 The suspend module also **unmasks `suspend.target` and keeps the hibernate family masked**:
 
@@ -271,11 +270,11 @@ sudo systemctl unmask suspend.target
 sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ```
 
-Suspend is hardware-verified on iMac18,3 under Omarchy: `systemctl suspend` in s2idle resumed cleanly, with the hook detaching and reattaching the controller. The GRUB and Fedora paths that set the s2idle default are covered by offline tests only. Treat suspend as experimental: keep the 5K module from 9.9.11-test or newer, and know that a hang still means a power-cycle. On the test machine, waking took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hook; writing to `/sys/power/state` by hand bypasses it and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
+Suspend in s2idle with the hook is hardware-verified on iMac18,3 under Omarchy: `systemctl suspend` resumed cleanly, with the hook detaching and reattaching the controller. That run selected s2idle on the kernel command line; selecting it through the systemd drop-in is covered by offline tests only so far, and CachyOS and Fedora are untested. Treat suspend as experimental: keep the 5K module from 0.1.91-alpha or newer, and know that a hang still means a power-cycle. On the test machine, waking took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hook and switch to s2idle; writing to `/sys/power/state` by hand bypasses both and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
 
 An earlier release tried `idle=poll`; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
-If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock and deletes the hook and the s2idle default, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock and deletes the hook and the s2idle drop-in, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
 
 ---
 
