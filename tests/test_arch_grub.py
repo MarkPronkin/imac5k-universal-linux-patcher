@@ -17,7 +17,7 @@ class ArchGrubTests(unittest.TestCase):
         base = "\n".join(shell_function(PATCHER, name) for name in (
             "mod_suspend_tier", "mod_suspend_detect", "mod_suspend_apply", "mod_suspend_remove",
             "hibernation_setup_present", "suspend_remove_hibernation",
-            "suspend_ensure_s2idle", "suspend_drop_s2idle",
+            "suspend_ensure_s2idle", "suspend_drop_s2idle", "suspend_s2idle_now",
             "mod_5k_apply", "mod_5k_remove"))
         return fixture.GrubLibTests.run_grub(self, base + f'''
 SCRIPT_DIR="{ROOT / 'scripts'}"
@@ -26,6 +26,7 @@ S2IDLE_PARAM=mem_sleep_default=s2idle
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 HIBERNATE_TARGETS=(hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 TB_SLEEP_HOOK="{self.tmp.name}/imac-tb-sleep-hook"
+MEM_SLEEP="{self.tmp.name}/mem_sleep"
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
 sudo() {{ "$@"; }}

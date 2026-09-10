@@ -5,8 +5,8 @@
 # The Thunderbolt NHI (Alpine Ridge, 0000:07:00.0 on the iMac18,3) hangs the
 # kernel in the noirq phase of every system sleep. Measured 2026-09-10: with
 # the driver bound, pm_test=platform freezes solid in both deep and s2idle
-# mode (power-cycle required); with it unbound, every pm_test stage passes
-# (freezer/devices/platform/processors/core). Root-causing the NHI suspend
+# mode (power-cycle required); with it unbound, platform passes and a real
+# s2idle suspend through systemd resumes cleanly. Root-causing the NHI suspend
 # itself is upstream territory; until then, sleep without it.
 #
 # systemd runs every executable in system-sleep/ with $1 = pre|post around

@@ -1,6 +1,7 @@
 """Suspend module: suspend.target unmasked, the hibernate family masked, the
-retired idle=poll cleaned up, and on Omarchy the hibernation setup removed with
-omarchy-hibernation-remove.
+Thunderbolt sleep hook installed, s2idle made the default (and switched to at
+once), the retired idle=poll cleaned up, and on Omarchy the hibernation setup
+removed with omarchy-hibernation-remove.
 
 The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers and a
 stubbed omarchy-hibernation-remove; the Fedora override with a stubbed grubby.
@@ -11,6 +12,8 @@ import re
 import subprocess
 import tempfile
 import unittest
+
+from test_patcher_menu import shell_function
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCHER = (ROOT / "scripts/imac-patcher").read_text()
@@ -63,8 +66,10 @@ HIBERNATE_HOOK_CONF={tmp}/omarchy_resume.conf
 HIBERNATE_DROPIN={tmp}/dropins/resume.conf
 TB_SLEEP_HOOK={tmp}/system-sleep/imac-tb-sleep-hook
 SCRIPT_DIR={ROOT}/scripts
+MEM_SLEEP={tmp}/mem_sleep
 mkdir -p "$LIMINE_DROPIN_DIR" "$(dirname "$TB_SLEEP_HOOK")"
 touch "$LIMINE_DEFAULT"
+printf 's2idle [deep]\\n' > "$MEM_SLEEP"
 {env}
 ''' + omarchy_module()
         result = subprocess.run(["bash", "-c", prelude + code],
@@ -203,6 +208,39 @@ systemctl() {
         self.assertIn("mem_sleep_default=s2idle", dropin.read_text())
         self.assertIn("SYNC_BOOT", result.stdout)
         self.assertIn("VERIFY present=mem_sleep_default=s2idle absent=", result.stdout)
+
+    def test_apply_switches_the_running_kernel_to_s2idle(self):
+        # The cmdline default waits for a reboot, but suspend.target is
+        # unmasked at once: a suspend before that reboot must not enter S3.
+        result = self.run_module("mod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((Path(result.tmp) / "mem_sleep").read_text(), "s2idle\n")
+
+    def test_apply_leaves_a_running_s2idle_alone(self):
+        result = self.run_module(
+            "mod_suspend_apply",
+            env='printf \'[s2idle] deep\\n\' > "$MEM_SLEEP"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((Path(result.tmp) / "mem_sleep").read_text(), "[s2idle] deep\n")
+        self.assertNotIn("switched the running kernel", result.stdout)
+
+    def test_apply_stops_when_a_boot_rebuild_fails(self):
+        # A failed rebuild or verification must fail the apply rather than
+        # end in "reboot for it to take effect".
+        cases = {
+            "s2idle default": "",
+            "idle=poll cleanup": (
+                'printf \'KERNEL_CMDLINE[default]+=" mem_sleep_default=s2idle"\\n\' > "$S2IDLE_DROPIN"\n'
+                'printf \'KERNEL_CMDLINE[default]+=" idle=poll"\\n\' > "$NO_CSTATES_DROPIN"\n'),
+        }
+        for name, setup in cases.items():
+            with self.subTest(name):
+                result = self.run_module(
+                    "mod_suspend_apply",
+                    env=setup + 'verify_cmdline() { echo VERIFY-FAILED; return 1; }\n')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("VERIFY-FAILED", result.stdout)
+                self.assertNotIn("reboot", result.stdout)
 
     def test_remove_deletes_the_hook(self):
         result = self.run_module('''
@@ -393,17 +431,43 @@ class FedoraSuspendTests(unittest.TestCase):
 KREL=7.2.2-test
 TB_SLEEP_HOOK={tmp}/system-sleep/imac-tb-sleep-hook
 SCRIPT_DIR={ROOT}/scripts
+MEM_SLEEP={tmp}/mem_sleep
 mkdir -p "$(dirname "$TB_SLEEP_HOOK")"
+printf 's2idle [deep]\\n' > "$MEM_SLEEP"
 fedora_mutable() {{ return 0; }}
 unset -f boot_config_has sync_boot_files verify_cmdline
 grubby() {{
     if [[ $1 == --info ]]; then {arg_line}; else printf 'GRUBBY %s\n' "$*"; fi
 }}
-''' + fedora_module()
+''' + shell_function(PATCHER, "suspend_s2idle_now") + "\n" + fedora_module()
         result = subprocess.run(["bash", "-c", prelude + code],
                                 text=True, capture_output=True, timeout=10)
         result.tmp = tmp
         return result
+
+    def test_apply_switches_the_running_kernel_to_s2idle(self):
+        result = self.run_module("mod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((Path(result.tmp) / "mem_sleep").read_text(), "s2idle\n")
+
+    def test_apply_stops_when_grubby_fails(self):
+        # A failed idle=poll cleanup must stop the apply before the next edit.
+        result = self.run_module('''
+grubby() {
+    if [[ $1 == --info ]]; then echo 'args="idle=poll"'; else printf 'GRUBBY %s\\n' "$*"; return 1; fi
+}
+mod_suspend_apply''')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("--args mem_sleep_default=s2idle", result.stdout)
+
+    def test_remove_fails_when_grubby_fails(self):
+        result = self.run_module('''
+grubby() {
+    if [[ $1 == --info ]]; then echo 'args="mem_sleep_default=s2idle"'; else printf 'GRUBBY %s\\n' "$*"; return 1; fi
+}
+mod_suspend_remove''')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("back to stock", result.stdout)
 
     def test_suspend_open_and_hibernate_masked_detects_applied(self):
         result = self.run_module('''

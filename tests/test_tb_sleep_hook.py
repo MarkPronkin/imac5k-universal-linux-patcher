@@ -57,6 +57,16 @@ class TbSleepHookTest(unittest.TestCase):
         self.assertEqual((self.drv / "unbind").read_text(), "")
         self.assertEqual(self.state.read_text(), "")
 
+    def test_a_failed_unbind_is_logged_and_not_recorded(self):
+        # unbind as a directory makes the write fail. The hook must still exit
+        # 0 and leave nothing for post to rebind.
+        (self.drv / "unbind").unlink()
+        (self.drv / "unbind").mkdir()
+        result = self.run_hook("pre")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not unbind " + BDF, result.stdout)
+        self.assertEqual(self.state.read_text(), "")
+
     def test_full_cycle(self):
         self.assertEqual(self.run_hook("pre").returncode, 0)
         # After a real unbind the device dir is gone from the driver dir.

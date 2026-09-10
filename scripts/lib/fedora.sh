@@ -20,9 +20,10 @@ fedora_deps() {
 mod_boot_detect() { echo n/a; }
 mod_boot_apply() { warn "Limine boot repair does not apply to Fedora GRUB."; return 1; }
 mod_boot_remove() { mod_boot_apply; }
-# Same policy as the Omarchy suspend module — every sleep target masked off —
-# plus migration for the retired idle=poll variant: grubby strips the argument
-# from the current kernel's BLS entry.
+# Same policy as the Omarchy suspend module — suspend allowed through the
+# Thunderbolt sleep hook in s2idle, the hibernate family masked — with grubby
+# editing the current kernel's BLS entry: it adds the s2idle default and
+# strips the retired idle=poll argument.
 mod_suspend_tier() {
     # Boot tier while the retired argument is on the GRUB entry or the s2idle
     # default is missing — applying either rewrites the entry.
@@ -71,15 +72,16 @@ mod_suspend_apply() {
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
     sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
     say "installed $TB_SLEEP_HOOK (unbinds the Thunderbolt NHI around sleep)"
-    fedora_suspend_drop_no_cstates
+    suspend_s2idle_now
+    fedora_suspend_drop_no_cstates || return 1
     fedora_suspend_ensure_s2idle
 }
 mod_suspend_remove() {
     fedora_mutable || return 1
-    sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}"
-    sudo rm -f "$TB_SLEEP_HOOK"
-    fedora_suspend_drop_no_cstates
-    fedora_suspend_drop_s2idle
+    sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}" || return 1
+    sudo rm -f "$TB_SLEEP_HOOK" || return 1
+    fedora_suspend_drop_no_cstates || return 1
+    fedora_suspend_drop_s2idle || return 1
     say "sleep targets back to stock (suspend and hibernate unmasked, Thunderbolt hook and s2idle default removed)"
 }
 audio_target_kernels() {

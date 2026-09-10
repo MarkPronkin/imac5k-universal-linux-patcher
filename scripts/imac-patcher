@@ -72,6 +72,7 @@ NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
 # only working mode, so the suspend module defaults the kernel to it.
 S2IDLE_PARAM='mem_sleep_default=s2idle'
 S2IDLE_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-s2idle.conf"
+MEM_SLEEP=/sys/power/mem_sleep
 # Omarchy's hibernation setup (omarchy-hibernation-setup): a mkinitcpio resume
 # hook, a resume= cmdline drop-in and a btrfs swapfile. Hibernating hard-hangs
 # this machine the same way suspend does.
@@ -1264,24 +1265,24 @@ suspend_drop_no_cstates() {
         stale=1
     fi
     (( stale )) || return 0
-    sync_boot_files && verify_cmdline '' "$NO_CSTATES_PARAM"
+    sync_boot_files && verify_cmdline '' "$NO_CSTATES_PARAM" || return 1
     say "reboot to restore idle C-states"
 }
 # Deep S3 resets on wake (firmware), so applying the module defaults the
 # kernel to s2idle via a drop-in — the same shape as the 4K fallback — and
-# rebuilds the boot image. Removing the module drops the default again:
-# without the hook an s2idle suspend would hang, so the boot config returns
-# to stock either way. A parameter placed directly in /etc/default/limine
-# (the handoff-era manual step) counts as present and is stripped on remove.
+# rebuilds the boot image. s2idle only helps together with the hook, so
+# removing the module drops the default again and the boot config returns to
+# stock. A parameter placed directly in /etc/default/limine (the handoff-era
+# manual step) counts as present and is stripped on remove.
 suspend_ensure_s2idle() {
     boot_config_has "$S2IDLE_PARAM" && return 0
     sudo mkdir -p "$LIMINE_DROPIN_DIR"
     printf '%s\n%s\n' \
         '# Written by imac-patcher; delete this file to drop the parameter.' \
         "KERNEL_CMDLINE[default]+=\" ${S2IDLE_PARAM}\"" \
-        | sudo tee "$S2IDLE_DROPIN" >/dev/null
+        | sudo tee "$S2IDLE_DROPIN" >/dev/null || return 1
     say "defaulted suspend to s2idle via ${S2IDLE_DROPIN} (deep S3 resets on wake)"
-    sync_boot_files && verify_cmdline "$S2IDLE_PARAM" ''
+    sync_boot_files && verify_cmdline "$S2IDLE_PARAM" '' || return 1
     say "reboot for the s2idle default to take effect"
 }
 suspend_drop_s2idle() {
@@ -1300,11 +1301,23 @@ suspend_drop_s2idle() {
     (( changed )) || return 0
     sync_boot_files && verify_cmdline '' "$S2IDLE_PARAM"
 }
+# The cmdline default only counts from the next boot, but apply unmasks
+# suspend.target at once: switch the running kernel too, so a suspend before
+# that reboot does not enter S3 and reset on wake.
+suspend_s2idle_now() {
+    grep -qs '\[s2idle\]' "$MEM_SLEEP" && return 0
+    if echo s2idle | sudo tee "$MEM_SLEEP" >/dev/null; then
+        say "switched the running kernel to s2idle"
+    else
+        warn "could not switch ${MEM_SLEEP} to s2idle — reboot before suspending"
+    fi
+}
 mod_suspend_apply() {
     sudo systemctl unmask suspend.target || return 1
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
     sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
     say "installed $TB_SLEEP_HOOK (unbinds the Thunderbolt NHI around sleep)"
+    suspend_s2idle_now
     suspend_drop_no_cstates || return 1
     suspend_ensure_s2idle || return 1
     suspend_remove_hibernation
@@ -1679,8 +1692,9 @@ startup_deps_note() {
             suspend)
                 tools=(systemctl)
                 hibernation_setup_present && tools+=(omarchy-hibernation-remove)
-                ((fedora)) && tools+=(grubby)
-                ((archgrub)) && tools+=(grub-mkconfig) ;;
+                if ((fedora)); then tools+=(grubby)
+                elif ((archgrub)); then tools+=(grub-mkconfig)
+                elif [[ -f $LIMINE_DEFAULT ]]; then tools+=(objcopy limine-mkinitcpio); fi ;;
             boot)
                 ((fedora)) && continue
                 ((archgrub)) && continue
