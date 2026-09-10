@@ -210,6 +210,15 @@ asking upstream for a licence. **The user chose to vendor.** That is the
 repository owner's call and it was made with the licence position stated
 plainly; do not silently revert it, and do not re-litigate it.
 
+**Update 2026-09-10: the licence problem is resolved.** Upstream added an MIT
+`LICENSE` (copyright (c) 2026 taprobane99) in commit
+`df347627dc7a3510cba2f2bf42f617cefa8ca00d` on 2026-09-09, after `5069f81`; the
+five vendored files are unchanged there and on upstream `main` as of
+2026-09-10. That `LICENSE` is now carried verbatim as
+`assets/imac-audio/LICENSE`, the READMEs say MIT, and the offer to remove the
+files is gone. The "no licence" and "unlike the tuning" wording elsewhere in
+this note describes the position before that.
+
 Five files now live in `assets/imac-audio/`, byte-identical to upstream commit
 `5069f81eeb4af129480604762f39f9eaec9898d7`, with `assets/imac-audio/README.md`
 recording provenance, the SHA-256 of each file, why they are vendored, the

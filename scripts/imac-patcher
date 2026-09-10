@@ -533,7 +533,7 @@ EQ_AUX_DESC="Aux Audio Output"
 # need an AUR helper on Arch and a manual build everywhere else. The AUR package
 # is nothing but `cargo build --release` and an install of three files, so doing
 # that here removes the helper requirement without changing what is installed.
-# MIT licensed, unlike the tuning, and unchanged upstream since 2023.
+# MIT licensed, like the tuning, and unchanged upstream since 2023.
 EQ_BANKSTOWN_REPO="${IMAC5K_BANKSTOWN_URL:-https://github.com/chadmed/bankstown}"
 EQ_BANKSTOWN_PIN=e9829c9bccf5ed73768135c0ddd506f5a6690f9e   # tag 1.1.0
 EQ_BANKSTOWN_SRC="${CACHE}/bankstown"

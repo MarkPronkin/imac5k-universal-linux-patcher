@@ -85,7 +85,7 @@ or successful boot on a particular iMac; record hardware validation separately.
 | `scripts/95-limine-esp-hygiene` | Omarchy/Limine ESP maintenance |
 | `install.sh`, `scripts/make-release.sh` | Download/install a release and build its reproducible archive |
 | `patches/`, `configs/` | Kernel patches and configuration templates |
-| `assets/imac-audio/` | The vendored speaker tuning: upstream's config and four impulse responses, byte-identical to the commit its README names |
+| `assets/imac-audio/` | The vendored speaker tuning: upstream's config and four impulse responses, byte-identical to the commit its README names, with upstream's MIT `LICENSE` |
 
 Two files are carried verbatim from upstream and must stay byte-identical:
 `patches/cs8409-headset-capture.patch` and `assets/imac-audio/iMacAudio.conf`.

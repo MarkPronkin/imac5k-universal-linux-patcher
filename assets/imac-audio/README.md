@@ -26,11 +26,14 @@ branch. That made every install depend on whatever `main` happened to be:
 different, or as a sink that does not load at all. They are vendored so that a
 given release of this tool always installs the tuning it was tested with.
 
-**Licence: the upstream project publishes none.** It carries no `LICENSE` file
-and GitHub reports no licence for it, so no redistribution terms have been
-granted. They are included here on the judgement of this repository's owner.
-If you are taprobane99 and would rather these were not carried here, open an
-issue and they will be removed.
+**Licence: MIT, copyright (c) 2026 taprobane99.** Upstream added its licence
+in commit
+[`df34762`](https://github.com/taprobane99/iMac5KLinux/commit/df347627dc7a3510cba2f2bf42f617cefa8ca00d)
+on 2026-09-09, after the commit these files were taken from; all five are
+unchanged there and on upstream `main` as of 2026-09-10. Its `LICENSE` is
+carried verbatim beside them in [`LICENSE`](LICENSE), as the MIT terms
+require, and it covers these five files. This project's own licence at the
+repository root does not.
 
 `iMacAudioInstall.sh` from the same directory is deliberately not vendored:
 this project installs the files its own way, into the user's home rather than
