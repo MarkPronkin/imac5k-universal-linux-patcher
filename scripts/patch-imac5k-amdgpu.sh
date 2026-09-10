@@ -56,7 +56,16 @@ IMAC5K_STACK="${IMAC5K_STACK:-lean}"
 case "$IMAC5K_STACK" in
 lean)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-lean-core-7.2.x.patch"
-	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch")
+	EXTRA_PATCHES=("${SCRIPT_DIR}/../patches/imac5k-stitch-layer-7.x.patch" "${SCRIPT_DIR}/../patches/5k-going-down-stop-resync.patch" "${SCRIPT_DIR}/../patches/5k-post-commit-link-recovery.patch"
+		# iMac Pro (iMacPro1,1, Vega 10 / DCE 12). Each is gated on the Apple
+		# panel ID or on DCE 12, so the iMac18,3 (Polaris / DCE 11.2) build
+		# is unchanged by them. See patches/README.md, "iMac Pro".
+		"${SCRIPT_DIR}/../patches/imacpro-slave-dp-panel-mode.patch"
+		"${SCRIPT_DIR}/../patches/dce120-enable-crtc-reset.patch"
+		"${SCRIPT_DIR}/../patches/dce12-multisync-master-first.patch"
+		"${SCRIPT_DIR}/../patches/dce110-genlock-master-from-pipe0.patch"
+		# A modeset postpones the queued post-commit pass; see the patch header.
+		"${SCRIPT_DIR}/../patches/5k-resync-postpone-on-modeset.patch")
 	;;
 verbose)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-amdgpu-7.2.2.patch"
@@ -295,7 +304,7 @@ done
 # that copy was made. Leaving it stale means booting the previous initramfs,
 # with the previous amdgpu module baked in, and wondering why nothing changed.
 # Only refresh it when it really is a UKI copy; never clobber a Limine binary.
-UKI=/boot/EFI/Linux/omarchy_linux.efi
+UKI="$(imac_default_uki "$KREL")"
 FALLBACK=/boot/EFI/BOOT/BOOTX64.EFI
 # NB: `objcopy --only-section=X` exits 0 even when section X is absent -- it
 # writes nothing. Testing its exit status classifies every PE binary as a UKI,

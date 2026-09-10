@@ -50,7 +50,9 @@ KREL="$(uname -r)"
 MODDIR="/usr/lib/modules/${KREL}/kernel/drivers/gpu/drm/amd/amdgpu"
 MODULE="${MODDIR}/amdgpu.ko.zst"
 ESP=/boot
-UKI="${ESP}/EFI/Linux/omarchy_linux.efi"
+# The default UKI is named after the kernel package base (linux, linux-t2, ...).
+KPKG="$(cat "/usr/lib/modules/${KREL}/pkgbase" 2>/dev/null || echo linux)"
+UKI="${ESP}/EFI/Linux/omarchy_${KPKG}.efi"
 TESTUKI="${ESP}/EFI/Linux/omarchy_linux-5ktest.efi"
 CONF="${ESP}/limine.conf"
 MARKER="/Test - 5K boot fixes"

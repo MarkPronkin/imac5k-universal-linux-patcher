@@ -1,0 +1,54 @@
+iMac 5K: let a modeset postpone the queued post-commit pass
+
+Follow-up to 5k-post-commit-link-recovery.patch. That patch queues the
+post-commit work with queue_delayed_work() so that ordinary plane commits do
+not keep pushing an armed link-health check into the future. The stitch layer
+used mod_delayed_work(), which postponed the pending resync on every commit.
+
+Observed on an iMacPro1,1 (Vega 64X, DCE 12) with both tiles engaged: the
+greeter's modeset arms a sequence; its third pass falls due exactly as the
+compositor's modeset begins; the pass takes dc_lock between that commit's
+phases, finds tiled_sync_pending set by the commit itself, and runs
+dc_trigger_sync() while a timing generator is not running:
+
+  [27.068] TILED_STITCH: ... (compositor modeset)
+  [27.095] APPLE5K: link-health pass 3/8 recoveries=0
+  [27.156] *ERROR* TG counter is not moving!
+  [27.156] *ERROR* GSL: Timeout on reset trigger!
+  [27.223] APPLE5K: link-health armed after tiled modeset: checks=8
+  [31.152] APPLE5K: link-health PASS: both tiles healthy after 0 recovery attempts
+
+The pass the new sequence schedules 250 ms later re-syncs cleanly, so the
+desktop is correct, but the errors are logged whenever the timing lines up.
+The same four DCE 12 patches on the lean pair without the post-commit patch
+log none across four boots.
+
+Keep queue_delayed_work() for plane commits, and use mod_delayed_work() when
+the commit is a modeset: the sequence armed for it is the one that should
+observe the new state, after it has settled.
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c	2026-09-10 02:13:51.541514689 -0700
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c	2026-09-10 02:13:51.560514614 -0700
+@@ -15289,9 +15289,19 @@
+ 				 APPLE5K_LINK_CHECKS);
+ 		}
+ 		adev->dm.tiled_sync_pending = true;
+-		/* Ordinary plane commits must not postpone an already armed check. */
+-		queue_delayed_work(system_wq, &adev->dm.tiled_resync_work,
+-				   msecs_to_jiffies(APPLE5K_LINK_SETTLE_MS));
++		/* Ordinary plane commits must not postpone an already armed check.
++		 * A modeset must: a pass queued by the previous commit can otherwise
++		 * fire between this commit's phases and run the timing sync while a
++		 * timing generator is down ("TG counter is not moving!", "GSL:
++		 * Timeout on reset trigger!"). The sequence armed above observes the
++		 * new state once it has settled.
++		 */
++		if (modeset)
++			mod_delayed_work(system_wq, &adev->dm.tiled_resync_work,
++					 msecs_to_jiffies(APPLE5K_LINK_SETTLE_MS));
++		else
++			queue_delayed_work(system_wq, &adev->dm.tiled_resync_work,
++					   msecs_to_jiffies(APPLE5K_LINK_SETTLE_MS));
+ 	}
+ 	mutex_unlock(&adev->dm.dc_lock);
+ }

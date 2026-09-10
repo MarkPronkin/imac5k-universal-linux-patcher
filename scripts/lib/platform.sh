@@ -32,6 +32,16 @@ imac_panel_has_stitched_mode() {
 # The bundled driver has board-specific CS8409 initialization and its own
 # iMac18,3 gate. Other models must retain their existing audio drivers.
 imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+# The iMac Pro's built-in audio is the T2 (t2bce_audio, ALSA card AppleT2x4,
+# UCM profiles), not the CS8409 codec the EQ chain targets: there is no
+# four-channel CS8409 device to pin the chain to, and the tuning was measured
+# on CS8409 machines. Other models keep their existing gate (a card that
+# offers the 4.0 profile).
+imac_eq_supported() { [[ ${product:-$(imac_product_name)} != iMacPro1,1 ]]; }
+# Vega 10 / DCE 12 (iMac Pro): the tile pair latches only when the stream is
+# brought up at the panel's native 10 bpc. Hyprland's default 8 bpc leaves the
+# second tile unlocked and the desktop stretched. See patches/README.md.
+imac_panel_needs_10bpc() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 ]]; }
 
 imac_is_fedora() { ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); }
 imac_is_arch() { ( . /etc/os-release; [[ ${ID:-} == arch || " ${ID_LIKE:-} " == *" arch "* ]] ); }
@@ -53,6 +63,13 @@ imac_kernel_pkgbase() {
     pkgbase=$(cat "/usr/lib/modules/${krel}/pkgbase" 2>/dev/null) || pkgbase=linux
     [[ $pkgbase =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || return 1
     printf '%s\n' "$pkgbase"
+}
+# Omarchy's limine hook names the default UKI after the kernel package base:
+# omarchy_linux.efi for linux, omarchy_linux-t2.efi for linux-t2 (the T2 iMac
+# Pro). Every helper that looks for "the default UKI" must derive it, not
+# assume linux.
+imac_default_uki() {   # $1 = kernel release, default the running one
+    printf '/boot/EFI/Linux/omarchy_%s.efi\n' "$(imac_kernel_pkgbase "${1:-$(uname -r)}" 2>/dev/null || echo linux)"
 }
 imac_kernel_uses_clang() {
     grep -qx 'CONFIG_CC_IS_CLANG=y' "/usr/lib/modules/${1:-$(uname -r)}/build/.config" 2>/dev/null
