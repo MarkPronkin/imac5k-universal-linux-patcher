@@ -69,10 +69,8 @@ TB_SLEEP_HOOK=/usr/lib/systemd/system-sleep/imac-tb-sleep-hook
 NO_CSTATES_PARAM='idle=poll'
 NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
 # Deep S3 enters but the firmware resets the machine on wake; s2idle is the
-# only working mode, so the suspend module defaults the kernel to it.
-S2IDLE_PARAM='mem_sleep_default=s2idle'
-S2IDLE_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-s2idle.conf"
-MEM_SLEEP=/sys/power/mem_sleep
+# only working mode, and this systemd drop-in makes every suspend use it.
+SLEEP_CONF_DROPIN=/etc/systemd/sleep.conf.d/imac5k-s2idle.conf
 # Omarchy's hibernation setup (omarchy-hibernation-setup): a mkinitcpio resume
 # hook, a resume= cmdline drop-in and a btrfs swapfile. Hibernating hard-hangs
 # this machine the same way suspend does.
@@ -1189,11 +1187,11 @@ mod_color_remove() {
 
 # ═══════════════════════ module: suspend ═══════════════════════════════════
 mod_suspend_title() { echo "Allow suspend, block hibernate"; }
-# Boot tier while the retired idle=poll config, Omarchy's hibernation setup,
-# or a missing s2idle default is still there, since fixing any of them
-# rebuilds the boot image; a clean system gets the safe tier.
-mod_suspend_tier()  { if boot_config_has "$NO_CSTATES_PARAM" || hibernation_setup_present || ! boot_config_has "$S2IDLE_PARAM"; then echo boot; else echo safe; fi }
-mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 9.9.11-test) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume. Deep S3 still resets on wake (firmware), so the module also defaults the kernel to s2idle and suspend is only expected to work in that mode — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
+# Boot tier while the retired idle=poll config or Omarchy's hibernation setup
+# is still there, since cleaning either up rebuilds the boot image; a clean
+# system gets the safe tier.
+mod_suspend_tier()  { if boot_config_has "$NO_CSTATES_PARAM" || hibernation_setup_present; then echo boot; else echo safe; fi }
+mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume. Deep S3 still resets on wake (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${HIBERNATE_TARGETS[@]}"; do
@@ -1207,10 +1205,10 @@ mod_suspend_detect() {
     hibernation_setup_present && hibernating=1
     local hook=0
     [[ -x $TB_SLEEP_HOOK ]] && hook=1
-    local nos2idle=0
-    boot_config_has "$S2IDLE_PARAM" || nos2idle=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && ! nos2idle )); then echo applied
-    elif (( masked || suspend_blocked || stale || hibernating || hook )); then echo partial
+    local s2idle=0
+    grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN" && s2idle=1
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && s2idle )); then echo applied
+    elif (( masked || suspend_blocked || stale || hibernating || hook || s2idle )); then echo partial
     else echo not-applied; fi
 }
 # The hook conf is the canonical marker — omarchy-hibernation-remove checks
@@ -1268,70 +1266,40 @@ suspend_drop_no_cstates() {
     sync_boot_files && verify_cmdline '' "$NO_CSTATES_PARAM" || return 1
     say "reboot to restore idle C-states"
 }
-# Deep S3 resets on wake (firmware), so applying the module defaults the
-# kernel to s2idle via a drop-in — the same shape as the 4K fallback — and
-# rebuilds the boot image. s2idle only helps together with the hook, so
-# removing the module drops the default again and the boot config returns to
-# stock. A parameter placed directly in /etc/default/limine (the handoff-era
-# manual step) counts as present and is stripped on remove.
-suspend_ensure_s2idle() {
-    boot_config_has "$S2IDLE_PARAM" && return 0
-    sudo mkdir -p "$LIMINE_DROPIN_DIR"
-    printf '%s\n%s\n' \
-        '# Written by imac-patcher; delete this file to drop the parameter.' \
-        "KERNEL_CMDLINE[default]+=\" ${S2IDLE_PARAM}\"" \
-        | sudo tee "$S2IDLE_DROPIN" >/dev/null || return 1
-    say "defaulted suspend to s2idle via ${S2IDLE_DROPIN} (deep S3 resets on wake)"
-    sync_boot_files && verify_cmdline "$S2IDLE_PARAM" '' || return 1
-    say "reboot for the s2idle default to take effect"
+# The module's own files, shared by every backend: the Thunderbolt hook, and a
+# systemd drop-in that switches /sys/power/mem_sleep to s2idle before every
+# suspend. MemorySleepMode= arrived in systemd 256; older versions ignore it
+# and suspend into deep S3, which resets this machine on wake.
+suspend_systemd_ok() {
+    local v
+    v=$(systemctl --version 2>/dev/null | awk 'NR == 1 { print $2 }')
+    [[ $v =~ ^[0-9]+$ ]] && (( v >= 256 )) && return 0
+    warn "suspend needs systemd 256 or newer for MemorySleepMode= (found: ${v:-none}); older versions suspend into deep S3, which resets this machine on wake"
+    return 1
 }
-suspend_drop_s2idle() {
-    local changed=0
-    if sudo test -f "$S2IDLE_DROPIN"; then
-        sudo rm -f "$S2IDLE_DROPIN"
-        say "removed ${S2IDLE_DROPIN}"
-        changed=1
-    fi
-    if grep -qs -- "$S2IDLE_PARAM" "$LIMINE_DEFAULT"; then
-        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-s2idle-$(date +%s)"
-        sudo sed -i "s| ${S2IDLE_PARAM}||" "$LIMINE_DEFAULT"
-        say "removed ${S2IDLE_PARAM} from ${LIMINE_DEFAULT}"
-        changed=1
-    fi
-    (( changed )) || return 0
-    sync_boot_files && verify_cmdline '' "$S2IDLE_PARAM"
+suspend_install_sleep_files() {
+    sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
+    sudo install -D -m644 "${SCRIPT_DIR}/../configs/imac5k-s2idle.conf" "$SLEEP_CONF_DROPIN" || return 1
+    say "installed $TB_SLEEP_HOOK (unbinds the Thunderbolt NHI around sleep) and $SLEEP_CONF_DROPIN (suspend uses s2idle)"
 }
-# The cmdline default only counts from the next boot, but apply unmasks
-# suspend.target at once: switch the running kernel too, so a suspend before
-# that reboot does not enter S3 and reset on wake.
-suspend_s2idle_now() {
-    grep -qs '\[s2idle\]' "$MEM_SLEEP" && return 0
-    if echo s2idle | sudo tee "$MEM_SLEEP" >/dev/null; then
-        say "switched the running kernel to s2idle"
-    else
-        warn "could not switch ${MEM_SLEEP} to s2idle — reboot before suspending"
-    fi
-}
+suspend_remove_sleep_files() { sudo rm -f "$TB_SLEEP_HOOK" "$SLEEP_CONF_DROPIN"; }
 mod_suspend_apply() {
+    suspend_systemd_ok || return 1
     sudo systemctl unmask suspend.target || return 1
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
-    sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
-    say "installed $TB_SLEEP_HOOK (unbinds the Thunderbolt NHI around sleep)"
-    suspend_s2idle_now
+    suspend_install_sleep_files || return 1
     suspend_drop_no_cstates || return 1
-    suspend_ensure_s2idle || return 1
     suspend_remove_hibernation
 }
 # Removing the module returns all four sleep targets to stock (unmasked) and
-# deletes the Thunderbolt sleep hook and the s2idle default. It cannot restore
+# deletes the Thunderbolt hook and the s2idle drop-in. It cannot restore
 # hibernation — the swapfile is gone; omarchy-hibernation-setup rebuilds it if
 # ever wanted.
 mod_suspend_remove() {
     sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}" || return 1
-    sudo rm -f "$TB_SLEEP_HOOK" || return 1
+    suspend_remove_sleep_files || return 1
     suspend_drop_no_cstates || return 1
-    suspend_drop_s2idle || return 1
-    say "sleep targets back to stock (suspend and hibernate unmasked, Thunderbolt hook and s2idle default removed)"
+    say "sleep targets back to stock (suspend and hibernate unmasked, Thunderbolt hook and s2idle drop-in removed)"
 }
 
 # ═══════════════════════ module: boot ══════════════════════════════════════
@@ -1692,9 +1660,8 @@ startup_deps_note() {
             suspend)
                 tools=(systemctl)
                 hibernation_setup_present && tools+=(omarchy-hibernation-remove)
-                if ((fedora)); then tools+=(grubby)
-                elif ((archgrub)); then tools+=(grub-mkconfig)
-                elif [[ -f $LIMINE_DEFAULT ]]; then tools+=(objcopy limine-mkinitcpio); fi ;;
+                ((fedora)) && tools+=(grubby)
+                ((archgrub)) && tools+=(grub-mkconfig) ;;
             boot)
                 ((fedora)) && continue
                 ((archgrub)) && continue

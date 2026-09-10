@@ -17,22 +17,21 @@ class ArchGrubTests(unittest.TestCase):
         base = "\n".join(shell_function(PATCHER, name) for name in (
             "mod_suspend_tier", "mod_suspend_detect", "mod_suspend_apply", "mod_suspend_remove",
             "hibernation_setup_present", "suspend_remove_hibernation",
-            "suspend_ensure_s2idle", "suspend_drop_s2idle", "suspend_s2idle_now",
+            "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files",
             "mod_5k_apply", "mod_5k_remove"))
         return fixture.GrubLibTests.run_grub(self, base + f'''
 SCRIPT_DIR="{ROOT / 'scripts'}"
 NO_CSTATES_PARAM=idle=poll
-S2IDLE_PARAM=mem_sleep_default=s2idle
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 HIBERNATE_TARGETS=(hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 TB_SLEEP_HOOK="{self.tmp.name}/imac-tb-sleep-hook"
-MEM_SLEEP="{self.tmp.name}/mem_sleep"
+SLEEP_CONF_DROPIN="{self.tmp.name}/sleep.conf.d/imac5k-s2idle.conf"
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
 sudo() {{ "$@"; }}
 mkinitcpio() {{ printf 'mkinitcpio %s\\n' "$*" >> "$GRUB_CALLS"; }}
 limine-mkinitcpio() {{ echo WRONG_BACKEND >&2; return 99; }}
-systemctl() {{ if [[ $1 == is-enabled ]]; then if [[ $2 == suspend.target ]]; then echo static; else echo masked; fi; else echo "systemctl $*"; fi; }}
+systemctl() {{ case $1 in is-enabled) if [[ $2 == suspend.target ]]; then echo static; else echo masked; fi ;; --version) echo 'systemd 261 (261-test)' ;; *) echo "systemctl $*" ;; esac; }}
 source "$SCRIPT_DIR/lib/arch-grub.sh"
 ''' + code)
 
@@ -52,42 +51,24 @@ source "$SCRIPT_DIR/lib/arch-grub.sh"
 
     def test_suspend_cleans_stale_parameter_and_keeps_sleep_masks(self):
         self.default.write_text("GRUB_CMDLINE_LINUX_DEFAULT='quiet idle=poll'\n")
-        # The stubbed grub-mkconfig only logs; seed grub.cfg the way a real
-        # regeneration from the edited default would leave it.
-        self.cfg.write_text(fixture.GRUB_CFG.replace("quiet", "quiet mem_sleep_default=s2idle"))
         result = self.run_backend("mod_suspend_tier; mod_suspend_detect; mod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines()[:2], ["boot", "partial"])
         self.assertIn("systemctl unmask suspend.target", result.stdout)
         self.assertIn("systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target", result.stdout)
         self.assertNotIn("idle=poll", self.default.read_text())
-        self.assertIn("mem_sleep_default=s2idle", self.default.read_text())
         self.assertIn("grub-mkconfig", self.mkconfig_calls())
         self.assertNotIn("mkinitcpio", self.mkconfig_calls())
 
     def test_clean_suspend_config_needs_no_grub_regeneration(self):
-        self.default.write_text('GRUB_CMDLINE_LINUX_DEFAULT="quiet mem_sleep_default=s2idle"\n')
-        result = self.run_backend('''
-install -m755 /dev/null "$TB_SLEEP_HOOK"
-mod_suspend_tier; mod_suspend_detect; mod_suspend_apply
-''')
+        # The s2idle mode lives in a systemd drop-in, so a clean system goes
+        # from partial to applied without touching GRUB.
+        result = self.run_backend("mod_suspend_tier; mod_suspend_detect; mod_suspend_apply; mod_suspend_detect")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines()[:2], ["safe", "applied"])
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:2], ["safe", "partial"])
+        self.assertEqual(lines[-1], "applied")
         self.assertEqual(self.mkconfig_calls(), "")
-
-    def test_missing_s2idle_default_is_added_with_regeneration(self):
-        # The stubbed grub-mkconfig only logs; seed grub.cfg the way a real
-        # regeneration from the edited default would leave it.
-        self.cfg.write_text(fixture.GRUB_CFG.replace("quiet", "quiet mem_sleep_default=s2idle"))
-        result = self.run_backend('''
-install -m755 /dev/null "$TB_SLEEP_HOOK"
-mod_suspend_tier; mod_suspend_detect; mod_suspend_apply
-''')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines()[:2], ["boot", "partial"])
-        self.assertIn("mem_sleep_default=s2idle", self.default.read_text())
-        self.assertIn("grub-mkconfig", self.mkconfig_calls())
-        self.assertNotIn("mkinitcpio", self.mkconfig_calls())
 
     def test_verification_checks_exact_tokens_and_rejects_missing_entry(self):
         for args, status in (("quiet ''", 0), ("qui ''", 1), ("'' qui", 0), ("'' quiet", 1)):

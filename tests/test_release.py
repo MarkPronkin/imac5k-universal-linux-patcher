@@ -105,8 +105,9 @@ class ReleaseTests(unittest.TestCase):
                        "scripts/lib/grub.sh", "scripts/lib/arch-grub.sh", "docs/arch-grub.md",
                        "patches/cs8409-headset-capture.patch", "docs/headphones.md",
                        "scripts/imac-audio-jack-switch",
-                       # The suspend module installs its sleep hook from here.
-                       "scripts/imac-tb-sleep-hook",
+                       # The suspend module installs its sleep hook and s2idle
+                       # drop-in from here.
+                       "scripts/imac-tb-sleep-hook", "configs/imac5k-s2idle.conf",
                        # The speaker tuning is vendored, not downloaded: an
                        # archive without it installs a graph that cannot load.
                        "assets/imac-audio/iMacAudio.conf",
