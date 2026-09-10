@@ -29,6 +29,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 |---|---|
 | `test_patcher_cli.py`, `test_patcher_driver.py`, `test_patcher_menu.py` | Argument validation, status probe reuse, fresh checks before actions, batch exit codes, and terminal input |
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
+| `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, orphan test entries, and matching lean stacks across installers |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
 | `test_eq.py` | Speaker routing and volume restoration |
 | `test_suspend.py`, `test_tb_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the Thunderbolt sleep hook against a fake sysfs tree |

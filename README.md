@@ -83,7 +83,7 @@ it, and `--status` only reports. Prompts remain visible when input is piped.
 
 Read both tables together: a patch needs a compatible model **and** distribution setup.
 
-- ✅ **Verified** — hardware-tested by this project on iMac18,3, running Omarchy (Limine + Hyprland) and CachyOS (GRUB + KDE Plasma Wayland).
+- ✅ **Verified** — hardware-tested by this project on iMac18,3, running Omarchy (Limine + Hyprland) and CachyOS (GRUB + KDE Plasma Wayland). Native 5K module hardware-tested on iMacPro1,1 (Radeon Pro Vega 64X), running Omarchy (Limine + Hyprland) on the `linux-t2` kernel 7.1.8.
 - ⚪ **Build-tested** — build, install and restore checks passed, without confirming the result on hardware.
 - ⚪ **Conditional** — additional setup is required and that combination is untested.
 - ⚪ **Untested** — an implementation exists but hardware behaviour is unconfirmed.
@@ -102,12 +102,12 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified workaround** | ✅ **Verified** |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
 
 ### 🐧 Distributions
 

@@ -66,6 +66,133 @@ preflight
                 self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
                 self.assertIn("existing audio driver", result.stdout)
 
+    def test_eq_is_unavailable_on_the_imac_pro_whose_audio_is_the_t2(self):
+        eq = section("eq", "color")
+        for model in MODELS:
+            with self.subTest(model=model):
+                result = self.run_shell(model, "imac_eq_supported")
+                self.assertEqual(result.returncode == 0, model != "iMacPro1,1")
+        result = self.run_shell("iMacPro1,1", "SCRIPT_DIR=/nonexistent\nCACHE=/tmp\nLOGDIR=/tmp\nHOME=/tmp\npactl() { :; }\n" + eq + "mod_eq_detect\nmod_eq_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
+        self.assertIn("T2 audio", result.stdout)
+
+    def test_five_k_apply_sets_hyprland_to_10_bpc_on_the_active_output_only(self):
+        start = PATCHER.index("# ═══════════════════════ module: 5k ")
+        five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]
+        default = 'hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })\n'
+        disabled = 'hl.monitor({ output = "DP-3", disabled = true })\n'
+        cases = (("omarchy default", default + disabled, default.replace(" })", ", bitdepth = 10 })") + disabled),
+                 ("already 8 bpc", default.replace(" })", ", bitdepth = 8 })"), default.replace(" })", ", bitdepth = 10 })")),
+                 ("already 10 bpc", default.replace(" })", ", bitdepth = 10 })"), default.replace(" })", ", bitdepth = 10 })")))
+        for name, before, after in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                lua = Path(tmp) / "monitors.lua"
+                lua.write_text(before)
+                result = self.run_shell("iMacPro1,1", f"MONITORS_LUA='{lua}'\nsay() {{ :; }}\n" + five_k + "five_k_set_10bpc && five_k_has_10bpc")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(lua.read_text(), after)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_shell("iMacPro1,1", f"MONITORS_LUA='{tmp}/absent.lua'\n" + five_k + "five_k_set_10bpc && five_k_has_10bpc")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for model, required in (("iMacPro1,1", 1), ("iMac18,3", 0)):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
+                lua = Path(tmp) / "monitors.lua"; lua.write_text(default)
+                result = self.run_shell(model, f"MONITORS_LUA='{lua}'\n" + five_k + "five_k_has_10bpc")
+                self.assertEqual(result.returncode, required, f"{model}: 8 bpc must only count against the iMac Pro")
+
+    def test_ten_bpc_ignores_comments_and_other_outputs(self):
+        start = PATCHER.index("# ═══════════════════════ module: 5k ")
+        five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]
+        active = 'hl.monitor({ output = "eDP-1", mode = "preferred", bitdepth = 8 })\n'
+        unrelated = ('-- bitdepth = 10\n'
+                     '--[[\nhl.monitor({ output = "eDP-1", bitdepth = 10 })\n]]\n'
+                     'hl.monitor({ output = "DP-2", bitdepth = 10 })\n'
+                     'hl.monitor({ output = "DP-3", disabled=true, bitdepth = 8 })\n'
+                     'hl.monitor({ output = "", mode = "preferred", bitdepth = 8 })\n')
+        with tempfile.TemporaryDirectory() as tmp:
+            lua = Path(tmp) / "monitors.lua"
+            before = unrelated + active
+            lua.write_text(before)
+            prelude = f"MONITORS_LUA='{lua}'\nsay() {{ :; }}\n" + five_k
+            result = self.run_shell("iMacPro1,1", prelude + "five_k_has_10bpc")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            result = self.run_shell("iMacPro1,1", prelude + "five_k_set_10bpc && five_k_has_10bpc")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(lua.read_text(), unrelated + active.replace("bitdepth = 8", "bitdepth = 10"))
+            backups = list(Path(tmp).glob("*.bak-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(), before)
+            self.assertEqual(self.run_shell("iMacPro1,1", prelude + "five_k_set_10bpc").returncode, 0)
+            self.assertEqual(list(Path(tmp).glob("*.bak-*")), backups)
+
+    def test_ten_bpc_keeps_other_models_monitor_settings(self):
+        start = PATCHER.index("# ═══════════════════════ module: 5k ")
+        five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]
+        with tempfile.TemporaryDirectory() as tmp:
+            lua = Path(tmp) / "monitors.lua"
+            before = 'hl.monitor({ output = "", bitdepth = 8 })\n'
+            lua.write_text(before)
+            for model in MODELS:
+                if model == "iMacPro1,1":
+                    continue
+                with self.subTest(model=model):
+                    result = self.run_shell(model, f"MONITORS_LUA='{lua}'\n" + five_k + "five_k_set_10bpc")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(lua.read_text(), before)
+            self.assertEqual(list(Path(tmp).glob("*.bak-*")), [])
+
+    def test_ten_bpc_does_not_claim_success_for_an_unrecognised_panel_rule(self):
+        start = PATCHER.index("# ═══════════════════════ module: 5k ")
+        five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]
+        for before in ('-- bitdepth = 10\n',
+                       'hl.monitor({ output = "eDP-1", disabled=true, bitdepth = 10 })\n',
+                       'hl.monitor({\n output = "eDP-1", bitdepth = 8\n})\n'):
+            with self.subTest(config=before), tempfile.TemporaryDirectory() as tmp:
+                lua = Path(tmp) / "monitors.lua"
+                lua.write_text(before)
+                result = self.run_shell("iMacPro1,1", f"MONITORS_LUA='{lua}'\n" + five_k + "five_k_set_10bpc")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(lua.read_text(), before)
+
+    def test_default_uki_is_named_after_the_kernel_package(self):
+        for pkgbase in ("linux", "linux-t2", "linux-lts"):
+            with self.subTest(pkgbase=pkgbase):
+                result = self.run_shell("iMacPro1,1", f"imac_kernel_pkgbase() {{ echo {pkgbase}; }}\nimac_default_uki 7.1.8-arch1-1")
+                self.assertEqual(result.stdout.strip(), f"/boot/EFI/Linux/omarchy_{pkgbase}.efi")
+        result = self.run_shell("iMac18,3", "imac_default_uki 0.0.0-nonexistent")
+        self.assertEqual(result.stdout.strip(), "/boot/EFI/Linux/omarchy_linux.efi")
+
+    def test_fedora_sets_panel_depth_only_after_a_successful_driver_install(self):
+        start = PATCHER.index("# ═══════════════════════ module: 5k ")
+        five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]
+        backend = (ROOT / "scripts/lib/fedora.sh").read_text()
+        for status in (0, 1):
+            with self.subTest(installer_status=status), tempfile.TemporaryDirectory() as tmp:
+                lua = Path(tmp) / "monitors.lua"
+                before = 'hl.monitor({ output = "eDP-1", bitdepth = 8 })\n'
+                lua.write_text(before)
+                installer = Path(tmp) / "fedora-imac5k"
+                installer.write_text(f"#!/usr/bin/env bash\nexit {status}\n")
+                installer.chmod(0o755)
+                result = self.run_shell("iMacPro1,1", five_k + backend + f'''
+MONITORS_LUA='{lua}'
+SCRIPT_DIR='{tmp}'
+LOGDIR='{tmp}'
+KREL=test
+say() {{ :; }}
+confirm() {{ return 0; }}
+mod_5k_preflight() {{ return 0; }}
+mod_5k_apply
+''')
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertEqual(lua.read_text(), before if status else before.replace("8", "10"))
+
+    def test_default_uki_rejects_invalid_kernel_metadata(self):
+        result = self.run_shell("iMacPro1,1", "imac_kernel_pkgbase() { return 1; }\nimac_default_uki test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
     def test_fedora_audio_retains_the_board_restriction(self):
         backend = (ROOT / "scripts/lib/fedora.sh").read_text()
         result = self.run_shell("iMac19,1", backend + '''

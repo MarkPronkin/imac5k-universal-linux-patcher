@@ -161,6 +161,65 @@ reboot out of it). The verbose module is kept as the `/Test - 5K-verbose-fallbac
 entry and as `amdgpu.ko.zst.prev-promote` beside the installed module; drop
 both once the lean default has run for a few days.
 
+### iMac Pro (iMacPro1,1): Vega 64X, DCE 12
+
+Only the 5K module has been tried on the iMac Pro.
+
+These patches ship in the default **lean** stack on both Arch backends and
+Fedora. The verbose fallback does not include them and does not support the
+iMac Pro. Hardware verification below is the contributor's Omarchy result;
+Fedora, GRUB, and Vega 56 remain untested on this model.
+
+The lean pair on its own leaves the iMac Pro's panel stretched 2x: the second
+tile trains but never locks video, and the panel scales the one tile it sees
+across the whole display. Four small patches on top of the lean pair fix it,
+verified on iMacPro1,1 / Radeon Pro Vega 64X, kernel 7.1.8.
+
+- **`imacpro-slave-dp-panel-mode.patch`** — the root cause. `dp_get_panel_mode()`
+  gives the second tile `DP_PANEL_MODE_EDP`, which sets the alternate scrambler
+  reset bit in DPCD `0x10A`. The iMac Pro panel's second tile does not accept it:
+  the link trains (training patterns are unscrambled) but SINK_STATUS `0x205`
+  stays `00`. Captured from the same panel brought up by Apple's firmware:
+  `0x10A = 00`, `0x205 = 01`. Toggling that one bit on a working panel breaks and
+  restores 5K reversibly. Keyed on the panel ID (`APP 0xAE1D` / `0xAE1E`); the
+  iMac18,3 panel keeps eDP panel mode.
+- **`dce120-enable-crtc-reset.patch`** — DCE 12's timing generator never wired
+  `.enable_crtc_reset`, so the per-frame CRTC reset that genlocks the tiles could
+  not be armed on Vega. Adds it, selecting GSL group 0 as the trigger source.
+  DCE 12 only by construction.
+- **`dce12-multisync-master-first.patch`** — `enable_timing_multisync()` hands the
+  hwseq only the slave pipes, but the DCE hwseq takes its GSL master from entry 0
+  and arms entries 1..n. With no master, the armed slave waits for a trigger that
+  never comes (`GSL: Timeout on reset trigger!`). Puts the master first, on
+  `DCE_VERSION_12_0` only.
+- **`dce110-genlock-master-from-pipe0.patch`** — when entry 0 is the master, derive
+  `gsl_master` from its TG instance instead of the hardcoded `0` (as
+  `dce110_enable_timing_synchronization()` already does), and skip a missing
+  `enable_crtc_reset`. With a slaves-only list nothing changes.
+- **`5k-resync-postpone-on-modeset.patch`** — with the tiles engaged on the iMac
+  Pro, the post-commit pass queued by the greeter's modeset fell due in the
+  middle of the compositor's modeset and ran the timing sync while a timing
+  generator was down: one `TG counter is not moving!` and one `GSL: Timeout on
+  reset trigger!` per boot with that timing, repaired by the next pass 250 ms
+  later. `queue_delayed_work()` (chosen so plane commits do not postpone an armed
+  check) is kept for plane commits; a modeset uses `mod_delayed_work()` again, as
+  the stitch layer did. Zero errors on the same DCE 12 patches without the
+  post-commit patch, across four boots.
+
+Hyprland must enable the panel at bit depth 10. On the iMac Pro the tile pair latches
+only when the stream is brought up at the panel's native 10 bpc.
+The patcher updates active single-line `hl.monitor({ ... })` rules for the
+internal eDP output, using the default output rule if no eDP rule exists. It
+preserves comments, disabled and explicitly configured external outputs, and
+other iMac models' bit-depth settings. It backs up the file and leaves the
+change for the next compositor start.
+
+The post-commit scheduling follow-up applies **after** the three suspend
+fixes in `test`; its context retains the resume-arming branch. The lean stack
+was checked at `--fuzz=0` against pristine Linux 7.1.13 and 7.2.3 during the
+merge review. See [the review record](../notes/imacpro-pr2-review-2026-09-10.md)
+in the Git checkout for compile results and limits.
+
 ## Crash fix: `5k-logical-modeset-guard.patch`
 
 **Status: promoted into both installers on 2026-09-10** after passing

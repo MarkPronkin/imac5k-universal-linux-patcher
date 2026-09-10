@@ -47,9 +47,7 @@ the arming line.
  static bool is_freesync_video_mode(const struct drm_display_mode *mode, struct amdgpu_dm_connector *aconnector);
  static void reset_freesync_config_for_crtc(struct dm_crtc_state *new_crtc_state);
  static struct amdgpu_i2c_adapter *
-@@ -2645,6 +2645,14 @@
- 	mutex_init(&adev->dm.dpia_aux_lock);
- 	mutex_init(&adev->dm.dc_lock);
+@@ -2647,2 +2647,10 @@
  	INIT_DELAYED_WORK(&adev->dm.tiled_resync_work, amdgpu_dm_tiled_resync_work);
 +	adev->dm.tiled_resync_stopping = false;
 +	adev->dm.tiled_link_checks = 0;
@@ -60,8 +58,6 @@ the arming line.
 +		 APPLE5K_LINK_CHECKS, APPLE5K_LINK_RECOVERIES,
 +		 APPLE5K_LINK_SETTLE_MS, APPLE5K_LINK_RECHECK_MS);
  	mutex_init(&adev->dm.audio_lock);
- 
- 	if (amdgpu_dm_irq_init(adev)) {
 @@ -3056,6 +3069,9 @@
  {
  	int i;

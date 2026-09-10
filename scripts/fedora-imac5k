@@ -54,7 +54,8 @@ build_module() {
     local srpm nvr top src stack_hash stamp f
     local patches=()
     case ${IMAC5K_STACK:-lean} in
-        lean) patches=(imac5k-lean-core-7.2.x.patch imac5k-stitch-layer-7.x.patch 5k-going-down-stop-resync.patch 5k-post-commit-link-recovery.patch 5k-logical-modeset-guard.patch 5k-resume-drop-cached-peer.patch 5k-resume-arm-link-health.patch) ;;
+        lean) patches=(imac5k-lean-core-7.2.x.patch imac5k-stitch-layer-7.x.patch 5k-going-down-stop-resync.patch 5k-post-commit-link-recovery.patch 5k-logical-modeset-guard.patch 5k-resume-drop-cached-peer.patch 5k-resume-arm-link-health.patch
+                       imacpro-slave-dp-panel-mode.patch dce120-enable-crtc-reset.patch dce12-multisync-master-first.patch dce110-genlock-master-from-pipe0.patch 5k-resync-postpone-on-modeset.patch) ;;
         verbose) patches=(imac5k-amdgpu-7.2.2.patch 5k-early-modeset.patch 5k-genlock-deterministic.patch 5k-genlock-settle-resync.patch 5k-latch-clear.patch 5k-latch-clear-going-down-only.patch) ;;
         *) die "IMAC5K_STACK must be lean or verbose." ;;
     esac

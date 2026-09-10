@@ -40,7 +40,12 @@ set -uo pipefail
 
 ESP=/boot
 CANONICAL="${ESP}/limine.conf"
-UKI="${ESP}/EFI/Linux/omarchy_linux.efi"
+# The default UKI is named after the kernel package base (linux, linux-t2, ...).
+KPKG="$(cat "/usr/lib/modules/$(uname -r)/pkgbase" 2>/dev/null || echo linux)"
+# This hook is installed alone, without lib/platform.sh. Keep its validation
+# consistent with imac_kernel_pkgbase before using metadata in an ESP path.
+[[ $KPKG =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || exit 0
+UKI="${ESP}/EFI/Linux/omarchy_${KPKG}.efi"
 FALLBACK="${ESP}/EFI/BOOT/BOOTX64.EFI"
 
 # Same list limine-install checks, minus the canonical path itself.

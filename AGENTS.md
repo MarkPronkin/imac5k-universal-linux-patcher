@@ -1,5 +1,10 @@
 # Current work checkpoint
 
+The iMac Pro PR #2 integration into `test` is recorded in
+[the PR review](notes/imacpro-pr2-review-2026-09-10.md). It includes the reviewed
+commit, compatibility fixes, offline/compile validation, and hardware limits.
+The PR still targets `main`; this integration is into `test` only.
+
 When resuming the GRUB-on-Arch work, read
 [the GRUB handoff](notes/grub-arch-handoff-2026-09-09.md). It records the user's
 request and scope decisions, exact changes, validation, the "don't test GRUB on

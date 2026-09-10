@@ -108,6 +108,11 @@ class ReleaseTests(unittest.TestCase):
                        # The suspend module installs its sleep hook and s2idle
                        # drop-in from here.
                        "scripts/imac-tb-sleep-hook", "configs/imac5k-s2idle.conf",
+                       "patches/imacpro-slave-dp-panel-mode.patch",
+                       "patches/dce120-enable-crtc-reset.patch",
+                       "patches/dce12-multisync-master-first.patch",
+                       "patches/dce110-genlock-master-from-pipe0.patch",
+                       "patches/5k-resync-postpone-on-modeset.patch",
                        # The speaker tuning is vendored, not downloaded: an
                        # archive without it installs a graph that cannot load.
                        "assets/imac-audio/iMacAudio.conf",

@@ -27,14 +27,10 @@ debugfs force_timing_sync knob. It logs "manual-trigger-sync".
  static bool is_freesync_video_mode(const struct drm_display_mode *mode, struct amdgpu_dm_connector *aconnector);
  static void reset_freesync_config_for_crtc(struct dm_crtc_state *new_crtc_state);
  static struct amdgpu_i2c_adapter *
-@@ -2642,6 +2644,7 @@
- 
- 	mutex_init(&adev->dm.dpia_aux_lock);
+@@ -2644,2 +2646,3 @@
  	mutex_init(&adev->dm.dc_lock);
 +	INIT_DELAYED_WORK(&adev->dm.tiled_resync_work, amdgpu_dm_tiled_resync_work);
  	mutex_init(&adev->dm.audio_lock);
- 
- 	if (amdgpu_dm_irq_init(adev)) {
 @@ -3016,6 +3019,8 @@
  {
  	int i;

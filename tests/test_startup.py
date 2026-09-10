@@ -245,6 +245,16 @@ esac''')
         self.assertIn("eq missing dependencies: pactl pw-cli wpctl systemctl", result.stdout)
         self.assertNotIn("command not found", result.stderr)
 
+    def test_imac_pro_does_not_request_cs8409_or_eq_dependencies(self):
+        (self.sys / "class/dmi/id/product_name").write_text("iMacPro1,1\n")
+        result = self.launch("--status", limine=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("eq missing dependencies", result.stdout)
+        self.assertNotIn("audio missing dependencies", result.stdout)
+        self.assertNotIn("eq needs", result.stdout)
+        self.assertNotIn("cargo", result.stdout)
+        self.assertNotIn("command not found", result.stderr)
+
     def test_arch_family_grub_uses_its_backend_and_dependencies(self):
         for distro in ("arch", "endeavouros", "cachyos"):
             with self.subTest(distro=distro):

@@ -108,7 +108,7 @@ mod_5k_detect() {
         outputs=$(hyprctl monitors 2>/dev/null)
         [[ $outputs == *5120x2880* ]] && active=1
     fi
-    if ((installed && live && active)); then echo applied
+    if ((installed && live && active)) && five_k_has_10bpc; then echo applied
     elif ((installed || live)); then echo partial
     else echo not-applied; fi
 }
@@ -128,7 +128,8 @@ mod_5k_apply() {
     say "Recovery: select another Fedora kernel in GRUB. To undo this kernel: $0 --remove 5k"
     confirm "Build and install 5K support for ${KREL}?" || return 1
     local log="$LOGDIR/apply-5k-$(date +%Y%m%d-%H%M%S).log"
-    "$SCRIPT_DIR/fedora-imac5k" 2>&1 | tee "$log"
+    "$SCRIPT_DIR/fedora-imac5k" 2>&1 | tee "$log" || return 1
+    five_k_set_10bpc
 }
 mod_5k_remove() {
     fedora_mutable || return 1
