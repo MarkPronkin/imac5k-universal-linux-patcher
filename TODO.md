@@ -3,6 +3,203 @@
 Open items for the iMac18,3 patch. Root causes are recorded here so nobody has
 to re-derive them.
 
+## Resume checkpoint — 2026-09-10 (suspend: the freeze is a stitch-layer BUG)
+
+**A staged suspend test ended in a kernel BUG in the stitch layer, not a
+firmware hang.** At 10:58 Codex ran `notes/imac-pm-stage.py freezer` (deep,
+all four sleep targets still masked). Tasks froze and thawed normally: the 5 s
+test delay is in dmesg (1873.12 to 1878.25) and `suspend_stats` counted a
+success. 200 ms after `PM: suspend exit`, a Hyprland commit hit:
+
+```
+TILED_STITCH: accept logical root modeset without reprogramming connector=eDP-1 crtc=71 ...
+kernel BUG at ../display/amdgpu_dm/amdgpu_dm.c:13678!   BUG_ON(dm_new_crtc_state->stream == NULL)
+RIP: dm_update_crtc_state+0x3c1/0xa60 [amdgpu]   Comm: Hyprland
+```
+
+The oops left the display locks held and the screen froze until a
+power-cycle. Evidence is in `hardware-private/modeset-guard/`: the kernel and
+full logs, and the pm_test run directory.
+
+**Cause.** `amdgpu_dm_tiled_stitch_has_live_root_stream()` checks the *old*
+state's stream. Everything that sets `mode_changed` runs before the disable
+pass (`drm_atomic_helper_check_modeset()` and
+`amdgpu_dm_connector_atomic_check()`), and that pass removes such a CRTC's
+stream from the new state. So the shortcut crashes every time it fires. Here
+the trigger was HDR output metadata going from none to an SDR-EOTF blob
+(`HDR SB:01 1a 00...` right before the BUG), which amdgpu treats as entering
+HDR. It fired nowhere else in the retained journal (three boots).
+
+**What this changes in the suspend record.** The 2026-08-28 "Apple firmware
+S3" conclusion is unsupported: hibernate was recorded hanging the same way,
+and hibernation never enters S3. Those hangs also stopped at `PM: suspend
+entry`, before any thaw, so they are a separate failure that is still
+unlocated; the remaining pm_test stages can find it. README still states the
+firmware cause. Correct it once those stages have run.
+
+### Candidate fix, booted and passing the freezer trigger (test entry only)
+
+`patches/5k-logical-modeset-guard.patch` keeps only a stream the new state
+still holds, so these commits take mainline's full modeset. Applies at
+`--fuzz=0` on top of either full stack (verified on pristine 7.2.3). Not wired
+into either installer.
+
+Built for `7.2.3-arch1-3`, srcversion **`AECDF2CBEC6CD3806C8CE05`** (installed
+default: `ABF2FCDC5A956FB87F81368`). Module:
+`hardware-private/modeset-guard/amdgpu.ko.zst` (stripped, zstd -19). Build
+tree: `~/.cache/kernel-5k-build-guard/linux-7.2.3`, a reflink copy of the
+installer's tree; its unstripped `amdgpu.ko` decodes any later oops.
+
+### Next steps
+
+1. **Done 11:38.** Booted `/Test - 5K-modeset-guard` (`LoaderImageIdentifier`
+   `omarchy_linux-5K-modeset-guard.efi`); srcversion `AECDF2CBEC6CD3806C8CE05`.
+   Clean boot: tiled modeset, link-health PASS 8/8 with 0 recoveries, no BUG.
+   The first `add` attempt stopped at "embedded cmdline mismatch" with nothing
+   installed. mkinitcpio 41.1 (installed 2026-09-10) squeezes runs of spaces
+   in the cmdline it embeds, and this machine's cmdline has a double space
+   (`rootfstype=btrfs  resume=`). `imac-alt-entry` now compares cmdlines with
+   whitespace runs collapsed, which is how the kernel splits them.
+2. **Done, PASS.** `freezer` (deep) rerun at boottime 161.8 s, run dir
+   `/var/tmp/imac-pm-freezer-p5luvuj5`: `reached_test_delay: true`, success 1,
+   no restoration errors. The same trigger recurred: `HDR SB:01 1a` 200 ms
+   after `PM: suspend exit`. This time it produced `added peer slave-tile
+   stream` (a full tiled modeset), then link-health PASS with 0 recoveries.
+   No BUG, oops or `accept logical root modeset` anywhere in the boot. The
+   masks and `pm_test=none` were restored afterwards.
+   Still to do: wire the patch into both installers so the default entry
+   gets it. **Done 2026-09-10: all three suspend patches (guard,
+   drop-cached-peer, arm-link-health) are wired into the lean and verbose
+   stacks of `patch-imac5k-amdgpu.sh` and the lean stack of
+   `fedora-imac5k`, verified applying over pristine 7.2.3 and at --fuzz=0
+   over pristine 7.1.13, and shipped in release 9.9.11-test. The audio
+   chain-restart fix shipped in the same release.**
+3. Then `devices`, `platform`, `processors` and `core`, one per run and only
+   with the owner's go-ahead each time: any of them can hang for real.
+   Keep all four sleep targets masked throughout.
+   - **`devices`: PASS, with one resume bug.** Run dir
+     `/var/tmp/imac-pm-devices-5a38x2_m`, boottime 289.7 s: every device
+     callback returned 0 (slowest: amdgpu resume 948 ms, wiphy suspend
+     504 ms), then link-health PASS with 0 recoveries. No BUG and no
+     brcmfmac errors. The SATA link took about 6 s to come back ("slow to
+     respond", then up at 6 Gbps).
+   - **Resume bug:** during amdgpu resume the log shows
+     `dc_state_add_plane: Existing stream not found; failed to attach
+     surface!`. `dm_destroy_cached_state()` releases the cached `stream` and
+     both plane states but not `stream_peer`. The resume commit's enable pass
+     sees the stale peer, skips creating a fresh one, and the peer-plane attach
+     fails. `drm_atomic_helper_resume()` returns an error that is ignored, and
+     the stale peer's reference leaks. A later hotplug commit restored the
+     panel. The guard is not involved: it needs an old-state stream, and
+     resume starts from a disabled CRTC. There's no baseline in the retained
+     journal, since this was the first devices-level resume there.
+   - **Candidate fix, built, not yet booted:** `patches/5k-resume-drop-cached-peer.patch`
+     releases `stream_peer` in that loop. It applies at `--fuzz=0` to the
+     guard build tree (lean) and to a scratch full stack plus guard (offset -2).
+     In that scratch build, `5k-genlock-settle-resync.patch` rejected one
+     hunk at `--fuzz=0`; this is unrelated and not investigated.
+     Built on top of the guard, in a reflink copy of its tree at
+     `~/.cache/kernel-5k-build-peer/linux-7.2.3` (unstripped `amdgpu.ko`
+     there). The guard tree is untouched. srcversion
+     **`EAD6EF9581BD92D565F826E`**, vermagic `7.2.3-arch1-3`, no build
+     warnings. Module: `hardware-private/resume-peer/amdgpu.ko.zst`. Next:
+     `sudo scripts/imac-alt-entry add 5K-resume-peer hardware-private/resume-peer/amdgpu.ko.zst`,
+     boot `/Test - 5K-resume-peer`, confirm the srcversion, and rerun
+     `freezer` and then `devices`.
+     Pass criterion: no `Existing stream not found` on a devices-level resume.
+     **Booted 12:05** (`LoaderImageIdentifier`
+     `omarchy_linux-5K-resume-peer.efi`, srcversion `EAD6EF9581BD92D565F826E`
+     confirmed): tiled modeset, link-health PASS twice with 0 recoveries, no
+     BUG, oops, `accept logical root` or `Existing stream not found`. All four
+     sleep targets masked, `pm_test=none`.
+     **`freezer` (deep): PASS**, boottime 207.1 s, run dir
+     `/var/tmp/imac-pm-freezer-b5ud2eou`: `reached_test_delay: true`, success
+     1, no restoration errors. The HDR trigger recurred (`HDR SB:01 1a` at
+     213.23, 0.6 s after `PM: suspend exit`) and again took the full tiled
+     modeset (`added peer slave-tile stream`), then link-health PASS with 0
+     recoveries at 217.04. No BUG, oops, `accept logical root` or
+     `Existing stream not found` in the boot. Masks and `pm_test=none`
+     restored.
+     **`devices` (deep): PASS, and the pass criterion is met.** Run dir
+     `/var/tmp/imac-pm-devices-5sr1jamt`, boottime 332.5 s. Every device
+     callback returned 0 (amdgpu suspend 161 ms, resume 573 ms; wiphy suspend
+     503 ms). There's no `Existing stream not found`: the resume commit itself
+     logged `added peer slave-tile stream` at dmesg 339.73, before
+     `resume of devices complete` at 340.95. No BUG or oops. Masks and
+     `pm_test=none` restored. The owner confirmed the whole panel looks
+     normal afterwards.
+   - **New gap: a clean resume is never link-health checked.** The resume
+     commit runs from `dm_resume()` inside `amdgpu_device_ip_resume()`,
+     while `adev->in_suspend` is still set (it is cleared at the end of
+     `amdgpu_device_resume()`). `amdgpu_dm_queue_tiled_resync()` skips
+     commits made while it is set, so it doesn't arm link-health or queue
+     the tile timing sync, and no later modeset came to arm them. Before the
+     fix, the failed resume commit forced a post-exit modeset, and that
+     modeset armed the check. Next: arm both once resume completes (owner
+     chose this over the `platform` stage, 2026-09-10).
+   - **Candidate fix, booted, `devices` PASS (test entry only):**
+     `patches/5k-resume-arm-link-health.patch`. When the only reason for the
+     skip is `in_suspend`, the queue notes the tiled modeset, and a new DM
+     `.complete` hook arms link-health and the timing sync after
+     `amdgpu_device_resume()` returns. It applies at `--fuzz=0` to the peer
+     tree (exact) and to the guard tree (offset -5). Built in a reflink copy
+     of the peer tree at `~/.cache/kernel-5k-build-linkarm/linux-7.2.3`
+     (unstripped `amdgpu.ko` there). srcversion
+     **`22572AED4C06B4EB3C314CC`**, vermagic `7.2.3-arch1-3`, no build
+     warnings. Module: `hardware-private/resume-linkarm/amdgpu.ko.zst`.
+     **Booted 12:24** (`LoaderImageIdentifier`
+     `omarchy_linux-5K-resume-linkarm.efi`, srcversion
+     `22572AED4C06B4EB3C314CC` confirmed): tiled modeset, link-health armed
+     three times and PASS twice with 0 recoveries, no BUG, oops,
+     `accept logical root` or `Existing stream not found`. All four sleep
+     targets masked, `pm_test=none`.
+     **`devices` (deep): PASS, the hook arms on its own.** Run dir
+     `/var/tmp/imac-pm-devices-1h6yaq_r`, boottime 203.5 s, success 1, every
+     device callback 0, no restoration errors. The resume commit added a
+     fresh peer at 212.97 (no `Existing stream not found`). `dm_complete()`
+     then armed link-health at 213.02, and pass 1/8 was healthy at 213.13,
+     both before `PM: suspend exit` at 213.16. At 213.35 Hyprland's
+     HDR-metadata commit (`HDR SB:01 1a`) forced the usual full tiled modeset
+     and re-armed the check. That run went to PASS 8/8 with 0 recoveries at
+     217.17. So the resume-armed run completed only 1 of 8 checks before it was
+     superseded. On this desktop a post-exit modeset always follows, so the
+     "no intervening modeset" part can't be shown here. The timing sync logs
+     nothing visible. No BUG, oops or `accept logical root`. Masks and
+     `pm_test=none` restored.
+     Pass criterion was: `link-health armed after tiled
+     modeset` followed by `link-health PASS` after resume, still with no
+     `Existing stream not found`.
+   - **Audio after a resume: the speaker tuning was left without its sink.**
+     After the 12:27 `devices` run the owner reported no sound, with only
+     "Dummy Output" in the picker. The kernel side was fine: both HDA cards
+     resumed and returned 0. WirePlumber had re-created every device (serials
+     above the login clients'), and `imac-speaker-eq`'s filter-chain module had
+     unloaded. Its `pipewire -c` process kept running with no sink and no
+     PipeWire socket, so `Restart=on-failure` never fired. The jack watcher
+     ignored the card events because the jack state had not changed, and its
+     `systemctl start` is a no-op on such an instance. The trigger is not
+     understood: a WirePlumber restart also re-creates the card, and the chain
+     survives that one and relinks.
+     Fix in `scripts/imac-audio-jack-switch` (installed to `~/.local/bin` and
+     live): the watcher also wakes on `'remove' on sink`. With the speakers
+     in use and the tuned sink gone, it *restarts* the chain. Verified live by
+     destroying the tuned sink's node: restarted within 1 s and the default was
+     restored. A real resume with the fix is still untested. New tests are in
+     `tests/test_audio_jack.py`.
+   - Remaining stages: `platform`, `processors`, `core`.
+
+`notes/imac-pm-stage.py` now finds its test window with a `/dev/kmsg` marker.
+Its timestamp filter missed the delay line because the printk clock runs
+behind `CLOCK_BOOTTIME`, so the 10:58 run reported `reached_test_delay: false`.
+
+Codex's desktop `standby` command (lock plus DPMS off, no kernel suspend) was
+discarded with `git restore` at 10:58; `notes/standby-handoff-2026-09-10.md`
+still describes it as staged. Its new files survive as unreachable Git blobs
+until `git gc` prunes them (two weeks by default): `scripts/imac-standby`
+`92909fe`, `e920602`, `ade9d10`; `docs/standby.md` `474f145`, `0931d71`;
+`tests/test_standby.py` `c9e98b6`, `a058cf8`. Its edits to tracked files are
+gone.
+
 ## Resume checkpoint — 2026-09-08
 
 **The post-commit link-health candidate WORKS. First clean boot: 02:09.**
