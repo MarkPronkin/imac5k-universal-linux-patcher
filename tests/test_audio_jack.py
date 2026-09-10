@@ -67,6 +67,7 @@ class JackSwitchTests(unittest.TestCase):
 echo "SYSTEMCTL $*" >> "{self.trace}"
 case "${{1:-}}" in
     cat) [[ "{str(installed).lower()}" == true ]] || exit 1 ;;
+    start|restart) touch "{self.root}/eq-started" ;;
 esac
 exit 0''')
 
@@ -92,7 +93,10 @@ case "$*" in
 {cards}
 EOF
         ;;
-    "list short sinks")  printf '%s' '{sink_lines}' ;;
+    "list short sinks")  printf '%s' '{sink_lines}'
+        # The tuned sink registers once the service has been (re)started.
+        [[ -e "{self.root}/eq-started" ]] && printf '99\\t{TUNED}\\tPipeWire\\ts32le 2ch 44100Hz\\tSUSPENDED\\n'
+        ;;
     "list sink-inputs")  printf '%s' '{input_lines}' ;;
     "get-default-sink")  cat "$state" ;;
     "set-default-sink "*) echo "SET-DEFAULT $2" >> "{self.trace}"; printf '%s' "$2" > "$state" ;;
@@ -191,6 +195,33 @@ export PATH="{self.bin}:$PATH"
         self.assertIn("SYSTEMCTL start imac-speaker-eq.service", steps)
         self.assertIn(f"SET-DEFAULT {TUNED}", steps)
         self.assertIn(f"MOVE 70 -> {TUNED}", steps)
+
+    # ── the card re-created under the tuning ──────────────────────────────
+    def test_a_tuning_left_without_its_sink_is_restarted_not_started(self):
+        # After a resume the chain's process is still running with nothing
+        # loaded; `start` would be a no-op on it.
+        self.stub_pactl(headphones=False, active=FOUR_CHANNEL, default="auto_null",
+                        sinks=((43, "auto_null"),), inputs=((70, 43),))
+        result = self.run_switch(f"state=out; reconcile {CARD}; echo state=$state")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("state=out", result.stdout)
+        steps = self.steps()
+        self.assertIn("SYSTEMCTL restart imac-speaker-eq.service", steps)
+        self.assertIn(f"SET-DEFAULT {TUNED}", steps)
+        self.assertIn(f"MOVE 70 -> {TUNED}", steps)
+
+    def test_a_card_event_leaves_a_working_tuning_alone(self):
+        self.stub_pactl(headphones=False, active=FOUR_CHANNEL, sinks=((40, TUNED),))
+        result = self.run_switch(f"state=out; reconcile {CARD}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.steps(), [])
+
+    def test_the_tuning_stays_off_while_headphones_are_in(self):
+        # Its sink is meant to be missing then.
+        self.stub_pactl(headphones=True, active=STEREO, default=AUX, sinks=((41, AUX),))
+        result = self.run_switch(f"state=in; reconcile {CARD}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.steps(), [])
 
     def test_startup_does_nothing_when_the_tuning_is_not_installed(self):
         # Without the eq module there is no tuned sink to hide, and the stock

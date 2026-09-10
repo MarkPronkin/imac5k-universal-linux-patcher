@@ -667,8 +667,8 @@ eq_install_jack_helper() {
 # milliseconds later, while WirePlumber is still a second and a half from
 # creating the device the chain targets. The chain then has nothing to link to
 # and never registers its sink -- and it does not exit, so Restart=on-failure
-# never fires and the jack helper's own `systemctl start` is a no-op against
-# the running-but-dead instance. With the raw 4.0 device hidden by this
+# never fires. (A resume leaves the chain the same way, since it re-creates the
+# card; the jack helper restarts it then.) With the raw 4.0 device hidden by this
 # module's WirePlumber rule, that leaves the session with no output at all:
 # auto_null, and an empty sound picker. So wait for the target device to exist
 # before starting, and fail loudly instead of silently if it never does.

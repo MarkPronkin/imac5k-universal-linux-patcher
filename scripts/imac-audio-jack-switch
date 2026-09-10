@@ -143,7 +143,11 @@ to_speakers() {
     # The chain links to the four-channel device as it starts; started before
     # the card is back on that profile, it has nothing to attach to.
     wait_for_profile "$card" "$PROFILE_40" || log "card is not on ${PROFILE_40}; starting the tuning anyway"
-    systemctl --user start "$EQ_UNIT" || { log "could not start ${EQ_UNIT}"; return 1; }
+    # Restart, not start, when the sink is missing: a chain whose target went
+    # away keeps running with nothing loaded, and `start` is a no-op on it.
+    local verb=start
+    sink_exists "$EQ_SINK" || verb=restart
+    systemctl --user "$verb" "$EQ_UNIT" || { log "could not ${verb} ${EQ_UNIT}"; return 1; }
     wait_for_sink "$EQ_SINK" || { log "tuned sink never appeared; see journalctl --user -u ${EQ_UNIT}"; return 1; }
     claim_default "$EQ_SINK" "$aux" auto_null
     # shellcheck disable=SC2086
@@ -155,12 +159,30 @@ apply_state() {   # $1 = card, $2 = "in"/"out"
     if [[ $2 == in ]]; then to_headphones "$1"; else to_speakers "$1"; fi
 }
 
+# One card event, or one sink removed. Follow the jack, and while the speakers
+# are in use, put the tuning back if its sink has gone. After a resume, which
+# re-creates the card, the chain's filter module has been seen unloaded while
+# the service kept running with no sink, so the picker showed only the dummy
+# output. A WirePlumber restart re-creates the card too, and that one the chain
+# survives. The jack state has not changed, so nothing else notices.
+reconcile() {   # $1 = card; updates $state
+    local want
+    if headphones_present "$1"; then want=in; else want=out; fi
+    if [[ $want != "$state" ]]; then
+        state=$want
+        apply_state "$1" "$state"
+    elif [[ $state == out ]] && ! sink_exists "$EQ_SINK"; then
+        log "tuned sink is gone; restarting the tuning"
+        to_speakers "$1"
+    fi
+}
+
 main() {
     command -v pactl >/dev/null || { log "pactl is required"; exit 1; }
     systemctl --user cat "$EQ_UNIT" >/dev/null 2>&1 || {
         log "${EQ_UNIT} is not installed; nothing to switch"; exit 0; }
 
-    local card state want
+    local card state
     # The audio stack may still be starting up with the session.
     local i
     for i in $(seq 60); do
@@ -176,14 +198,13 @@ main() {
     apply_state "$card" "$state"
 
     # Card events carry port availability; pactl reports them without polling.
+    # Sink removals are watched too: the tuned sink can vanish after the last
+    # card event of a resume. Volume changes are only 'change' events.
     while IFS= read -r _; do
         sleep "$SETTLE"
         card=$(speaker_card); [[ -n $card ]] || continue
-        if headphones_present "$card"; then want=in; else want=out; fi
-        [[ $want == "$state" ]] && continue
-        state=$want
-        apply_state "$card" "$state"
-    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered "on card")
+        reconcile "$card"
+    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered -E "on card|'remove' on sink")
 
     log "pactl subscribe ended"
     exit 1   # the unit restarts; a dead watcher would silently strand the jack
