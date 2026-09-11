@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Installed by imac-patcher (`--apply suspend`) to
+# /usr/lib/systemd/system-sleep/; removed by `--remove suspend`.
+#
+# The BCM43602 Wi-Fi (PCI 14e4:43ba, brcmfmac; 0000:03:00.0 on the iMac18,3)
+# refuses most system sleeps. brcmfmac's suspend callback tells the firmware
+# it is entering D3 and waits 2 s for an ack; the only Linux firmware for this
+# chip (7.35.177.61, 2015) usually never sends one, the callback returns -EIO,
+# and the kernel abandons the whole suspend ("Some devices failed to
+# suspend"). Measured 2026-09-11 with pm_test=devices: the handshake timed out
+# with the interface up and with it down; with the card unbound the stage
+# passed, and the rebound card came back as wlp3s0. So sleep without the
+# driver, as the Thunderbolt hook does for the NHI; Wi-Fi reconnects a few
+# seconds after wake. Only this device ID is touched: other brcmfmac chips,
+# such as the iMac Pro's BCM4364, stay bound.
+#
+# systemd runs every executable in system-sleep/ with $1 = pre|post around
+# each sleep. "pre" unbinds each matching function and records it; "post"
+# rebinds the recorded ones. The list lives in /run (tmpfs): it survives the
+# sleep but not a reboot.
+set -uo pipefail
+
+DRV_DIR=${IMAC_WIFI_DRV_DIR:-/sys/bus/pci/drivers/brcmfmac}
+DEV_DIR=${IMAC_WIFI_DEV_DIR:-/sys/bus/pci/devices}
+STATE=${IMAC_WIFI_STATE_FILE:-/run/imac-wifi-sleep-hook}
+BCM43602=0x14e4:0x43ba
+
+log() { printf 'imac-wifi-sleep-hook: %s\n' "$*"; }
+
+case "${1:-}" in
+pre)
+    : > "$STATE"
+    for dev in "$DRV_DIR"/0000:*; do
+        [[ -e $dev ]] || continue
+        bdf=${dev##*/}
+        id="$(cat "$DEV_DIR/$bdf/vendor" 2>/dev/null):$(cat "$DEV_DIR/$bdf/device" 2>/dev/null)"
+        [[ $id == "$BCM43602" ]] || continue
+        # Subshell so a failed redirection is silenced too.
+        if ( echo "$bdf" > "$DRV_DIR/unbind" ) 2>/dev/null; then
+            printf '%s\n' "$bdf" >> "$STATE"
+            log "unbound $bdf for sleep"
+        else
+            log "could not unbind $bdf — its driver will probably refuse this suspend"
+        fi
+    done
+    ;;
+post)
+    [[ -s $STATE ]] || exit 0
+    while read -r bdf; do
+        if ( echo "$bdf" > "$DRV_DIR/bind" ) 2>/dev/null; then
+            log "rebound $bdf after resume"
+        else
+            log "could not rebind $bdf"
+        fi
+    done < "$STATE"
+    rm -f "$STATE"
+    ;;
+esac
+exit 0

@@ -32,7 +32,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, orphan test entries, and matching lean stacks across installers |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
 | `test_eq.py` | Speaker routing and volume restoration |
-| `test_suspend.py`, `test_tb_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the Thunderbolt sleep hook against a fake sysfs tree |
+| `test_suspend.py`, `test_tb_sleep_hook.py`, `test_wifi_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the Thunderbolt and Wi-Fi sleep hooks against a fake sysfs tree |
 | `test_audio_jack.py` | Headphone jack detection, which streams follow the jack, and the two switching transitions |
 | `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |

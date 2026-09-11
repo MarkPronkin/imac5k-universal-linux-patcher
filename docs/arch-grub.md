@@ -54,9 +54,9 @@ After a kernel update, reboot into the installed kernel before applying or
 promoting a module. The patched module needs to be rebuilt for each new kernel.
 
 The suspend module allows suspend and keeps hibernate blocked. It installs the
-Thunderbolt sleep hook and a systemd drop-in that makes suspend use s2idle
-(deep S3 resets on wake on this hardware), and removes the retired `idle=poll`
-parameter through GRUB if present. Read the suspend section of the
+Thunderbolt and Wi-Fi sleep hooks and a systemd drop-in that makes suspend use
+s2idle (deep S3 resets on wake on this hardware), and removes the retired
+`idle=poll` parameter through GRUB if present. Read the suspend section of the
 [README](../README.md) before applying it.
 
 ## Test entries

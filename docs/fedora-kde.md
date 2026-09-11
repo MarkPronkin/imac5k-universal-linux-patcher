@@ -256,11 +256,12 @@ discards a save that belongs to a panel KDE no longer configures rather than
 writing it onto the current one.
 
 **Sleep** follows the Omarchy module: `suspend.target` unmasked, the hibernate
-family masked, the Thunderbolt sleep hook installed, and a systemd drop-in
-that makes suspend use s2idle (deep S3 resets on wake; needs systemd 256 or
-newer). If the retired `idle=poll` variant left the argument on the current
-kernel's GRUB entry, applying or removing the module strips it with grubby.
-`--remove suspend` lifts the masks and removes the hook and the drop-in.
+family masked, the Thunderbolt and Wi-Fi sleep hooks installed, and a systemd
+drop-in that makes suspend use s2idle (deep S3 resets on wake; needs systemd
+256 or newer). If the retired `idle=poll` variant left the argument on the
+current kernel's GRUB entry, applying or removing the module strips it with
+grubby. `--remove suspend` lifts the masks and removes the hooks and the
+drop-in.
 
 ---
 

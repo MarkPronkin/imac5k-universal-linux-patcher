@@ -25,6 +25,7 @@ NO_CSTATES_PARAM=idle=poll
 VIDEO_4K='video=eDP-1:3840x2160@60e'
 HIBERNATE_TARGETS=(hibernate.target hybrid-sleep.target suspend-then-hibernate.target)
 TB_SLEEP_HOOK="{self.tmp.name}/imac-tb-sleep-hook"
+WIFI_SLEEP_HOOK="{self.tmp.name}/imac-wifi-sleep-hook"
 SLEEP_CONF_DROPIN="{self.tmp.name}/sleep.conf.d/imac5k-s2idle.conf"
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"

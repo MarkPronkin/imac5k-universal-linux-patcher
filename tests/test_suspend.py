@@ -44,7 +44,8 @@ systemctl() {
     esac
 }
 '''
-HOOK_INSTALLED = 'install -m755 /dev/null "$TB_SLEEP_HOOK"\n'
+TB_HOOK_INSTALLED = 'install -m755 /dev/null "$TB_SLEEP_HOOK"\n'
+HOOK_INSTALLED = TB_HOOK_INSTALLED + 'install -m755 /dev/null "$WIFI_SLEEP_HOOK"\n'
 DROP_IN_INSTALLED = 'install -D -m644 "$SCRIPT_DIR/../configs/imac5k-s2idle.conf" "$SLEEP_CONF_DROPIN"\n'
 
 
@@ -98,6 +99,7 @@ NO_CSTATES_DROPIN={tmp}/dropins/imac5k-no-cstates.conf
 HIBERNATE_HOOK_CONF={tmp}/omarchy_resume.conf
 HIBERNATE_DROPIN={tmp}/dropins/resume.conf
 TB_SLEEP_HOOK={tmp}/system-sleep/imac-tb-sleep-hook
+WIFI_SLEEP_HOOK={tmp}/system-sleep/imac-wifi-sleep-hook
 SLEEP_CONF_DROPIN={tmp}/sleep.conf.d/imac5k-s2idle.conf
 SCRIPT_DIR={ROOT}/scripts
 mkdir -p "$LIMINE_DROPIN_DIR" "$(dirname "$TB_SLEEP_HOOK")"
@@ -392,6 +394,7 @@ class FedoraSuspendTests(unittest.TestCase):
         prelude = STUBS + CONSTS + f'''
 KREL=7.2.2-test
 TB_SLEEP_HOOK={tmp}/system-sleep/imac-tb-sleep-hook
+WIFI_SLEEP_HOOK={tmp}/system-sleep/imac-wifi-sleep-hook
 SLEEP_CONF_DROPIN={tmp}/sleep.conf.d/imac5k-s2idle.conf
 SCRIPT_DIR={ROOT}/scripts
 mkdir -p "$(dirname "$TB_SLEEP_HOOK")"
@@ -489,6 +492,43 @@ mod_suspend_remove''')
     def test_tier_boot_while_stale_grub_arg_remains(self):
         result = self.run_module("mod_suspend_tier", grubby_has_arg=True)
         self.assertEqual(result.stdout.strip(), "boot", result.stderr)
+
+
+WIFI_HOOK = ROOT / "scripts/imac-wifi-sleep-hook"
+
+
+class WifiSleepHookWiringTests(unittest.TestCase):
+    """Both backends install, require and remove the Wi-Fi sleep hook.
+
+    Installs from before the hook existed report partial until suspend is
+    applied again, which is how an upgrade picks it up.
+    """
+    omarchy = OmarchySuspendTests.run_module
+    fedora = FedoraSuspendTests.run_module
+
+    def test_omarchy_requires_installs_and_removes_the_wifi_hook(self):
+        result = self.omarchy(
+            "mod_suspend_detect", env=TARGETS_APPLIED + TB_HOOK_INSTALLED + DROP_IN_INSTALLED)
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+        result = self.omarchy("mod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hook = Path(result.tmp) / "system-sleep/imac-wifi-sleep-hook"
+        self.assertEqual(hook.read_text(), WIFI_HOOK.read_text())
+        result = self.omarchy(HOOK_INSTALLED + DROP_IN_INSTALLED + "mod_suspend_remove\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((Path(result.tmp) / "system-sleep/imac-wifi-sleep-hook").exists())
+
+    def test_fedora_requires_installs_and_removes_the_wifi_hook(self):
+        result = self.fedora(
+            TARGETS_APPLIED + TB_HOOK_INSTALLED + DROP_IN_INSTALLED + "mod_suspend_detect")
+        self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+        result = self.fedora("mod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hook = Path(result.tmp) / "system-sleep/imac-wifi-sleep-hook"
+        self.assertEqual(hook.read_text(), WIFI_HOOK.read_text())
+        result = self.fedora(HOOK_INSTALLED + DROP_IN_INSTALLED + "mod_suspend_remove")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((Path(result.tmp) / "system-sleep/imac-wifi-sleep-hook").exists())
 
 
 if __name__ == "__main__":

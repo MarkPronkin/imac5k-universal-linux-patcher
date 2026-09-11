@@ -105,9 +105,10 @@ class ReleaseTests(unittest.TestCase):
                        "scripts/lib/grub.sh", "scripts/lib/arch-grub.sh", "docs/arch-grub.md",
                        "patches/cs8409-headset-capture.patch", "docs/headphones.md",
                        "scripts/imac-audio-jack-switch",
-                       # The suspend module installs its sleep hook and s2idle
+                       # The suspend module installs its sleep hooks and s2idle
                        # drop-in from here.
-                       "scripts/imac-tb-sleep-hook", "configs/imac5k-s2idle.conf",
+                       "scripts/imac-tb-sleep-hook", "scripts/imac-wifi-sleep-hook",
+                       "configs/imac5k-s2idle.conf",
                        "patches/imacpro-slave-dp-panel-mode.patch",
                        "patches/dce120-enable-crtc-reset.patch",
                        "patches/dce12-multisync-master-first.patch",

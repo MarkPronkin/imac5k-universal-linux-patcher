@@ -101,7 +101,7 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified workaround** | ✅ **Verified** |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ⚪ Untested: no full s2idle cycle confirmed | ✅ **Verified** |
 | iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
@@ -118,7 +118,7 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
 | **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB |
 | **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
-| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified workaround** | ✅ **Verified** |
+| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ⚪ Untested: no full s2idle cycle confirmed | ✅ **Verified** |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
 | **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
 | **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
@@ -137,7 +137,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
-| 😴 **Suspend** | Hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, and waking from deep S3 resets the machine. | ⚠️ Suspend allowed in s2idle (experimental), hibernate blocked — see below |
+| 😴 **Suspend** | Hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, and waking from deep S3 resets the machine. | ⚠️ Suspend allowed in s2idle (experimental, unconfirmed on hardware), hibernate blocked — see below |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -257,10 +257,11 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm =
 
 ## 😴 Suspend — read this before you try it
 
-**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in three separate ways, each now fixed or worked around:
+**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in four separate ways, each now fixed or worked around:
 
 - **The stitch-layer driver.** A commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 0.1.91-alpha (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
 - **The Thunderbolt controller.** Its suspend step freezes the kernel in both sleep modes. The module installs a systemd sleep hook, `/usr/lib/systemd/system-sleep/imac-tb-sleep-hook`, that detaches the controller just before sleep and reattaches it on wake.
+- **The Wi-Fi card.** Before every sleep, the BCM43602's driver (`brcmfmac`) tells the card's firmware it is about to power down and waits two seconds for an answer. The only Linux firmware for this chip, from 2015, usually never answers, and the kernel then abandons the whole suspend ("Some devices failed to suspend") and the machine comes straight back. The module installs a second sleep hook, `/usr/lib/systemd/system-sleep/imac-wifi-sleep-hook`, that detaches the card just before sleep and reattaches it on wake; Wi-Fi reconnects a few seconds later. Other Broadcom Wi-Fi chips, such as the iMac Pro's, are left alone.
 - **Deep sleep (S3).** With the controller detached the machine does enter S3, but waking from it resets the machine. The module therefore has systemd suspend to idle (s2idle) instead: a drop-in, `/etc/systemd/sleep.conf.d/imac5k-s2idle.conf`, sets `MemorySleepMode=s2idle`, which systemd writes to `/sys/power/mem_sleep` before every suspend. It needs systemd 256 or newer (the module refuses older versions), leaves the boot configuration alone and takes effect at once.
 
 The suspend module also **unmasks `suspend.target` and keeps the hibernate family masked**:
@@ -270,11 +271,11 @@ sudo systemctl unmask suspend.target
 sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 ```
 
-Suspend in s2idle with the hook is hardware-verified on iMac18,3 under Omarchy: `systemctl suspend` resumed cleanly, with the hook detaching and reattaching the controller. That run selected s2idle on the kernel command line; selecting it through the systemd drop-in is covered by offline tests only so far, and CachyOS and Fedora are untested. Treat suspend as experimental: keep the 5K module from 0.1.91-alpha or newer, and know that a hang still means a power-cycle. On the test machine, waking took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hook and switch to s2idle; writing to `/sys/power/state` by hand bypasses both and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
+**No complete s2idle suspend has been confirmed on hardware yet.** On iMac18,3 under Omarchy, the Wi-Fi driver refused every systemd suspend whose logs survive, so the machine never actually slept; the cycle earlier releases described as a clean resume cannot be verified and may have been refused the same way. With the card detached, the kernel's staged device-suspend test passes; a full suspend and wake with both hooks is the next test. CachyOS and Fedora are untested. Treat suspend as experimental: keep the 5K module from 0.1.91-alpha or newer, and know that a hang still means a power-cycle. On the test machine, coming back took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hooks and switch to s2idle; writing to `/sys/power/state` by hand bypasses them and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
 
 An earlier release tried `idle=poll`; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
-If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock and deletes the hook and the s2idle drop-in, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock and deletes both hooks and the s2idle drop-in, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
 
 ---
 

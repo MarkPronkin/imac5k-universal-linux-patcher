@@ -213,8 +213,9 @@ taken from so `--remove` never restores one panel's setting onto another.
 ## Suspend module (safe tier; boot tier while old `idle=poll` or Omarchy hibernation config remains)
 
 - systemd 256 or newer (`systemctl`) — sleep target masks, the Thunderbolt
-  sleep hook in `/usr/lib/systemd/system-sleep/`, and `MemorySleepMode=` in
-  the `/etc/systemd/sleep.conf.d/` drop-in; the module refuses older systemd
+  and Wi-Fi sleep hooks in `/usr/lib/systemd/system-sleep/`, and
+  `MemorySleepMode=` in the `/etc/systemd/sleep.conf.d/` drop-in; the module
+  refuses older systemd
 - Omarchy: the Limine/mkinitcpio stack from the boot module, used only when
   cleaning up a leftover `idle=poll` drop-in or Omarchy's hibernation setup
   (`limine-mkinitcpio`, `objcopy` for verification)
