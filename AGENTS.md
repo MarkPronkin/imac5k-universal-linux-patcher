@@ -1,14 +1,14 @@
 # Current work checkpoint
 
-**Latest stopping point (2026-09-11, evening):** suspend on this iMac aborts
-in brcmfmac: the BCM43602 firmware leaves the D3 handshake unanswered
-whatever the interface state (the owner's staged test: Wi-Fi up FAIL, down
-FAIL, card unbound PASS). The suspend module now detaches that card around
-sleep (`scripts/imac-wifi-sleep-hook`), and the README no longer calls
-suspend verified. Waiting for the owner to `--apply suspend` from the
-checkout and try one real `systemctl suspend`. Read
-[the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first:
-its "Update" section is current, the rest is the evidence trail.
+**Latest stopping point (2026-09-11, 15:50):** the first real s2idle suspend
+on this iMac succeeded with the new Wi-Fi hook (`scripts/imac-wifi-sleep-hook`,
+beside the Thunderbolt one): 50 s asleep, display link-health PASS, Ethernet
+and Wi-Fi back. The BCM43602 firmware leaves brcmfmac's D3 handshake
+unanswered whatever the interface state, which refused every earlier systemd
+suspend. Next: more cycles, then the README status, the 0.2.0-alpha notes and
+a 0.2.1-alpha release; the push and release await the owner. Read
+[the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first;
+its newest section is at the top.
 
 **Release 0.2.0-alpha (2026-09-11):** `test` (`b4b0a61`, PR #2 included) was
 fast-forwarded into `main`, reviewed and released from `main` as

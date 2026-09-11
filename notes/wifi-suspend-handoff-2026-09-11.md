@@ -5,6 +5,37 @@ done about suspend aborting in brcmfmac; then "remember where you stopped
 exactly". Investigation only: no code, boot, driver or power settings were
 changed, and no suspend or pm_test was run.
 
+## Real suspend with both hooks (2026-09-11 15:49): first confirmed s2idle cycle
+
+The owner applied suspend from the checkout (both hooks installed 15:49:03)
+and ran `systemctl suspend`: entry 15:49:30, systemd's "System returned from
+sleep operation 'suspend'" at 15:50:20 (50 s asleep, woken by the owner). No
+brcmfmac timeout. The Thunderbolt and Wi-Fi hooks unbound 07:00.0 and 03:00.0
+before sleep and rebound them after; the card re-probed (same 2015 firmware)
+and NetworkManager managed wlp3s0 again. After resume: 5K link-health armed on
+the resume modeset and passed 8/8 with 0 recoveries; tg3 link back in 4 s; the
+known SATA "slow to respond" recovery; `--status` from the checkout shows
+suspend applied. `/sys/power/suspend_stats` for this boot: success 2 (staged
+test 3 and this cycle), fail 6 (all 0000:03:00.0, -5). This machine exposes no
+hardware-sleep residency counters, so how deep s2idle gets here is unmeasured.
+
+One kernel WARNING, not from the hook. At 15:49:29.256, 170 ms before systemd
+started the suspend service, `brcmf_remove_interface` hit
+`WARN_ON(ifp->drvr->iflist[ifp->bsscfgidx] != ifp)` (core.c:968) in
+`brcmf_fweh_event_worker`, right after wpa_supplicant deleted p2p-dev-wlp3s0
+during NetworkManager's sleep teardown. It returns early; nothing broke.
+Yesterday's attempts had the same teardown without it; the difference is that
+the driver had been rebound (staged test 3) before this suspend, so it may
+recur on every suspend after a hook rebind. If it does, it is a brcmfmac
+bookkeeping bug on P2P deletion after a re-probe: upstream material, cosmetic
+apart from the W taint.
+
+**Stopping point now:** one cycle confirmed. Next: a few more cycles (one
+longer, one through the desktop's sleep action or idle timer), watching for the
+warning; then the README status (its cells and "no complete cycle" paragraph
+predate this test), the 0.2.0-alpha release notes, and push plus 0.2.1-alpha.
+The owner decides on the push and the release.
+
 ## Update (2026-09-11, evening): staged test run, fix implemented
 
 The owner ran `sudo bash notes/wifi-d3-test.sh`:
