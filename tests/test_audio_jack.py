@@ -72,8 +72,9 @@ esac
 exit 0''')
 
     def stub_pactl(self, headphones=False, active=FOUR_CHANNEL, sinks=(),
-                   inputs=(), default=TUNED, four_channel=True):
-        """`sinks` is (id, name) pairs; `inputs` is (stream id, sink id) pairs."""
+                   inputs=(), default=TUNED, four_channel=True, events=()):
+        """`sinks` is (id, name) pairs; `inputs` is (stream id, sink id) pairs;
+        `events` is what `pactl subscribe` prints before it exits."""
         cards = CARDS.format(
             card=CARD, four=FOUR_CHANNEL if four_channel else "output:unused",
             speaker="not available" if headphones else "availability unknown",
@@ -82,6 +83,7 @@ exit 0''')
             f"{i}\t{n}\tPipeWire\ts32le 2ch 44100Hz\tSUSPENDED\n" for i, n in sinks)
         input_lines = "".join(
             f"Sink Input #{s}\n\tDriver: PipeWire\n\tSink: {k}\n" for s, k in inputs)
+        event_lines = "".join(f"{e}\n" for e in events)
         (self.root / "default-sink").write_text(default)
         self.stub("pactl", f'''
 state="{self.root}/default-sink"
@@ -101,6 +103,9 @@ EOF
     "get-default-sink")  cat "$state" ;;
     "set-default-sink "*) echo "SET-DEFAULT $2" >> "{self.trace}"; printf '%s' "$2" > "$state" ;;
     "move-sink-input "*) echo "MOVE $2 -> $3" >> "{self.trace}" ;;
+    "subscribe") cat <<'EVENTS'
+{event_lines}EVENTS
+        ;;
 esac
 exit 0''')
 
@@ -222,6 +227,23 @@ export PATH="{self.bin}:$PATH"
         result = self.run_switch(f"state=in; reconcile {CARD}")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.steps(), [])
+
+    # ── what wakes the watcher ────────────────────────────────────────────
+    def test_only_card_events_and_sink_removals_wake_the_watcher(self):
+        # A stream ending is "'remove' on sink-input": the sink-removal filter
+        # must not match it, or every notification sound costs a reconcile.
+        self.stub_pactl(sinks=((40, TUNED),), events=(
+            "Event 'change' on card #52",
+            "Event 'remove' on sink-input #70",
+            "Event 'new' on sink-input #71",
+            "Event 'change' on sink #40",
+            "Event 'remove' on sink #40",
+            "Event 'remove' on source-output #12"))
+        result = self.run_switch(
+            f'reconcile() {{ echo "RECONCILE $1" >> "{self.trace}"; }}\nmain')
+        self.assertIn("pactl subscribe ended", result.stdout)
+        self.assertEqual([s for s in self.steps() if s.startswith("RECONCILE")],
+                         [f"RECONCILE {CARD}"] * 2)
 
     def test_startup_does_nothing_when_the_tuning_is_not_installed(self):
         # Without the eq module there is no tuned sink to hide, and the stock

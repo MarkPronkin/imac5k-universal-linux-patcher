@@ -199,12 +199,14 @@ main() {
 
     # Card events carry port availability; pactl reports them without polling.
     # Sink removals are watched too: the tuned sink can vanish after the last
-    # card event of a resume. Volume changes are only 'change' events.
+    # card event of a resume. Volume changes are only 'change' events. The " #"
+    # keeps out stream ends ('remove' on sink-input #N), which come far more
+    # often and would each cost a settle and a reconcile.
     while IFS= read -r _; do
         sleep "$SETTLE"
         card=$(speaker_card); [[ -n $card ]] || continue
         reconcile "$card"
-    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered -E "on card|'remove' on sink")
+    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered -E "on card|'remove' on sink #")
 
     log "pactl subscribe ended"
     exit 1   # the unit restarts; a dead watcher would silently strand the jack
