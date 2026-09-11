@@ -5,7 +5,51 @@ done about suspend aborting in brcmfmac; then "remember where you stopped
 exactly". Investigation only: no code, boot, driver or power settings were
 changed, and no suspend or pm_test was run.
 
-## Stopping point (2026-09-11 15:27 CEST)
+## Update (2026-09-11, evening): staged test run, fix implemented
+
+The owner ran `sudo bash notes/wifi-d3-test.sh`:
+
+    1-wifi-up        FAIL   brcmf_pcie_pm_enter_D3 timeout, -5
+    2-wifi-down      FAIL   same
+    3-wifi-unbound   PASS   no brcmfmac errors; wlp3s0 back after the rebind
+
+The handshake fails whatever the interface state, so the NetworkManager
+explanation under "Findings", "Trigger" below is refuted. The firmware
+leaves D3_INFORM unanswered most of the time; the one earlier pass (the
+devices run in TODO.md) and the real deep suspend that slept show it
+sometimes answers. The cause inside the firmware is unknown (deep sleep with
+no host wake is a guess); brcmfmac's trace event (CONFIG_BRCM_TRACING) would
+show the mailbox traffic if it is ever chased upstream.
+
+Detaching the card is what makes the device stage pass, so option 1 is
+implemented and committed with this update:
+
+- `scripts/imac-wifi-sleep-hook` unbinds brcmfmac devices with ID
+  `14e4:43ba` before sleep and rebinds them after. It is a second hook next
+  to the Thunderbolt one, which is unchanged. Tests:
+  `tests/test_wifi_sleep_hook.py`.
+- The suspend module (base and Fedora) installs and removes it and requires
+  it for "applied", so existing installs read partial until suspend is
+  applied again.
+- README: the two ✅ "Verified workaround" suspend cells are now ⚪ Untested,
+  the Wi-Fi card is the fourth listed failure, and the paragraph that called
+  s2idle hardware-verified now says no complete cycle is confirmed.
+- 286 offline tests pass.
+
+**Stopping point now:** waiting for the owner to install it from the
+checkout and try one real suspend. That needs sudo and a go-ahead; it is
+probably the first real s2idle sleep here and can still hang (power-cycle):
+
+    ./scripts/imac-patcher --apply suspend      # --status shows partial first
+    systemctl suspend                           # wake with a key after ~20 s
+    journalctl -b --since "10 min ago" | grep -E 'sleep-hook|sleep operation|returned from sleep|Failed to put|brcmf|PM: suspend'
+
+Success is systemd's "System returned from sleep" with no brcmf errors. Then
+correct the 0.2.0-alpha release notes (their "clean s2idle resume recorded
+earlier" line), push `main`, and release 0.2.1-alpha. Still unanswered:
+guard suspend against a pre-0.1.91 5K driver? Fast-forward `test`?
+
+## Earlier stopping point (2026-09-11 15:27 CEST)
 
 - Diagnosis done (below) and options presented to the owner. Waiting for the
   owner to run the staged test, which needs root (the agent has no

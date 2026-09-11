@@ -1,12 +1,14 @@
 # Current work checkpoint
 
-**Latest stopping point (2026-09-11, 15:27):** suspend on this iMac aborts in
-brcmfmac. NetworkManager takes the BCM43602 Wi-Fi down just before sleep, and
-its firmware then never answers the D3 handshake. Diagnosed, nothing changed
-yet; waiting for the owner to run `sudo bash notes/wifi-d3-test.sh`. Read
+**Latest stopping point (2026-09-11, evening):** suspend on this iMac aborts
+in brcmfmac: the BCM43602 firmware leaves the D3 handshake unanswered
+whatever the interface state (the owner's staged test: Wi-Fi up FAIL, down
+FAIL, card unbound PASS). The suspend module now detaches that card around
+sleep (`scripts/imac-wifi-sleep-hook`), and the README no longer calls
+suspend verified. Waiting for the owner to `--apply suspend` from the
+checkout and try one real `systemctl suspend`. Read
 [the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first:
-it has the evidence, the options, the ordered next steps, and the records
-(README, 0.2.0-alpha notes) that probably overstate a verified s2idle resume.
+its "Update" section is current, the rest is the evidence trail.
 
 **Release 0.2.0-alpha (2026-09-11):** `test` (`b4b0a61`, PR #2 included) was
 fast-forwarded into `main`, reviewed and released from `main` as
