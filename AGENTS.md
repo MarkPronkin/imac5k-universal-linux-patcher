@@ -1,9 +1,19 @@
 # Current work checkpoint
 
-The iMac Pro PR #2 integration into `test` is recorded in
+**Release 0.2.0-alpha (2026-09-11):** `test` (`b4b0a61`, PR #2 included) was
+fast-forwarded into `main`, reviewed and released from `main` as
+`v0.2.0-alpha`. Read [the release record](notes/release-0.2.0-alpha-2026-09-11.md)
+first: it lists the review fixes, the validation, the open follow-ups, and two
+corrections to the stopping point below — suspend now selects s2idle through
+the systemd drop-in `configs/imac5k-s2idle.conf` (the kernel-cmdline default
+and the immediate sysfs switch are gone, and this machine's cmdline no longer
+carries `mem_sleep_default`), and both suspend attempts after the 0.1.92-alpha
+driver build were aborted by brcmfmac (Wi-Fi) failing to enter D3.
+
+The iMac Pro PR #2 review is recorded in
 [the PR review](notes/imacpro-pr2-review-2026-09-10.md). It includes the reviewed
 commit, compatibility fixes, offline/compile validation, and hardware limits.
-The PR still targets `main`; this integration is into `test` only.
+It reached `main` with the 0.2.0-alpha merge.
 
 When resuming the GRUB-on-Arch work, read
 [the GRUB handoff](notes/grub-arch-handoff-2026-09-09.md). It records the user's
