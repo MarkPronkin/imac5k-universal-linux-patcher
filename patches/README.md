@@ -215,7 +215,7 @@ other iMac models' bit-depth settings. It backs up the file and leaves the
 change for the next compositor start.
 
 The post-commit scheduling follow-up applies **after** the three suspend
-fixes in `test`; its context retains the resume-arming branch. The lean stack
+fixes; its context retains the resume-arming branch. The lean stack
 was checked at `--fuzz=0` against pristine Linux 7.1.13 and 7.2.3 during the
 merge review. See [the review record](../notes/imacpro-pr2-review-2026-09-10.md)
 in the Git checkout for compile results and limits.
