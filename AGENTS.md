@@ -1,5 +1,13 @@
 # Current work checkpoint
 
+**Latest stopping point (2026-09-11, 15:27):** suspend on this iMac aborts in
+brcmfmac. NetworkManager takes the BCM43602 Wi-Fi down just before sleep, and
+its firmware then never answers the D3 handshake. Diagnosed, nothing changed
+yet; waiting for the owner to run `sudo bash notes/wifi-d3-test.sh`. Read
+[the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first:
+it has the evidence, the options, the ordered next steps, and the records
+(README, 0.2.0-alpha notes) that probably overstate a verified s2idle resume.
+
 **Release 0.2.0-alpha (2026-09-11):** `test` (`b4b0a61`, PR #2 included) was
 fast-forwarded into `main`, reviewed and released from `main` as
 `v0.2.0-alpha`. Read [the release record](notes/release-0.2.0-alpha-2026-09-11.md)
@@ -39,7 +47,7 @@ full investigation log. Treat `notes/standby-handoff-2026-09-10.md` as stale:
 its standby changes were discarded. Check current Git and machine state
 against that dated record before continuing.
 
-**Latest stopping point (2026-09-10, evening):** suspend works — the
+**Stopping point of 2026-09-10 (evening), superseded above:** suspend works — the
 Thunderbolt sleep hook is installed and a systemd s2idle cycle passed
 17:13:35→17:13:54 with unbind/rebind in the journal; `mem_sleep_default=s2idle`
 is on the kernel cmdline via `/etc/default/limine`. The suspend module now
