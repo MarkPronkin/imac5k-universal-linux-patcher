@@ -348,6 +348,42 @@ mod_suspend_apply
         self.assertNotIn("SHOULD-NOT-RUN", result.stdout)
         self.assertNotIn("SYNC_BOOT", result.stdout)
 
+    def test_apply_removes_a_leftover_dropin_without_omarchys_tool(self):
+        # Omarchy's remover leaves resume.conf behind. With the hook conf gone
+        # there is nothing for that tool to do and no swapfile to warn about.
+        result = self.run_module('''
+printf 'KERNEL_CMDLINE[default]+=" resume=/dev/mapper/root resume_offset=1"\n' > "$HIBERNATE_DROPIN"
+omarchy-hibernation-remove() { echo SHOULD-NOT-RUN; }
+mod_suspend_apply
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("SHOULD-NOT-RUN", result.stdout)
+        self.assertNotIn("swapfile", result.stdout)
+        self.assertFalse((Path(result.tmp) / "dropins/resume.conf").exists())
+        self.assertIn("SYNC_BOOT", result.stdout)
+        self.assertIn("VERIFY present= absent=resume=", result.stdout)
+
+
+class StartupAuditTests(unittest.TestCase):
+    def test_the_hibernation_remover_is_never_sent_to_the_package_manager(self):
+        # It ships inside the omarchy package: asking pacman for it by name
+        # fails the whole prerequisite install ("target not found").
+        code = shell_function(PATCHER, "startup_deps_note") + '''
+declare -A MODULE_STATES=([suspend]=partial)
+MODULES=(suspend)
+imac_is_fedora() { return 1; }
+imac_is_kde() { return 1; }
+imac_is_arch_grub() { return 1; }
+hibernation_setup_present() { return 0; }
+PATH=/nonexistent
+startup_deps_note
+echo "MISSING=${STARTUP_MISSING_TOOLS[*]}"
+'''
+        result = subprocess.run(["bash", "-c", code], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MISSING=systemctl", result.stdout)
+        self.assertNotIn("omarchy-hibernation-remove", result.stdout)
+
 
 class FedoraSuspendTests(unittest.TestCase):
     def run_module(self, code, grubby_has_arg=False):

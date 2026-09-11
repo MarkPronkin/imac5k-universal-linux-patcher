@@ -1224,24 +1224,28 @@ hibernation_setup_present() {
 }
 # Undo Omarchy's hibernation setup with Omarchy's own tool. Its gum confirm is
 # the prompt for the destructive part (it deletes the swapfile); if the user
-# declines, the hook conf is still there and nothing else is touched.
+# declines, the hook conf is still there and nothing else is touched. Without
+# the hook conf only the drop-in below is left — Omarchy's tool leaves it
+# behind — and removing that needs neither the tool nor its warning.
 suspend_remove_hibernation() {
     hibernation_setup_present || return 0
-    if ! command -v omarchy-hibernation-remove >/dev/null; then
-        warn "hibernation is set up but omarchy-hibernation-remove is missing — remove it by hand (swapfile, $HIBERNATE_HOOK_CONF, $HIBERNATE_DROPIN)"
-        return 0
-    fi
-    cat <<EOF
+    if grep -qs '^HOOKS+=(resume)$' "$HIBERNATE_HOOK_CONF"; then
+        if ! command -v omarchy-hibernation-remove >/dev/null; then
+            warn "hibernation is set up but omarchy-hibernation-remove is missing — remove it by hand (swapfile, $HIBERNATE_HOOK_CONF, $HIBERNATE_DROPIN)"
+            return 0
+        fi
+        cat <<EOF
 
 Hibernation is set up on this machine, and hibernating hard-hangs it exactly
 like suspend. omarchy-hibernation-remove will now undo it: swapoff and delete
 /swap/swapfile and its fstab entry, remove $HIBERNATE_HOOK_CONF and rebuild
 the boot image. The swap space is not needed: zram covers ordinary swapping.
 EOF
-    omarchy-hibernation-remove || { warn "omarchy-hibernation-remove failed"; return 1; }
-    if grep -qs '^HOOKS+=(resume)$' "$HIBERNATE_HOOK_CONF"; then
-        say "hibernation removal declined — leaving the setup as it is"
-        return 0
+        omarchy-hibernation-remove || { warn "omarchy-hibernation-remove failed"; return 1; }
+        if grep -qs '^HOOKS+=(resume)$' "$HIBERNATE_HOOK_CONF"; then
+            say "hibernation removal declined — leaving the setup as it is"
+            return 0
+        fi
     fi
     # Omarchy's tool forgets the resume= cmdline drop-in; without the hook it
     # is inert, but it no longer belongs in the boot config.
@@ -1732,7 +1736,8 @@ startup_deps_note() {
                 elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
             suspend)
                 tools=(systemctl)
-                hibernation_setup_present && tools+=(omarchy-hibernation-remove)
+                # Not omarchy-hibernation-remove: it is a file in the omarchy
+                # package, which no package manager installs by that name.
                 ((fedora)) && tools+=(grubby)
                 ((archgrub)) && tools+=(grub-mkconfig) ;;
             boot)
