@@ -1,5 +1,12 @@
 # Current work checkpoint
 
+**Release 0.2.2-alpha (2026-09-16):** a fix release from `test`. Linux 7.2.4
+added an Apple Studio Display quirk where both 5K core patches anchored, so
+the 5K build stopped on a fresh Omarchy install with `7.2.5-3-omarchy`. Both
+core patches are re-anchored (`42408b4`); nothing else changed since
+0.2.1-alpha. See [the release record](notes/release-0.2.2-alpha-2026-09-16.md).
+The patched module is compile-tested on 7.2.5 but not yet booted there.
+
 **Release 0.2.1-alpha (2026-09-16):** the work that sat uncommitted on the
 local review branch is on `test` as topic commits (XHC1 fix, second-sleep
 investigation record, full-audit fixes, `t2speakers`), the review branch is
