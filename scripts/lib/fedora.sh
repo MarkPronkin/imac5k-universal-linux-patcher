@@ -28,7 +28,7 @@ mod_suspend_tier() {
     # Boot tier only while the retired argument is on the GRUB entry.
     grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && echo boot || echo safe
 }
-mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). Deep S3 still resets on wake (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
+mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). On the iMac18,3 it also builds a small DKMS module for this kernel, loaded at every boot, that stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; with Secure Boot the DKMS key must be enrolled. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${HIBERNATE_TARGETS[@]}"; do
@@ -44,8 +44,11 @@ mod_suspend_detect() {
     [[ -x $WIFI_SLEEP_HOOK ]] && wifi=1
     local s2idle=0
     grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN" && s2idle=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && hook && wifi && s2idle )); then echo applied
-    elif (( masked || suspend_blocked || stale || hook || wifi || s2idle )); then echo partial
+    local xhci=0 xhci_any=0
+    suspend_xhci_fix_ok && xhci=1
+    xhci_fix_present && xhci_any=1
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && hook && wifi && s2idle && xhci )); then echo applied
+    elif (( masked || suspend_blocked || stale || hook || wifi || s2idle || xhci_any )); then echo partial
     else echo not-applied; fi
 }
 fedora_suspend_drop_no_cstates() {
@@ -53,9 +56,26 @@ fedora_suspend_drop_no_cstates() {
     sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$NO_CSTATES_PARAM" || return 1
     say "removed stale ${NO_CSTATES_PARAM} from the GRUB entry"
 }
+# The USB controller fix, as for audio: built for the running kernel after an
+# explicit kernel-devel preflight, and loadable under Secure Boot only once
+# the DKMS signing key is enrolled.
+xhci_fix_target_kernels() { printf '%s\n' "$KREL"; }
+xhci_fix_deps() {
+    fedora_deps dkms "kernel-devel-${KREL}" gcc make kmod elfutils-libelf-devel mokutil
+}
+xhci_fix_signing_ok() {
+    local sb
+    sb=$(mokutil --sb-state 2>/dev/null || true)
+    [[ $sb == *'SecureBoot enabled'* ]] || return 0
+    sudo mokutil --test-key /var/lib/dkms/mok.pub && return 0
+    warn "Enroll the DKMS key: sudo mokutil --import /var/lib/dkms/mok.pub, reboot and confirm enrollment, then re-run suspend installation."
+    return 1
+}
 mod_suspend_apply() {
     fedora_mutable || return 1
     suspend_systemd_ok || return 1
+    # Before suspend is unmasked: without the fix the second sleep resets.
+    suspend_install_xhci_fix || return 1
     sudo systemctl unmask suspend.target || return 1
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
     suspend_install_sleep_files || return 1
@@ -65,8 +85,9 @@ mod_suspend_remove() {
     fedora_mutable || return 1
     sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}" || return 1
     suspend_remove_sleep_files || return 1
+    suspend_remove_xhci_fix || return 1
     fedora_suspend_drop_no_cstates || return 1
-    say "sleep targets back to stock (suspend and hibernate unmasked, sleep hooks and s2idle drop-in removed)"
+    say "sleep targets back to stock (suspend and hibernate unmasked, sleep hooks, s2idle drop-in and USB controller fix removed)"
 }
 audio_target_kernels() {
     # Fedora's explicit kernel-devel preflight targets the running kernel.

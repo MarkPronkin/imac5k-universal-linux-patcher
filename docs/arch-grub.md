@@ -55,8 +55,11 @@ promoting a module. The patched module needs to be rebuilt for each new kernel.
 
 The suspend module allows suspend and keeps hibernate blocked. It installs the
 Thunderbolt and Wi-Fi sleep hooks and a systemd drop-in that makes suspend use
-s2idle (deep S3 resets on wake on this hardware), and removes the retired
-`idle=poll` parameter through GRUB if present. Read the suspend section of the
+s2idle (deep S3 resets on this hardware), and removes the retired `idle=poll`
+parameter through GRUB if present. On the iMac18,3 it also builds the
+`imac5k-xhci-d0` USB controller fix through DKMS for every installed kernel with
+headers (with Clang on a Clang-built kernel such as CachyOS's) and loads it at
+boot; without it every second sleep resets the machine. Read the suspend section of the
 [README](../README.md) before applying it.
 
 ## Test entries

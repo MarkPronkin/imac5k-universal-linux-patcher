@@ -216,6 +216,14 @@ taken from so `--remove` never restores one panel's setting onto another.
   and Wi-Fi sleep hooks in `/usr/lib/systemd/system-sleep/`, and
   `MemorySleepMode=` in the `/etc/systemd/sleep.conf.d/` drop-in; the module
   refuses older systemd
+- iMac18,3 only, the USB controller fix (`imac5k-xhci-d0`): dkms, gcc, make,
+  kmod (`modinfo`, `depmod`, `modprobe`) and headers for the installed kernels
+  (Arch: `<kernel package>-headers`, built for every kernel that has them;
+  Fedora: `kernel-devel-$(uname -r)`, `elfutils-libelf-devel`, and `mokutil`
+  for the Secure Boot key check). Clang-built Arch kernels also need `clang`
+  and `lld`. systemd loads it at boot from
+  `/etc/modules-load.d/imac5k-xhci-d0.conf`; DKMS keeps its source under
+  `/usr/src/imac5k-xhci-d0-1`
 - Omarchy: the Limine/mkinitcpio stack from the boot module, used only when
   cleaning up a leftover `idle=poll` drop-in or Omarchy's hibernation setup
   (`limine-mkinitcpio`, `objcopy` for verification)

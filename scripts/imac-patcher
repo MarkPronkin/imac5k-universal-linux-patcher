@@ -73,6 +73,18 @@ NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
 # Deep S3 enters but the firmware resets the machine on wake; s2idle is the
 # only working mode, and this systemd drop-in makes every suspend use it.
 SLEEP_CONF_DROPIN=/etc/systemd/sleep.conf.d/imac5k-s2idle.conf
+# iMac18,3: Apple's \_SB.PCI0.XHC1._PS3 resets the machine on the PCH USB
+# controller's second D3 entry of a boot, so every second suspend rebooted
+# it. A small DKMS module keeps Linux from running XHC1's ACPI power methods
+# (the controller still enters D3hot natively, so USB wake keeps working),
+# and systemd loads it at boot. Bump XHCI_FIX_VERSION with the module source.
+XHCI_FIX_DKMS=imac5k-xhci-d0
+XHCI_FIX_VERSION=1
+XHCI_FIX_MODULE=imac5k_xhci_d0
+XHCI_FIX_SRC="${REPO_DIR}/modules/imac5k-xhci-d0"
+XHCI_FIX_LOAD_CONF=/etc/modules-load.d/imac5k-xhci-d0.conf
+XHCI_FIX_SYSFS=/sys/module/imac5k_xhci_d0
+XHCI_FIX_MODULES_DIR=/usr/lib/modules
 # Omarchy's hibernation setup (omarchy-hibernation-setup): a mkinitcpio resume
 # hook, a resume= cmdline drop-in and a btrfs swapfile. Hibernating hard-hangs
 # this machine the same way suspend does.
@@ -1198,7 +1210,7 @@ mod_suspend_title() { echo "Allow suspend, block hibernate"; }
 # is still there, since cleaning either up rebuilds the boot image; a clean
 # system gets the safe tier.
 mod_suspend_tier()  { if boot_config_has "$NO_CSTATES_PARAM" || hibernation_setup_present; then echo boot; else echo safe; fi }
-mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). Deep S3 still resets on wake (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
+mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). On the iMac18,3 it also builds a small DKMS module, loaded at every boot, that stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; USB keyboard wake keeps working. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${HIBERNATE_TARGETS[@]}"; do
@@ -1216,8 +1228,11 @@ mod_suspend_detect() {
     [[ -x $WIFI_SLEEP_HOOK ]] && wifi=1
     local s2idle=0
     grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN" && s2idle=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && wifi && s2idle )); then echo applied
-    elif (( masked || suspend_blocked || stale || hibernating || hook || wifi || s2idle )); then echo partial
+    local xhci=0 xhci_any=0
+    suspend_xhci_fix_ok && xhci=1
+    xhci_fix_present && xhci_any=1
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && wifi && s2idle && xhci )); then echo applied
+    elif (( masked || suspend_blocked || stale || hibernating || hook || wifi || s2idle || xhci_any )); then echo partial
     else echo not-applied; fi
 }
 # The hook conf is the canonical marker — omarchy-hibernation-remove checks
@@ -1298,8 +1313,158 @@ suspend_install_sleep_files() {
     say "installed $TB_SLEEP_HOOK and $WIFI_SLEEP_HOOK (unbind the Thunderbolt NHI and the BCM43602 Wi-Fi around sleep) and $SLEEP_CONF_DROPIN (suspend uses s2idle)"
 }
 suspend_remove_sleep_files() { sudo rm -f "$TB_SLEEP_HOOK" "$WIFI_SLEEP_HOOK" "$SLEEP_CONF_DROPIN"; }
+
+# ── suspend: the iMac18,3 USB controller fix (DKMS) ──
+# Like the audio driver: every installed kernel with headers, so a pending
+# kernel update already has the module when it boots.
+xhci_fix_target_kernels() {
+    local dir
+    for dir in "$XHCI_FIX_MODULES_DIR"/*; do
+        [[ -f $dir/build/Module.symvers ]] && printf '%s\n' "${dir##*/}"
+    done
+    return 0
+}
+xhci_fix_kernel_ready() {   # $1 = kernel release
+    local status line path
+    status=$(dkms status -m "$XHCI_FIX_DKMS" -v "$XHCI_FIX_VERSION" -k "$1" 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        [[ $line == "$XHCI_FIX_DKMS/$XHCI_FIX_VERSION, $1, "*": installed"* ]] || continue
+        # The module depmod resolves, not merely a DKMS record.
+        path=$(modinfo -k "$1" -n "$XHCI_FIX_MODULE" 2>/dev/null) || return 1
+        [[ $path == */updates/* || $path == */extra/* ]]
+        return
+    done <<< "$status"
+    return 1
+}
+# Loaded, holding XHC1's power methods off, and the build in memory is the
+# installed one (an older test build lacks the parameter).
+xhci_fix_live() {
+    [[ $(cat "$XHCI_FIX_SYSFS/parameters/acpi_pm_skipped" 2>/dev/null) == Y ]] || return 1
+    local live installed
+    live=$(cat "$XHCI_FIX_SYSFS/srcversion" 2>/dev/null)
+    installed=$(modinfo -k "$KREL" -F srcversion "$XHCI_FIX_MODULE" 2>/dev/null)
+    [[ -z $live || -z $installed || $live == "$installed" ]]
+}
+xhci_fix_ready() {
+    [[ -f $XHCI_FIX_LOAD_CONF ]] || return 1
+    local kernels kernel
+    kernels=$(xhci_fix_target_kernels)
+    [[ -n $kernels ]] || return 1
+    while IFS= read -r kernel; do
+        xhci_fix_kernel_ready "$kernel" || return 1
+    done <<< "$kernels"
+    xhci_fix_live
+}
+# True when the fix is fully in place, or this model needs none and has none
+# (a leftover modules-load entry would fail at every boot).
+suspend_xhci_fix_ok() {
+    if ! imac_xhci_fix_supported; then
+        ! xhci_fix_present
+        return
+    fi
+    xhci_fix_ready
+}
+# Any trace of the fix, so detection reports partial and removal has work.
+xhci_fix_present() {
+    [[ -f $XHCI_FIX_LOAD_CONF || -d $XHCI_FIX_SYSFS ]] && return 0
+    command -v dkms >/dev/null || return 1
+    [[ -n $(dkms status -m "$XHCI_FIX_DKMS" 2>/dev/null) ]]
+}
+xhci_fix_deps() {
+    local tool pkg tools=(dkms gcc make modinfo depmod modprobe) missing=() packages=()
+    imac_kernel_uses_clang "$KREL" && tools+=(clang ld.lld)
+    for tool in "${tools[@]}"; do
+        command -v "$tool" >/dev/null && continue
+        missing+=("$tool")
+        pkg="$(imac_tool_package "$tool")"
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    done
+    [[ -n $(xhci_fix_target_kernels) ]] || packages+=("$(imac_kernel_headers_package)")
+    if ((${#packages[@]})); then
+        warn "the USB controller fix needs: ${packages[*]}"
+        confirm "Install them now?" || return 1
+        sudo pacman -S --needed --noconfirm "${packages[@]}" || return 1
+    fi
+    for tool in "${missing[@]}"; do
+        command -v "$tool" >/dev/null || { warn "$tool is still missing after installation."; return 1; }
+    done
+    [[ -n $(xhci_fix_target_kernels) ]] || { warn "Install headers matching an installed kernel, then retry."; return 1; }
+}
+# Fedora overrides this to require an enrolled DKMS signing key.
+xhci_fix_signing_ok() { return 0; }
+xhci_fix_install() (
+    local stage status kernels kernel
+    kernels=$(xhci_fix_target_kernels)
+    [[ -n $kernels ]] || { warn "No installed kernel has matching headers for the USB controller fix."; return 1; }
+    [[ -f $XHCI_FIX_SRC/dkms.conf ]] || { warn "USB controller fix source missing: $XHCI_FIX_SRC"; return 1; }
+    mkdir -p "$CACHE" || return 1
+    stage=$(mktemp -d "${CACHE}/xhci-fix.XXXXXX") || return 1
+    trap 'rm -rf "$stage"' EXIT
+    # Only the sources: DKMS add copies the directory, and a development build
+    # left in a checkout must not ride along.
+    cp "$XHCI_FIX_SRC/dkms.conf" "$XHCI_FIX_SRC/Makefile" "$XHCI_FIX_SRC/$XHCI_FIX_MODULE.c" "$stage/" || return 1
+    status=$(dkms status -m "$XHCI_FIX_DKMS" -v "$XHCI_FIX_VERSION") || return 1
+    [[ $status != *broken* ]] || {
+        warn "Broken registration: run sudo dkms remove $XHCI_FIX_DKMS/$XHCI_FIX_VERSION --all, then retry."
+        return 1
+    }
+    if [[ -z $status ]]; then
+        sudo dkms add "$stage" || return 1
+    fi
+    while IFS= read -r kernel; do
+        if ! xhci_fix_kernel_ready "$kernel"; then
+            sudo dkms build -m "$XHCI_FIX_DKMS" -v "$XHCI_FIX_VERSION" -k "$kernel" || return 1
+            sudo dkms install -m "$XHCI_FIX_DKMS" -v "$XHCI_FIX_VERSION" -k "$kernel" --force || return 1
+        fi
+        xhci_fix_kernel_ready "$kernel" || { warn "The USB controller fix was not installed for $kernel."; return 1; }
+    done <<< "$kernels"
+)
+# Load it at every boot, and now, so the next sleep is already covered.
+xhci_fix_enable() {
+    sudo install -D -m644 "${SCRIPT_DIR}/../configs/imac5k-xhci-d0.conf" "$XHCI_FIX_LOAD_CONF" || return 1
+    xhci_fix_signing_ok || return 1
+    # A different build in memory (an update, or a hand-loaded test build)
+    # is swapped for the installed one.
+    if [[ -d $XHCI_FIX_SYSFS ]] && ! xhci_fix_live; then
+        sudo modprobe -r "$XHCI_FIX_MODULE" || return 1
+    fi
+    if [[ ! -d $XHCI_FIX_SYSFS ]]; then
+        sudo modprobe "$XHCI_FIX_MODULE" || return 1
+    fi
+    xhci_fix_live || { warn "$XHCI_FIX_MODULE loaded but is not holding the USB controller; see journalctl -k -g imac5k"; return 1; }
+}
+suspend_install_xhci_fix() {
+    if ! imac_xhci_fix_supported; then
+        xhci_fix_present || return 0
+        suspend_remove_xhci_fix
+        return
+    fi
+    xhci_fix_deps || return 1
+    xhci_fix_install || return 1
+    xhci_fix_enable || return 1
+    say "installed the $XHCI_FIX_DKMS DKMS module and $XHCI_FIX_LOAD_CONF (Apple's XHC1._PS3 no longer resets the machine on the second sleep)"
+}
+suspend_remove_xhci_fix() {
+    local status name version rest versions=()
+    if [[ -d $XHCI_FIX_SYSFS ]]; then
+        sudo modprobe -r "$XHCI_FIX_MODULE" || return 1
+    fi
+    sudo rm -f "$XHCI_FIX_LOAD_CONF" || return 1
+    command -v dkms >/dev/null || return 0
+    status=$(dkms status -m "$XHCI_FIX_DKMS") || return 1
+    while IFS='/,:' read -r name version rest; do
+        [[ $name == "$XHCI_FIX_DKMS" && $version =~ ^[a-zA-Z0-9_.+-]+$ ]] || continue
+        [[ " ${versions[*]} " == *" $version "* ]] || versions+=("$version")
+    done <<< "$status"
+    for version in "${versions[@]}"; do
+        sudo dkms remove "$XHCI_FIX_DKMS/$version" --all || return 1
+    done
+}
+
 mod_suspend_apply() {
     suspend_systemd_ok || return 1
+    # Before suspend is unmasked: without the fix the second sleep resets.
+    suspend_install_xhci_fix || return 1
     sudo systemctl unmask suspend.target || return 1
     sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
     suspend_install_sleep_files || return 1
@@ -1313,8 +1478,9 @@ mod_suspend_apply() {
 mod_suspend_remove() {
     sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}" || return 1
     suspend_remove_sleep_files || return 1
+    suspend_remove_xhci_fix || return 1
     suspend_drop_no_cstates || return 1
-    say "sleep targets back to stock (suspend and hibernate unmasked, sleep hooks and s2idle drop-in removed)"
+    say "sleep targets back to stock (suspend and hibernate unmasked, sleep hooks, s2idle drop-in and USB controller fix removed)"
 }
 
 # ═══════════════════════ module: boot ══════════════════════════════════════
@@ -1745,7 +1911,16 @@ startup_deps_note() {
                 # Not omarchy-hibernation-remove: it is a file in the omarchy
                 # package, which no package manager installs by that name.
                 ((fedora)) && tools+=(grubby)
-                ((archgrub)) && tools+=(grub-mkconfig) ;;
+                ((archgrub)) && tools+=(grub-mkconfig)
+                if imac_xhci_fix_supported; then
+                    tools+=(dkms gcc make modinfo depmod modprobe)
+                    ((fedora)) && tools+=(mokutil)
+                    if ((fedora)); then
+                        [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || startup_need_headers missing
+                    else
+                        [[ -n $(xhci_fix_target_kernels) ]] || startup_need_headers missing
+                    fi
+                fi ;;
             boot)
                 ((fedora)) && continue
                 ((archgrub)) && continue

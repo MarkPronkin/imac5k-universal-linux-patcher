@@ -32,6 +32,9 @@ imac_panel_has_stitched_mode() {
 # The bundled driver has board-specific CS8409 initialization and its own
 # iMac18,3 gate. Other models must retain their existing audio drivers.
 imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+# Apple's XHC1._PS3 resets the iMac18,3 on the PCH USB controller's second D3
+# entry. Other models' firmware has not been examined; they keep stock xHCI PM.
+imac_xhci_fix_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 # The iMac Pro's built-in audio is the T2 (t2bce_audio, ALSA card AppleT2x4,
 # UCM profiles), not the CS8409 codec the EQ chain targets: there is no
 # four-channel CS8409 device to pin the chain to, and the tuning was measured
@@ -83,7 +86,7 @@ imac_tool_package() {   # $1 = command name
     if imac_is_fedora; then
         case $1 in
             ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
-            modinfo|depmod|lsmod)   echo kmod ;;
+            modinfo|depmod|lsmod|modprobe) echo kmod ;;
             pahole)                 echo dwarves ;;
             rpmbuild)               echo rpm-build ;;
             pactl)                  echo pulseaudio-utils ;;
@@ -101,7 +104,7 @@ imac_tool_package() {   # $1 = command name
     fi
     case $1 in
         gcc|make|ld|strip|objcopy|flex|bison) echo base-devel ;;
-        modinfo|depmod|lsmod)   echo kmod ;;
+        modinfo|depmod|lsmod|modprobe) echo kmod ;;
         pactl)                  echo libpulse ;;
         pw-cli)                 echo pipewire ;;
         wpctl)                  echo wireplumber ;;

@@ -109,6 +109,11 @@ class ReleaseTests(unittest.TestCase):
                        # drop-in from here.
                        "scripts/imac-tb-sleep-hook", "scripts/imac-wifi-sleep-hook",
                        "configs/imac5k-s2idle.conf",
+                       # ...and on the iMac18,3 builds the USB controller fix
+                       # through DKMS and loads it at boot.
+                       "modules/imac5k-xhci-d0/imac5k_xhci_d0.c",
+                       "modules/imac5k-xhci-d0/Makefile", "modules/imac5k-xhci-d0/dkms.conf",
+                       "configs/imac5k-xhci-d0.conf",
                        "patches/imacpro-slave-dp-panel-mode.patch",
                        "patches/dce120-enable-crtc-reset.patch",
                        "patches/dce12-multisync-master-first.patch",

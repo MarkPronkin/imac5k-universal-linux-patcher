@@ -1,6 +1,7 @@
 """Suspend module: suspend.target unmasked, the hibernate family masked, the
 Thunderbolt sleep hook and the s2idle systemd drop-in installed, the retired
-idle=poll cleaned up, and on Omarchy the hibernation setup removed with
+idle=poll cleaned up, on the iMac18,3 the USB controller fix built through DKMS
+and loaded at boot, and on Omarchy the hibernation setup removed with
 omarchy-hibernation-remove.
 
 The Omarchy module is exercised with stubbed systemctl/sudo/boot helpers and a
@@ -24,10 +25,19 @@ SLEEP_CONF = ROOT / "configs/imac5k-s2idle.conf"
 
 # File paths are set per test, so no real path can leak into a run.
 CONSTS = "\n".join(line for line in PATCHER.splitlines()
-                   if re.match(r"^(HIBERNATE_TARGETS|NO_CSTATES_PARAM)=", line))
+                   if re.match(r"^(HIBERNATE_TARGETS|NO_CSTATES_PARAM|XHCI_FIX_(DKMS|VERSION|MODULE))=", line))
+XHCI_START = "# ── suspend: the iMac18,3 USB controller fix (DKMS) ──"
+
+
+def xhci_helpers():
+    """The shared USB-controller-fix helpers (some are subshell functions)."""
+    start = PATCHER.index(XHCI_START)
+    return PATCHER[start:PATCHER.index("\nmod_suspend_apply() {", start)]
+
+
 # The helpers every backend shares; the Fedora override calls them too.
 SHARED = "\n".join(shell_function(PATCHER, name) for name in (
-    "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files"))
+    "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files")) + "\n" + xhci_helpers()
 
 UNMASK_SUSPEND = "SYSTEMCTL unmask suspend.target"
 MASK_HIBERNATE = ("SYSTEMCTL mask hibernate.target"
@@ -77,6 +87,88 @@ verify_cmdline() { printf 'VERIFY present=%s absent=%s\n' "${1:-}" "${2:-}"; }
 sudo() { "$@"; }
 '''
 
+# The USB controller fix against fakes only: DKMS state, the module tree and
+# /sys/module live under $FAKE, so the host's real module never leaks in.
+# PRODUCT picks the model (default: one the fix does not apply to).
+XHCI_STUBS = r'''
+KREL=7.2.3-test
+imac_xhci_fix_supported() { [[ ${PRODUCT:-iMac17,1} == iMac18,3 ]]; }
+imac_kernel_uses_clang() { return 1; }
+imac_tool_package() { echo "$1"; }
+imac_kernel_headers_package() { echo linux-headers; }
+confirm() { return 0; }
+gcc() { :; }
+make() { :; }
+depmod() { :; }
+pacman() { printf 'PACMAN %s\n' "$*"; }
+mokutil() {
+    case $1 in
+        --sb-state) echo "${SB_STATE:-SecureBoot disabled}" ;;
+        --test-key) printf 'MOK-TEST\n'; [[ ${MOK_ENROLLED:-1} == 1 ]] ;;
+    esac
+}
+dkms() {
+    local cmd=$1 kernel='' arg
+    shift
+    printf 'DKMS %s %s\n' "$cmd" "$*" >> "$FAKE/calls"
+    for arg in "$@"; do [[ ${prev:-} == -k ]] && kernel=$arg; prev=$arg; done
+    unset prev
+    case $cmd in
+        status)
+            [[ -f $FAKE/dkms-status ]] || return 0
+            if [[ -n $kernel ]]; then grep -F ", $kernel, " "$FAKE/dkms-status" || true
+            else cat "$FAKE/dkms-status"; fi ;;
+        add) ls "$1" > "$FAKE/staged"; echo "imac5k-xhci-d0/1: added" >> "$FAKE/dkms-status" ;;
+        build) [[ ${FAIL_DKMS_BUILD:-0} == 0 ]] ;;
+        install)
+            echo "imac5k-xhci-d0/1, $kernel, x86_64: installed" >> "$FAKE/dkms-status"
+            mkdir -p "$XHCI_FIX_MODULES_DIR/$kernel/updates/dkms"
+            touch "$XHCI_FIX_MODULES_DIR/$kernel/updates/dkms/imac5k_xhci_d0.ko.zst" ;;
+        remove) rm -f "$FAKE/dkms-status"; rm -rf "$XHCI_FIX_MODULES_DIR"/*/updates ;;
+    esac
+}
+modinfo() {
+    local kernel='' field=n
+    while (($#)); do
+        case $1 in -k) kernel=$2; shift 2 ;; -n) field=n; shift ;; -F) field=$2; shift 2 ;; *) shift ;; esac
+    done
+    local path="$XHCI_FIX_MODULES_DIR/$kernel/updates/dkms/imac5k_xhci_d0.ko.zst"
+    [[ -f $path ]] || return 1
+    if [[ $field == n ]]; then echo "$path"; else echo SRCVERSION1; fi
+}
+modprobe() {
+    printf 'MODPROBE %s\n' "$*"
+    if [[ $1 == -r ]]; then rm -rf "$XHCI_FIX_SYSFS"; return 0; fi
+    [[ ${FAIL_MODPROBE:-0} == 0 ]] || return 1
+    mkdir -p "$XHCI_FIX_SYSFS/parameters"
+    echo Y > "$XHCI_FIX_SYSFS/parameters/acpi_pm_skipped"
+    echo SRCVERSION1 > "$XHCI_FIX_SYSFS/srcversion"
+}
+'''
+
+
+def xhci_paths(tmp):
+    return f'''
+FAKE={tmp}/fake
+XHCI_FIX_SRC={ROOT}/modules/imac5k-xhci-d0
+XHCI_FIX_LOAD_CONF={tmp}/modules-load.d/imac5k-xhci-d0.conf
+XHCI_FIX_SYSFS={tmp}/sys-module/imac5k_xhci_d0
+XHCI_FIX_MODULES_DIR={tmp}/lib-modules
+CACHE={tmp}/cache
+mkdir -p "$FAKE" "$XHCI_FIX_MODULES_DIR/7.2.3-test/build"
+touch "$XHCI_FIX_MODULES_DIR/7.2.3-test/build/Module.symvers"
+'''
+
+
+# The fix fully in place for the one kernel with headers.
+XHCI_FIX_INSTALLED = '''
+echo "imac5k-xhci-d0/1, 7.2.3-test, x86_64: installed" > "$FAKE/dkms-status"
+mkdir -p "$XHCI_FIX_MODULES_DIR/7.2.3-test/updates/dkms" "$XHCI_FIX_SYSFS/parameters" "$(dirname "$XHCI_FIX_LOAD_CONF")"
+touch "$XHCI_FIX_MODULES_DIR/7.2.3-test/updates/dkms/imac5k_xhci_d0.ko.zst" "$XHCI_FIX_LOAD_CONF"
+echo Y > "$XHCI_FIX_SYSFS/parameters/acpi_pm_skipped"
+echo SRCVERSION1 > "$XHCI_FIX_SYSFS/srcversion"
+'''
+
 
 class SleepDropInTests(unittest.TestCase):
     def test_the_shipped_drop_in_sets_s2idle(self):
@@ -92,7 +184,7 @@ class SleepDropInTests(unittest.TestCase):
 class OmarchySuspendTests(unittest.TestCase):
     def run_module(self, code, env=""):
         tmp = tempfile.mkdtemp()
-        prelude = STUBS + CONSTS + f'''
+        prelude = STUBS + XHCI_STUBS + CONSTS + xhci_paths(tmp) + f'''
 LIMINE_DEFAULT={tmp}/limine-default
 LIMINE_DROPIN_DIR={tmp}/dropins
 NO_CSTATES_DROPIN={tmp}/dropins/imac5k-no-cstates.conf
@@ -391,14 +483,14 @@ class FedoraSuspendTests(unittest.TestCase):
     def run_module(self, code, grubby_has_arg=False):
         arg_line = 'echo \'args="idle=poll"\'' if grubby_has_arg else ':'
         tmp = tempfile.mkdtemp()
-        prelude = STUBS + CONSTS + f'''
-KREL=7.2.2-test
+        prelude = STUBS + XHCI_STUBS + CONSTS + xhci_paths(tmp) + f'''
 TB_SLEEP_HOOK={tmp}/system-sleep/imac-tb-sleep-hook
 WIFI_SLEEP_HOOK={tmp}/system-sleep/imac-wifi-sleep-hook
 SLEEP_CONF_DROPIN={tmp}/sleep.conf.d/imac5k-s2idle.conf
 SCRIPT_DIR={ROOT}/scripts
 mkdir -p "$(dirname "$TB_SLEEP_HOOK")"
 fedora_mutable() {{ return 0; }}
+fedora_deps() {{ printf 'FEDORA_DEPS %s\n' "$*"; }}
 unset -f boot_config_has sync_boot_files verify_cmdline
 grubby() {{
     if [[ $1 == --info ]]; then {arg_line}; else printf 'GRUBBY %s\n' "$*"; fi
@@ -449,7 +541,7 @@ grubby() {{
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(UNMASK_SUSPEND, result.stdout)
         self.assertIn(MASK_HIBERNATE, result.stdout)
-        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --remove-args idle=poll",
+        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.3-test --remove-args idle=poll",
                       result.stdout)
         self.assertNotIn("--args idle=poll", result.stdout)
 
@@ -465,7 +557,7 @@ mod_suspend_apply''')
         result = self.run_module("mod_suspend_remove", grubby_has_arg=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(UNMASK_ALL, result.stdout)
-        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.2-test --remove-args idle=poll",
+        self.assertIn("GRUBBY --update-kernel /boot/vmlinuz-7.2.3-test --remove-args idle=poll",
                       result.stdout)
 
     def test_remove_deletes_the_sleep_files(self):
@@ -492,6 +584,139 @@ mod_suspend_remove''')
     def test_tier_boot_while_stale_grub_arg_remains(self):
         result = self.run_module("mod_suspend_tier", grubby_has_arg=True)
         self.assertEqual(result.stdout.strip(), "boot", result.stderr)
+
+
+class XhciFixTests(unittest.TestCase):
+    """iMac18,3: Apple's XHC1._PS3 resets the machine on every second sleep.
+
+    The suspend module builds the imac5k-xhci-d0 DKMS module, loads it at
+    boot through modules-load.d and at once, and reports applied only while it
+    is built for the kernels and holding the controller. Other models are
+    left alone. Both backends are exercised against the same fakes.
+    """
+    omarchy = OmarchySuspendTests.run_module
+    fedora = FedoraSuspendTests.run_module
+
+    def backends(self):
+        return (("omarchy", lambda code, env="": self.omarchy(code, env=env)),
+                ("fedora", lambda code, env="": self.fedora(env + code)))
+
+    @staticmethod
+    def calls(result):
+        path = Path(result.tmp) / "fake/calls"
+        return path.read_text() if path.exists() else ""
+
+    def test_imac18_3_needs_the_fix_for_applied(self):
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                everything_else = TARGETS_APPLIED + HOOK_INSTALLED + DROP_IN_INSTALLED
+                result = run("mod_suspend_detect", env="PRODUCT=iMac18,3\n" + everything_else)
+                self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+                result = run("mod_suspend_detect", env="PRODUCT=iMac18,3\n" + everything_else + XHCI_FIX_INSTALLED)
+                self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+
+    def test_other_models_do_not_need_it(self):
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                result = run("mod_suspend_detect", env=TARGETS_APPLIED + HOOK_INSTALLED + DROP_IN_INSTALLED)
+                self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+                result = run("mod_suspend_apply")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotRegex(self.calls(result), r"DKMS (add|build|install|remove)")
+                self.assertNotIn("MODPROBE", result.stdout)
+
+    def test_an_installed_but_unloaded_or_stale_build_is_partial(self):
+        everything = "PRODUCT=iMac18,3\n" + TARGETS_APPLIED + HOOK_INSTALLED + DROP_IN_INSTALLED + XHCI_FIX_INSTALLED
+        cases = {
+            "not loaded": 'rm -rf "$XHCI_FIX_SYSFS"\n',
+            "old test build without the parameter": 'rm -f "$XHCI_FIX_SYSFS/parameters/acpi_pm_skipped"\n',
+            "different build in memory": 'echo OLDSRC > "$XHCI_FIX_SYSFS/srcversion"\n',
+            "no boot load": 'rm -f "$XHCI_FIX_LOAD_CONF"\n',
+            "not built for this kernel": 'rm -f "$FAKE/dkms-status"\n',
+        }
+        for name, run in self.backends():
+            for case, change in cases.items():
+                with self.subTest(backend=name, case=case):
+                    result = run("mod_suspend_detect", env=everything + change)
+                    self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_a_leftover_on_another_model_is_partial_and_apply_clears_it(self):
+        # A modules-load entry the model does not need would fail at every boot.
+        leftover = TARGETS_APPLIED + HOOK_INSTALLED + DROP_IN_INSTALLED + XHCI_FIX_INSTALLED
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                result = run("mod_suspend_detect", env=leftover)
+                self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+                result = run("mod_suspend_apply\n" + TARGETS_APPLIED + "mod_suspend_detect",
+                             env=HOOK_INSTALLED + DROP_IN_INSTALLED + XHCI_FIX_INSTALLED)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("DKMS remove imac5k-xhci-d0/1 --all", self.calls(result))
+                self.assertEqual(result.stdout.strip().splitlines()[-1], "applied")
+
+    def test_apply_builds_loads_and_enables_it_before_unmasking_suspend(self):
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                # The stub systemctl only prints; report the masks apply set.
+                result = run("mod_suspend_apply\n" + TARGETS_APPLIED + "mod_suspend_detect", env="PRODUCT=iMac18,3\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = self.calls(result)
+                self.assertIn("DKMS add", calls)
+                self.assertIn("DKMS build -m imac5k-xhci-d0 -v 1 -k 7.2.3-test", calls)
+                self.assertIn("DKMS install -m imac5k-xhci-d0 -v 1 -k 7.2.3-test --force", calls)
+                # Only the sources are handed to DKMS, never a development build.
+                staged = (Path(result.tmp) / "fake/staged").read_text().split()
+                self.assertEqual(sorted(staged), ["Makefile", "dkms.conf", "imac5k_xhci_d0.c"])
+                conf = (Path(result.tmp) / "modules-load.d/imac5k-xhci-d0.conf").read_text()
+                self.assertIn("imac5k_xhci_d0", [line.strip() for line in conf.splitlines()
+                                                  if line.strip() and not line.startswith("#")])
+                out = result.stdout
+                self.assertIn("MODPROBE imac5k_xhci_d0", out)
+                self.assertLess(out.index("MODPROBE imac5k_xhci_d0"), out.index(UNMASK_SUSPEND))
+                self.assertEqual(out.strip().splitlines()[-1], "applied")
+
+    def test_a_failed_build_leaves_suspend_masked_and_unloaded(self):
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                result = run("mod_suspend_apply", env="PRODUCT=iMac18,3\nFAIL_DKMS_BUILD=1\n")
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn(UNMASK_SUSPEND, result.stdout)
+                self.assertNotIn("MODPROBE", result.stdout)
+                self.assertFalse((Path(result.tmp) / "modules-load.d/imac5k-xhci-d0.conf").exists())
+
+    def test_a_failed_load_stops_before_suspend_is_unmasked(self):
+        result = self.omarchy("mod_suspend_apply", env="PRODUCT=iMac18,3\nFAIL_MODPROBE=1\n")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn(UNMASK_SUSPEND, result.stdout)
+
+    def test_apply_swaps_a_different_build_already_in_memory(self):
+        result = self.omarchy("mod_suspend_apply", env="PRODUCT=iMac18,3\n" + '''
+mkdir -p "$XHCI_FIX_SYSFS/parameters"
+echo Y > "$XHCI_FIX_SYSFS/parameters/active"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(result.stdout.index("MODPROBE -r imac5k_xhci_d0"), result.stdout.index("MODPROBE imac5k_xhci_d0"))
+
+    def test_remove_unloads_it_and_removes_every_dkms_version(self):
+        for name, run in self.backends():
+            with self.subTest(backend=name):
+                result = run("mod_suspend_remove\nmod_suspend_detect", env="PRODUCT=iMac18,3\n" + XHCI_FIX_INSTALLED)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("MODPROBE -r imac5k_xhci_d0", result.stdout)
+                self.assertIn("DKMS remove imac5k-xhci-d0/1 --all", self.calls(result))
+                self.assertFalse((Path(result.tmp) / "modules-load.d/imac5k-xhci-d0.conf").exists())
+                self.assertEqual(result.stdout.strip().splitlines()[-1], "not-applied")
+
+    def test_fedora_refuses_to_load_an_unsigned_module_under_secure_boot(self):
+        env = "PRODUCT=iMac18,3\nSB_STATE='SecureBoot enabled'\nMOK_ENROLLED=0\n"
+        result = self.fedora(env + "mod_suspend_apply")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("mokutil --import", result.stdout)
+        self.assertNotIn("MODPROBE", result.stdout)
+        self.assertNotIn(UNMASK_SUSPEND, result.stdout)
+        self.assertIn("FEDORA_DEPS dkms kernel-devel-7.2.3-test", result.stdout)
+        result = self.fedora("PRODUCT=iMac18,3\nSB_STATE='SecureBoot enabled'\nmod_suspend_apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("MODPROBE imac5k_xhci_d0", result.stdout)
 
 
 WIFI_HOOK = ROOT / "scripts/imac-wifi-sleep-hook"

@@ -19,6 +19,8 @@ class ArchGrubTests(unittest.TestCase):
             "hibernation_setup_present", "suspend_remove_hibernation",
             "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files",
             "mod_5k_apply", "mod_5k_remove"))
+        start = PATCHER.index("# ── suspend: the iMac18,3 USB controller fix (DKMS) ──")
+        base += "\n" + PATCHER[start:PATCHER.index("\nmod_suspend_apply() {", start)]
         return fixture.GrubLibTests.run_grub(self, base + f'''
 SCRIPT_DIR="{ROOT / 'scripts'}"
 NO_CSTATES_PARAM=idle=poll
@@ -29,6 +31,12 @@ WIFI_SLEEP_HOOK="{self.tmp.name}/imac-wifi-sleep-hook"
 SLEEP_CONF_DROPIN="{self.tmp.name}/sleep.conf.d/imac5k-s2idle.conf"
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
+# The USB controller fix is iMac18,3-only; this backend runs as another model
+# with no trace of it, and never reaches the host's DKMS or /sys.
+imac_xhci_fix_supported() {{ return 1; }}
+dkms() {{ :; }}
+XHCI_FIX_LOAD_CONF="{self.tmp.name}/modules-load.d/imac5k-xhci-d0.conf"
+XHCI_FIX_SYSFS="{self.tmp.name}/sys-module/imac5k_xhci_d0"
 sudo() {{ "$@"; }}
 mkinitcpio() {{ printf 'mkinitcpio %s\\n' "$*" >> "$GRUB_CALLS"; }}
 limine-mkinitcpio() {{ echo WRONG_BACKEND >&2; return 99; }}
