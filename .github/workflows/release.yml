@@ -4,11 +4,17 @@
 # tarball from the tagged commit and fails if the uploaded tarball or its
 # checksum differ, so what people download always matches a commit in this
 # repository and can be reproduced by running scripts/make-release.sh on it.
+# Run it by hand to check an existing release again.
 name: release
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to verify
+        required: true
 
 permissions:
   contents: read
@@ -17,17 +23,20 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ github.event.release.tag_name }}
-      PRERELEASE: ${{ github.event.release.prerelease }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag }}
           fetch-depth: 0        # make-release.sh archives a git ref
 
-      - name: Check the pre-release flag
+      - name: Check the tag and the pre-release flag
         run: |
+          [[ $(git rev-parse HEAD) == "$(git rev-parse "refs/tags/$TAG^{commit}")" ]]
+          prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)
           # Anything with a suffix (-alpha, -rc1) is a pre-release.
-          if [[ $TAG == *-* && $PRERELEASE != true ]]; then
+          if [[ $TAG == *-* && $prerelease != true ]]; then
               echo "::error::$TAG has a suffix but is not marked as a pre-release"
               exit 1
           fi
@@ -42,11 +51,13 @@ jobs:
         run: sudo env IMAC5K_REQUIRE_STARTUP_TESTS=1 python3 -m unittest discover -s tests -p 'test_startup.py' -v
 
       - name: Rebuild the release tarball
-        run: scripts/make-release.sh "${TAG#v}" "$GITHUB_SHA"
+        run: |
+          # The release tests leave their own archives in dist/, and
+          # SHA256SUMS lists every archive there.
+          sudo rm -rf dist
+          scripts/make-release.sh "${TAG#v}" "refs/tags/$TAG"
 
       - name: Compare with the published files
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           archive="imac5k-patcher-${TAG#v}.tar.gz"
           mkdir published

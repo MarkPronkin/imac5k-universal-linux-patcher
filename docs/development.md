@@ -186,6 +186,10 @@ gh release create v0.2.1-alpha --verify-tag --prerelease --target test \
 
 `--target` names the branch the release comes from. Versions containing a
 hyphen are prereleases. Publishing triggers `.github/workflows/release.yml`:
-it runs the checks, rebuilds the archive from the tagged commit, and fails if
-the published tarball or `SHA256SUMS` differ or a suffixed version is not
-marked as a prerelease. Pushing a tag or building locally publishes nothing.
+it runs the checks, rebuilds the archive from the tagged commit in an emptied
+`dist/` (the release tests leave archives there), and fails if the published
+tarball or `SHA256SUMS` differ or a suffixed version is not marked as a
+prerelease. The published event uses the workflow as it is in the tagged
+commit; to check an existing release with the current workflow, run
+`gh workflow run release.yml --ref test -f tag=v0.2.1-alpha`. Pushing a tag
+or building locally publishes nothing.
