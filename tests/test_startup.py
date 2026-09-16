@@ -52,7 +52,7 @@ class StartupTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.available = self.root / "tools"
         self.available.mkdir()
-        self.commands = {"bash", "env", "grep", "sed", "awk", "find", *COREUTILS}
+        self.commands = {"bash", "env", "grep", "sed", "awk", "find", "flock", *COREUTILS}
         for command in self.commands:
             shutil.copy2(shutil.which(command), self.available / command)
         self.stub("uname", "echo 7.2.2-startup-test")
@@ -90,6 +90,7 @@ for package in "$@"; do
     case "$package" in
         coreutils) tools="''' + " ".join(COREUTILS) + '''" ;;
         findutils) tools=find ;;
+        util-linux) tools=flock ;;
         gawk) tools=awk ;;
         grep|sed) tools=$package ;;
         *) continue ;;
@@ -164,7 +165,7 @@ esac''')
             with self.subTest(args=args):
                 result = self.launch(*args, missing=("find",), answer="n\n")
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn("missing: find", result.stdout)
+                self.assertIn("missing: find", result.stderr)
                 self.assertIn("Install them now? [y/N]", result.stderr)
                 self.assertNotIn("ids:", result.stdout)
                 self.assertNotIn("PACKAGE_MANAGER", result.stdout)
@@ -196,7 +197,7 @@ esac''')
                     result = self.launch(missing=("find",), answer="y\n", fedora=fedora)
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertNotIn("ids:", result.stdout)
-                    self.assertIn("installation failed" if mode == "fail" else "still missing after the install", result.stdout)
+                    self.assertIn("installation failed" if mode == "fail" else "still missing after the install", result.stderr)
 
     def test_fedora_uses_dnf_even_when_pacman_is_installed(self):
         result = self.launch("--status", missing=("find",), answer="y\n", fedora=True, both_managers=True)
@@ -207,7 +208,7 @@ esac''')
     def test_fedora_does_not_fall_back_to_pacman_when_dnf_is_missing(self):
         result = self.launch(missing=("find", "dnf"), answer="y\n", fedora=True, both_managers=True)
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("install these as root", result.stdout)
+        self.assertIn("install these as root", result.stderr)
         self.assertNotIn("PACKAGE_MANAGER", result.stdout)
 
     def test_eof_and_missing_sudo_or_package_manager_explain_why_startup_stops(self):
@@ -217,14 +218,14 @@ esac''')
             with self.subTest(missing=missing):
                 result = self.launch(missing=missing)
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn(expected, result.stdout)
+                self.assertIn(expected, result.stderr)
                 self.assertNotIn("PACKAGE_MANAGER", result.stdout)
                 self.assertNotIn("ids:", result.stdout)
 
     def test_symlink_launcher_uses_the_same_dependency_gate(self):
         result = self.launch(missing=("find",), answer="n\n", symlink=True)
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("missing: find", result.stdout)
+        self.assertIn("missing: find", result.stderr)
 
     def test_gum_is_used_only_with_terminal_input_and_output(self):
         result = self.launch(missing=("find",), answer="n\n", gum=True)
@@ -311,7 +312,7 @@ esac''')
             self.assertNotIn(command, line)
         # A stub package manager delivers none of them, so the recheck says so
         # and the refreshed status is printed before the menu.
-        self.assertIn("still missing after the install", result.stdout)
+        self.assertIn("still missing after the install", result.stderr)
         self.assertEqual(result.stdout.count("ids:"), 2)
 
     def test_fedora_prerequisites_use_fedora_package_names(self):

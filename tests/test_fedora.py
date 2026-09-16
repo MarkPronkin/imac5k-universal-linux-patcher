@@ -126,6 +126,19 @@ class DisplayTests(unittest.TestCase):
             self.assertEqual(panel["profile"], "EDID")
             self.assertEqual(json.loads(state.read_text())["profile"], "sRGB")
 
+    def test_missing_identity_preserves_the_previous_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel, doctor = self.kscreen()
+            state = Path(tmp) / "imac-patcher/kde-color.json"
+            self.assertEqual(self.run_display(tmp, doctor, "apply"), 0)
+            original = state.read_text()
+            panel["uuid"] = ""
+            for action in ("apply", "remove"):
+                with self.subTest(action=action):
+                    self.assertEqual(self.run_display(tmp, doctor, action), 1)
+                    self.assertEqual(state.read_text(), original)
+                    self.assertEqual(panel["profile"], "EDID")
+
 
 MOCK = r'''#!/usr/bin/env python3
 import json, os, pathlib, sys
@@ -142,6 +155,8 @@ if name == 'modinfo':
     elif 'parm' in args:
         print('tiled_stitch:Enable stitched mode (bool)')
 elif name == 'grubby':
+    if os.environ.get('FAIL_GRUBBY') == 'all' or (os.environ.get('FAIL_GRUBBY') == 'write' and '--info' not in args):
+        sys.exit(1)
     store = root / 'args'
     current = store.read_text().split()
     if '--info' in args:
@@ -156,9 +171,10 @@ elif name == 'grubby':
         store.write_text(' '.join(current))
 elif name == 'dracut':
     if os.environ.get('FAIL_DRACUT'):
+        pathlib.Path(args[-2]).write_text('partial failed image')
         sys.exit(1)
     assert args[-1] == os.environ['KREL']
-    (root / 'initramfs').write_text('rebuilt')
+    pathlib.Path(args[-2]).write_text('rebuilt')
 elif name == 'mokutil':
     print('SecureBoot disabled')
 '''
@@ -226,6 +242,29 @@ check_signing() { :; }
         self.assertFalse((self.root / "state").exists())
         self.assertEqual((self.root / "initramfs").read_text(), "stock")
         self.assertEqual((self.root / "args").read_text(), self.original_args)
+
+    def test_grubby_read_failure_prevents_install(self):
+        result = self.run_backend('install_module "$TEST_ROOT/good.ko"', FAIL_GRUBBY="all")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "state").exists())
+        self.assertEqual((self.root / "initramfs").read_text(), "stock")
+
+    def test_grubby_write_failure_still_restores_stock_image(self):
+        result = self.run_backend('install_module "$TEST_ROOT/good.ko"', FAIL_GRUBBY="write")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / "initramfs").read_text(), "stock")
+        self.assertTrue((self.root / "state/recovery-needed").exists())
+        self.assertIn("recovery incomplete", result.stderr)
+
+    def test_failed_restore_retains_stock_and_is_retryable(self):
+        self.assertEqual(self.run_backend('install_module "$TEST_ROOT/good.ko"').returncode, 0)
+        result = self.run_backend('restore_module', FAIL_DRACUT="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / "initramfs").read_text(), "stock")
+        blocked = self.run_backend('install_module "$TEST_ROOT/good.ko"')
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertEqual((self.root / "state/initramfs.stock").read_text(), "stock")
+        self.assertEqual(self.run_backend('restore_module').returncode, 0)
 
     def test_reinstall_keeps_first_stock_backup(self):
         for _ in range(2):

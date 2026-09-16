@@ -159,6 +159,21 @@ audio_live_is_patched() { [[ -f $AUDIO_TEST_ROOT/live ]]; }
         self.assert_ok(result)
         self.assertEqual(result.stdout.strip(), "partial")
 
+    def test_failed_dkms_queries_are_errors_not_a_module_state(self):
+        for failure in ("all", "conflicts"):
+            with self.subTest(failure=failure):
+                result = self.run_audio('''
+warn() { echo "$*" >&2; }
+dkms() {
+    [[ $AUDIO_DETECT_FAILURE != all && $# -gt 1 ]] || return 9
+    echo 'snd_hda_macbookpro/0.2, 7.2.3-arch1-3, x86_64: installed'
+}
+mod_audio_detect
+''', AUDIO_DETECT_FAILURE=failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("Could not inspect DKMS", result.stderr)
+
     def test_a_new_module_on_disk_still_requires_a_reboot(self):
         self.assert_ok(self.run_audio("audio_install_driver"))
         self.assertEqual(self.run_audio("mod_audio_detect").stdout.strip(), "partial")

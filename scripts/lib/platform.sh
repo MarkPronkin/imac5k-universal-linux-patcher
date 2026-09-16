@@ -46,8 +46,8 @@ imac_eq_supported() { [[ ${product:-$(imac_product_name)} != iMacPro1,1 ]]; }
 # second tile unlocked and the desktop stretched. See patches/README.md.
 imac_panel_needs_10bpc() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 ]]; }
 
-imac_is_fedora() { ( . /etc/os-release; [[ ${ID:-} == fedora ]] ); }
-imac_is_arch() { ( . /etc/os-release; [[ ${ID:-} == arch || " ${ID_LIKE:-} " == *" arch "* ]] ); }
+imac_is_fedora() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == fedora ]] ); }
+imac_is_arch() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == arch || ${ID:-} == archlinux || " ${ID_LIKE:-} " == *" arch "* || " ${ID_LIKE:-} " == *" archlinux "* ]] ); }
 imac_is_atomic() { [[ -e /run/ostree-booted ]]; }
 imac_is_kde() { local desktop=${XDG_CURRENT_DESKTOP:-}; [[ ${desktop,,} == *kde* ]]; }
 # Bootloaders are identified by the configs they maintain, never by installed

@@ -11,6 +11,7 @@ where they differ.
 | bash | bash | bash | Bash 4.4+; the status snapshot uses associative arrays |
 | coreutils, grep, sed, awk, findutils | coreutils, grep, sed, gawk, findutils | same names | awk is used by the 5K helper scripts |
 | sudo | sudo | sudo | package installation and system changes |
+| flock | util-linux | util-linux | prevents concurrent patcher operations |
 | gum | gum | — | optional; nicer interactive UI, plain prompts are the fallback |
 
 `imac-patcher` checks this core set before status, menu, apply, and remove
@@ -62,24 +63,25 @@ Preflight checks for these tools and offers to install missing ones:
 | xz | xz |
 | patch | patch |
 | cpio | cpio |
+| python3 | python |
 | depmod, modinfo, lsmod | kmod |
 | kernel headers for the running kernel | `<pkgbase>-headers` (`linux-headers`, `linux-cachyos-headers`, etc.) |
 | limine-mkinitcpio (Limine backend) | limine-mkinitcpio-hook |
 | mkinitcpio (GRUB backend) | mkinitcpio |
 | grub-mkconfig (GRUB backend) | grub |
-| clang, ld.lld, llvm-ar/nm/objcopy/objdump/readelf/strip (Clang-built GRUB kernels) | clang, lld, llvm |
+| clang, ld.lld, llvm-ar/nm/objcopy/objdump/readelf/strip (Clang-built kernels on either backend) | clang, lld, llvm |
 
-Also: ~8 GB free disk and 20–40 min compile time. Kernel series 7.1.x/7.2.x only.
+Also: at least 10 GiB free disk and 20–40 min compile time. Kernel series 7.1.x/7.2.x only.
 
 The headers package comes from `/usr/lib/modules/$(uname -r)/pkgbase`, so custom
 kernels use their own headers. A package install must provide headers for the
-exact running kernel; after a kernel update, reboot before patching. GRUB
-builds use that installed Kbuild tree and its configuration, including Clang
-when `CONFIG_CC_IS_CLANG=y`. Their boot layout must have matching
+exact running kernel; after a kernel update, reboot before patching. Both Arch
+backends build against that installed Kbuild tree and its configuration, including
+Clang when `CONFIG_CC_IS_CLANG=y`. The GRUB boot layout must have matching
 `/boot/vmlinuz-<pkgbase>` and `/boot/initramfs-<pkgbase>.img` files and a
 mkinitcpio preset. Arch-family dracut/UKI-only layouts are refused.
 
-The GRUB variants of `imac-alt-entry` and `imac-test-entry` also use `lsinitcpio`
+Both variants of `imac-alt-entry` and `imac-test-entry` also use `lsinitcpio`
 (from mkinitcpio), libarchive’s `bsdtar`/`bsdcpio`, zstd, xz/gzip, kmod, and
 coreutils. `imac-alt-entry add` needs rsync to stage its private module tree.
 The helpers use the installed mkinitcpio configuration and explicitly include
@@ -200,8 +202,14 @@ driver; the bundled audio installer supports only iMac18,3.
 
 ## Color module (safe tier)
 
-- Hyprland: `hyprctl` (edits `~/.config/hypr/monitors.lua`, then reloads)
+- Hyprland: `python3` + `hyprctl` (edits `~/.config/hypr/monitors.lua`, then reloads)
 - KDE: `python3` + `kscreen-doctor` (via `scripts/kde-display.py`, stdlib only)
+
+Hyprland colour changes target one literal internal-panel rule. With only a
+fallback rule, apply adds an `eDP-1` override. The previous selection is saved
+in `~/.local/state/imac-patcher/hypr-color.json` and restored on removal;
+external outputs and unrelated edits are preserved. Older installs without a
+saved selection require choosing their previous mode manually.
 
 On KDE the setting belongs to the panel's EDID hash, not to the connector name,
 so the 5K stitch invalidates it: apply `color` after the stitch reboot. The

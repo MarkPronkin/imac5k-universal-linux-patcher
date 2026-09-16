@@ -19,12 +19,12 @@ grub_regen() {
 # quotes, indentation and comments; the final assignment to each variable wins.
 # Refuse computed/multiline values rather than replacing boot-critical options.
 grub_read_cmdlines() {
-    local line value key i=0 prefix suffix quote
+    local line value key i=0 prefix suffix quote contents
     local assignment='^([[:space:]]*(export[[:space:]]+)?(GRUB_CMDLINE_LINUX(_DEFAULT)?)=)(.*)$'
     local quoted="^([\"'])(.*)\\1([[:space:]]*(#.*)?)$"
     GRUB_LINES=(); GRUB_KEYS=(); GRUB_PREFIXES=(); GRUB_VALUES=(); GRUB_QUOTES=(); GRUB_SUFFIXES=()
     GRUB_LINUX=; GRUB_LINUX_DEFAULT=; GRUB_DEFAULT_INDEX=-1
-    [[ -r $GRUB_DEFAULT_FILE ]] || { warn "cannot read $GRUB_DEFAULT_FILE"; return 1; }
+    contents=$($GRUB_SUDO cat "$GRUB_DEFAULT_FILE") || { warn "cannot read $GRUB_DEFAULT_FILE"; return 1; }
     while IFS= read -r line || [[ -n $line ]]; do
         GRUB_LINES[i]=$line
         if [[ $line =~ $assignment ]]; then
@@ -52,7 +52,7 @@ grub_read_cmdlines() {
             fi
         fi
         i=$((i + 1))
-    done < "$GRUB_DEFAULT_FILE"
+    done <<< "$contents"
 }
 
 grub_has_token() {
@@ -83,11 +83,15 @@ grub_backup() {
 grub_commit_file() {   # source, destination
     local src=$1 dest=$2 backup= cfg_backup= mode=
     command -v grub-mkconfig >/dev/null || { warn "install the grub package first"; return 1; }
-    if [[ -f $dest ]]; then
+    # Confirm access before deciding a protected file does not exist. A denied
+    # sudo probe must not turn rollback into deletion of an existing config.
+    $GRUB_SUDO test -d "$(dirname "$dest")" || return 1
+    $GRUB_SUDO test -d "$(dirname "$GRUB_CFG")" || return 1
+    if $GRUB_SUDO test -f "$dest"; then
         mode=$($GRUB_SUDO stat -Lc '%a' "$dest") || return 1
         backup=$(grub_backup "$dest") || return 1
     fi
-    if [[ -f $GRUB_CFG ]]; then cfg_backup=$(grub_backup "$GRUB_CFG") || return 1; fi
+    if $GRUB_SUDO test -f "$GRUB_CFG"; then cfg_backup=$(grub_backup "$GRUB_CFG") || return 1; fi
     if $GRUB_SUDO cp "$src" "$dest" \
         && { [[ $dest != "$GRUB_CUSTOM" ]] || $GRUB_SUDO chmod 755 "$dest"; } \
         && grub_regen; then
@@ -110,7 +114,7 @@ grub_commit_file() {   # source, destination
 
 grub_cmdline_edit() {   # add/remove, one literal kernel parameter
     local action=$1 param=$2 i value quote tmp words=() keep=()
-    [[ $param =~ ^[a-zA-Z0-9_.=:/@,+-]+$ ]] || { warn "invalid kernel parameter: $param"; return 1; }
+    [[ $param =~ ^[a-zA-Z0-9_.=:/@,+!-]+$ ]] || { warn "invalid kernel parameter: $param"; return 1; }
     grub_read_cmdlines || return 1
     if [[ $action == add ]]; then
         grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" "$param" && return 0
@@ -145,6 +149,41 @@ grub_cmdline_remove() { grub_cmdline_edit remove "$1"; }
 grub_entry_begin() { printf '# >>> imac-patcher test entry: %s >>>\n' "$1"; }
 grub_entry_end()   { printf '# <<< imac-patcher test entry: %s <<<\n' "$1"; }
 grub_entry_exists() { grep -qxF "$(grub_entry_begin "$1")" "$GRUB_CUSTOM" 2>/dev/null; }
+
+# Read the image recorded in a managed entry, without executing GRUB syntax.
+# A named entry can belong to another installed kernel package.
+grub_entry_initrd() {
+    $GRUB_SUDO awk -v b="$(grub_entry_begin "$1")" -v e="$(grub_entry_end "$1")" '
+        $0 == b { inside=1; blocks++; next }
+        $0 == e { inside=0; ends++; next }
+        inside && ($1 == "initrd" || $1 == "initrdefi") {
+            path=$NF; gsub(/[\047\042]/, "", path); images++
+        }
+        END {
+            if (blocks != 1 || ends != 1 || inside || images != 1) exit 1
+            print path
+        }
+    ' "$GRUB_CUSTOM"
+}
+
+grub_entry_image() {
+    local name=$1 path base
+    path=$(grub_entry_initrd "$name") || return 1
+    base=${path##*/}
+    [[ $base == initramfs-*-imac-"$name".img && $base =~ ^[a-zA-Z0-9._+-]+$ ]] || return 1
+    printf '%s/%s\n' "$GRUB_BOOT_DIR" "$base"
+}
+
+grub_entry_boots_image() {
+    local path normal expected
+    path=$(grub_entry_initrd "$1") || return 1
+    normal=$(grub_kernel_entry | awk '$1 == "initrd" || $1 == "initrdefi" {
+        path=$NF; gsub(/[\047\042]/, "", path); print path
+    }') || return 1
+    [[ -n $normal ]] || return 1
+    expected=${normal%/*}/${2##*/}
+    [[ $path == "$expected" ]]
+}
 grub_list_entries() {
     [[ -f $GRUB_CUSTOM ]] || return 0
     sed -n 's|^# >>> imac-patcher test entry: \(.*\) >>>$|\1|p' "$GRUB_CUSTOM"
@@ -171,7 +210,7 @@ grub_kernel_entry() {
                 path=$NF; gsub(/[\047\042]/, "", path); sub(/^.*\//, "", path)
                 image=(path == initrd)
             }
-            if ($0 == indent "}") {
+            if (index($0, indent "}") == 1 && substr($0, length(indent) + 2) ~ /^[[:space:]]*(#.*)?$/) {
                 if (linux && image) { printf "%s", block; found=1; exit }
                 inside=0
             }
@@ -298,8 +337,29 @@ grub_prepare_module() {
     case $src in
         *.ko.zst|*.ko.zst.stock-backup|*.ko.zst.prev-*) cp "$src" "$dest" || return 1 ;;
         *.ko|*.ko.stock-backup|*.ko.prev-*) zstd -q -f "$src" -o "$dest" || return 1 ;;
+        *.ko.xz|*.ko.xz.stock-backup|*.ko.xz.prev-*) xz -dc "$src" | zstd -q -c > "$dest" || return 1 ;;
+        *.ko.gz|*.ko.gz.stock-backup|*.ko.gz.prev-*) gzip -dc "$src" | zstd -q -c > "$dest" || return 1 ;;
         *) warn "module must end in .ko or .ko.zst"; return 1 ;;
     esac
+    zstd -t "$dest" >/dev/null 2>&1 || { warn "invalid compressed module: $src"; return 1; }
     vm=$(modinfo -F vermagic "$dest") || return 1
     [[ ${vm%% *} == "$KREL" ]] || { warn "module vermagic '${vm%% *}' != running kernel '$KREL'"; return 1; }
 }
+
+# Capture each pipeline status before comparing; two failed decompressors
+# must not pass merely because b2sum hashed two empty inputs.
+module_matches() {
+    local expected actual
+    expected=$(zstd -dcf "$1" | b2sum) || return 1
+    actual=$(zstd -dcf "$2" | b2sum) || return 1
+    [[ $expected == "$actual" ]]
+}
+
+limine_image_module() (
+    local image
+    image=$(mktemp) || return 1
+    trap 'rm -f "$image"' EXIT
+    objcopy -O binary --only-section=.initrd "$1" "$image" || return 1
+    [[ -s $image ]] || return 1
+    grub_image_module "$image" "$2"
+)

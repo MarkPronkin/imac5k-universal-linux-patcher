@@ -45,10 +45,15 @@ main() {
         esac
     done
 
-    [[ $action == uninstall ]] && { uninstall; return; }
+    if [[ $action == uninstall ]]; then
+        install_lock
+        uninstall
+        return
+    fi
 
     preflight
     resolve_version
+    install_lock
     fetch_and_install
     link_launcher
     prune_old
@@ -79,7 +84,7 @@ preflight() {
         die "run this as your normal user, not root -- the patcher sudos where it must"
     fi
     local missing=() c
-    for c in curl tar sha256sum install mktemp uname; do
+    for c in curl tar sha256sum install mktemp uname flock realpath diff; do
         command -v "$c" >/dev/null || missing+=("$c")
     done
     ((${#missing[@]})) && die "missing required commands: ${missing[*]}"
@@ -106,17 +111,40 @@ resolve_version() {
             || die "could not reach the GitHub API -- pass --version <tag> to install a known release"
         VERSION="$(printf '%s' "$json" \
                    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
-                   | head -1 | sed 's/.*"\([^"]*\)"$/\1/')"
+                   | head -1 | sed 's/.*"\([^"]*\)"$/\1/')" || die "could not parse the release tag; pass --version <tag>"
         [[ -n $VERSION ]] || die "no releases published yet -- clone the repo and run ./scripts/imac-patcher"
     fi
     TAG="$VERSION"
     VER="${TAG#v}"                       # tag v0.1.0-alpha -> version 0.1.0-alpha
+    [[ $VER =~ ^[0-9][a-zA-Z0-9._+-]*$ ]] || die "invalid release version: $TAG"
     PREFIX="${NAME}-${VER}"
     BASE="${IMAC5K_BASE_URL:-https://github.com/${REPO}/releases/download/${TAG}}"
 }
 
+install_lock() {
+    DATA_DIR=$(realpath -m -- "$DATA_DIR")
+    BIN_DIR=$(realpath -m -- "$BIN_DIR")
+    [[ $BIN_DIR != *$'\n'* ]] || die "launcher directory cannot contain a newline"
+    mkdir -p "$(dirname "$DATA_DIR")"
+    exec {install_fd}>"${DATA_DIR}.install.lock"
+    flock -n "$install_fd" || die "another installer is already running"
+}
+
+# Rename the symlink itself, so readers see either complete installation.
+atomic_link() {
+    local target=$1 link=$2 staging
+    staging=$(mktemp -d "$(dirname "$link")/.imac-link.XXXXXX") || return 1
+    if ln -s "$target" "$staging/link" && mv -Tf "$staging/link" "$link"; then
+        rmdir "$staging"
+    else
+        rm -rf -- "$staging"
+        return 1
+    fi
+}
+
 fetch_and_install() {
-    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    mkdir -p "${DATA_DIR}/versions"
+    tmp="$(mktemp -d "${DATA_DIR}/.install.XXXXXX")"; trap 'rm -rf -- "$tmp"' EXIT
     say "downloading ${PREFIX}.tar.gz"
     curl -fsSL --retry 3 -o "${tmp}/${PREFIX}.tar.gz" "${BASE}/${PREFIX}.tar.gz" \
         || die "no such release asset: ${BASE}/${PREFIX}.tar.gz"
@@ -127,11 +155,13 @@ fetch_and_install() {
         # printed hash against the release page if that distinction matters.
         curl -fsSL -o "${tmp}/SHA256SUMS" "${BASE}/SHA256SUMS" \
             || die "release ${TAG} publishes no SHA256SUMS -- re-run with --no-verify to install anyway"
-        grep -F " ${PREFIX}.tar.gz" "${tmp}/SHA256SUMS" > "${tmp}/sum" \
-            || die "SHA256SUMS has no entry for ${PREFIX}.tar.gz"
+        awk -v file="${PREFIX}.tar.gz" '$2 == file && $1 ~ /^[[:xdigit:]]+$/ && length($1) == 64 { print $1 "  " file; count++ } END { exit count != 1 }' \
+            "${tmp}/SHA256SUMS" > "${tmp}/sum" || die "SHA256SUMS must have exactly one entry for ${PREFIX}.tar.gz"
         ( cd "$tmp" && sha256sum -c sum ) >/dev/null \
             || die "checksum mismatch -- refusing to install ${PREFIX}.tar.gz"
         say "checksum verified"
+    else
+        warn "checksum verification disabled by --no-verify or IMAC5K_NO_VERIFY"
     fi
 
     tar -xzf "${tmp}/${PREFIX}.tar.gz" -C "$tmp"
@@ -139,10 +169,13 @@ fetch_and_install() {
         || die "the tarball does not look like a patcher release (no scripts/imac-patcher)"
 
     dest="${DATA_DIR}/versions/${VER}"
-    mkdir -p "${DATA_DIR}/versions"
-    rm -rf "$dest"
-    mv "${tmp}/${PREFIX}" "$dest"
-    ln -sfn "$dest" "${DATA_DIR}/current"
+    if [[ -e $dest || -L $dest ]]; then
+        [[ -d $dest && ! -L $dest ]] && diff -qr "${tmp}/${PREFIX}" "$dest" >/dev/null \
+            || die "existing ${VER} differs from this release; preserving it and the current installation"
+    else
+        mv -T "${tmp}/${PREFIX}" "$dest"
+    fi
+    atomic_link "$dest" "${DATA_DIR}/current"
     say "installed ${VER} into ${dest}"
 }
 
@@ -150,20 +183,23 @@ link_launcher() {
     mkdir -p "$BIN_DIR"
     # The launcher points at current/, so the next install switches every link
     # at once and a rollback is one `ln -sfn` away.
-    ln -sfn "${DATA_DIR}/current/scripts/imac-patcher" "${BIN_DIR}/imac-patcher"
+    # Remember every launcher, including custom paths used by earlier installs.
+    printf '%s\n' "${BIN_DIR}/imac-patcher" >> "${DATA_DIR}/launchers"
+    atomic_link "${DATA_DIR}/current/scripts/imac-patcher" "${BIN_DIR}/imac-patcher"
     say "linked ${BIN_DIR}/imac-patcher"
 }
 
 prune_old() {
-    local keep=() d
-    # Newest first by mtime; each install refreshes the directory it wrote.
-    while IFS= read -r d; do keep+=("$d"); done < <(
-        ls -1dt "${DATA_DIR}/versions/"*/ 2>/dev/null || true)
-    ((${#keep[@]} > KEEP)) || return 0
-    for d in "${keep[@]:KEEP}"; do
-        [[ "$(readlink -f "$d")" == "$(readlink -f "${DATA_DIR}/current")" ]] && continue
-        rm -rf "$d"
-    done
+    local keep=1 d current
+    current=$(readlink -f "${DATA_DIR}/current")
+    # Keep current plus the two most recently installed real directories.
+    # Never traverse symlinks or pass a trailing slash to rm.
+    while IFS= read -r -d '' d; do
+        d=${d#* }
+        [[ $d == "$current" || -L $d ]] && continue
+        [[ ${d##*/} =~ ^[0-9][a-zA-Z0-9._+-]*$ ]] || continue
+        if (( keep < KEEP )); then keep=$((keep + 1)); else rm -rf -- "$d"; fi
+    done < <(find "${DATA_DIR}/versions" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\0' | sort -zrn)
 }
 
 uninstall() {
@@ -173,8 +209,13 @@ uninstall() {
         warn "any patches you applied stay applied -- remove them first with:"
         warn "  imac-patcher --remove <id...>     (see imac-patcher --status)"
     fi
-    rm -f "${BIN_DIR}/imac-patcher"
-    rm -rf "$DATA_DIR"
+    local launcher
+    while IFS= read -r launcher; do
+        [[ -L $launcher ]] || continue
+        [[ $(readlink "$launcher") == "${DATA_DIR}/current/scripts/imac-patcher" ]] || continue
+        rm -f -- "$launcher"
+    done < <(printf '%s\n' "${BIN_DIR}/imac-patcher"; cat "${DATA_DIR}/launchers" 2>/dev/null || true)
+    rm -rf -- "$DATA_DIR"
     say "removed ${DATA_DIR} and ${BIN_DIR}/imac-patcher"
 }
 

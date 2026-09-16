@@ -5,6 +5,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+from test_patcher_menu import shell_function
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -421,7 +422,7 @@ cat "$EQ_VOLUME_STATE"
         self.stub_pactl(active=FOUR_CHANNEL)
         source = PATCHER.read_text()
         start = source.index("run_module() {")
-        driver = source[start:source.index('\ncase "$ACTION" in', start)]
+        driver = shell_function(source, "module_state") + "\n" + source[start:source.index('\ncase "$ACTION" in', start)]
         result = self.run_eq(driver + '''
 mod_eq_detect() { echo applied; }
 mod_eq_apply() { echo UNEXPECTED-REINSTALL; return 1; }
@@ -502,7 +503,7 @@ mod_eq_remove
         self.assertEqual((self.root / "volume-91").read_text(), "0.40")
         self.assertFalse((self.root / "state/eq-hardware-volume").exists())
 
-    def test_failed_restore_preserves_the_saved_volume_and_installed_eq(self):
+    def test_failed_restore_preserves_saved_volume_but_removes_eq_files(self):
         self.stub_pactl(active=FOUR_CHANNEL)
         self.stub_audio(fail_node="91")
         result = self.run_eq('''
@@ -513,15 +514,39 @@ eq_restart_pipewire() { echo RESTARTED; }
 mod_eq_remove
 ''')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("RESTARTED", result.stdout)
+        self.assertIn("RESTARTED", result.stdout)
         self.assertTrue((self.root / "state/eq-hardware-volume").exists())
-        self.assertTrue((self.root / "home/.config/pipewire/imac-speaker-eq.conf.d/imac-audio.conf").exists())
+        self.assertFalse((self.root / "home/.config/pipewire/imac-speaker-eq.conf.d/imac-audio.conf").exists())
+
+    def test_remove_keeps_external_default_and_unrelated_irs(self):
+        external = "alsa_output.pci-0000_01_00.1.hdmi-stereo"
+        self.stub_pactl(default=external, sinks=f"1\t{external}\n" + AUX_SINK)
+        result = self.run_eq(self.install_eq() + '''
+echo keep > "$EQ_IRS_DIR/user.wav"
+eq_restart_pipewire() { :; }
+mod_eq_remove
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "default-sink").read_text(), external)
+        self.assertEqual((self.root / "home/.local/share/imac-audio/user.wav").read_text(), "keep\n")
+
+    def test_detect_requires_the_exact_tuned_sink_name(self):
+        self.stub_pactl(active=FOUR_CHANNEL, sinks=TUNED_SINK.replace("iMac-convolver", "iMac-convolver-other"))
+        self.assertEqual(self.run_eq(self.install_eq() + "mod_eq_detect").stdout.strip(), "partial")
+
+    def test_lv2_search_preserves_spaces_and_literal_wildcards(self):
+        bundle = self.root / "plugins with spaces" / "custom.lv2"
+        bundle.mkdir(parents=True)
+        result = self.run_eq(f'LV2_PATH="{bundle.parent}"; eq_have_lv2 custom.lv2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_eq(f'LV2_PATH="{self.root}/plugins*"; eq_have_lv2 custom.lv2')
+        self.assertNotEqual(result.returncode, 0)
 
     def test_removing_puts_the_saved_card_profile_back(self):
         self.stub_pactl()
         script = '''
 mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR" "$(dirname "$EQ_HIDE_RULE")"
-touch "$EQ_CONF" "$EQ_BASE_CONF" "${EQ_IRS_DIR}/one.wav" "$EQ_HIDE_RULE"
+touch "$EQ_CONF" "$EQ_BASE_CONF" "${EQ_IRS_DIR}/${EQ_IRS[0]}" "$EQ_HIDE_RULE"
 eq_write_units alsa_card.pci-0000_00_1f.3
 eq_install_jack_helper
 systemctl --user enable "$EQ_UNIT" "$EQ_JACK_UNIT"

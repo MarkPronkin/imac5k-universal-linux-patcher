@@ -1,8 +1,8 @@
 # Development
 
 Work from a Git checkout and run checks as a normal user. Release installations
-contain the runtime scripts and user documentation; they omit `tests/` and the
-development notes.
+contain the runtime scripts and user documentation; they omit `tests/`, `notes/`,
+and `TODO.md`.
 
 ## Check a change
 
@@ -14,7 +14,7 @@ From the repository root:
 ```
 
 This checks Bash syntax, then runs the Python standard-library test suite. It
-needs Bash 4.4+, Python 3, Git, curl, and GNU tar, gzip and coreutils. No Python
+needs Bash 4.4+, Python 3, Git, curl, util-linux, diffutils, and GNU tar, gzip and coreutils. No Python
 packages, kernel build tools, root access, or external network are required.
 The release tests serve test downloads on the loopback interface.
 
@@ -29,7 +29,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 |---|---|
 | `test_patcher_cli.py`, `test_patcher_driver.py`, `test_patcher_menu.py` | Argument validation, status probe reuse, fresh checks before actions, batch exit codes, and terminal input |
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
-| `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, orphan test entries, and matching lean stacks across installers |
+| `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, unidentified-image refusal, and matching lean stacks across installers |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
 | `test_eq.py` | Speaker routing and volume restoration |
 | `test_suspend.py`, `test_tb_sleep_hook.py`, `test_wifi_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the iMac18,3 USB controller fix (DKMS build, boot load, detection, removal, Secure Boot) against fake DKMS and sysfs; the Thunderbolt and Wi-Fi sleep hooks against a fake sysfs tree |
@@ -40,14 +40,13 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
 | `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
 | `test_release.py` | Reproducible archives, checksum validation, launchers, upgrades, version pruning and uninstall |
+| `test_review_regressions.py` | Atomic Limine config edits, pinned image verification, failed decompression/rebuilds, colour restoration, and upgrade copy failure |
 
 Tests replace system commands or use temporary directories. They do not apply
 patches to the host. Release tests write ignored artifacts in `dist/`, create a
-temporary Git tag (removed afterwards), and use `git stash create` to snapshot
-tracked changes without altering the working tree or index. New runtime files
-must be staged before release tests can include them in that snapshot. Inspect
-the files and stage only the intended additions; never use a stash operation
-that moves your working changes out of the checkout.
+temporary Git tag (removed afterwards), and use a temporary Git index to snapshot
+runtime files, including new files. The user's index and working tree are
+preserved. Test snapshots create unreachable Git objects, not branch commits.
 
 The driver tests use a tiny local Git fixture to exercise the installer
 without downloading or compiling a kernel.
@@ -143,8 +142,14 @@ Build from a committed revision:
 
 This produces `dist/imac5k-patcher-0.2.0-alpha.tar.gz` and `dist/SHA256SUMS`.
 It archives the requested Git commit, so uncommitted edits are excluded.
+The checksum manifest includes every release archive currently in `dist/`.
 `VERSION` and `COMMIT` identify the release, and archive metadata is fixed to
 make repeated builds of the same version and commit byte-identical.
+
+Apply/remove/menu operations use a per-user `flock` under the patcher's state
+directory. Diagnostics go to stderr. Failed or invalid module detection stops
+that action and makes `--status` return nonzero; a successful action can still
+report `partial` when a reboot is required.
 
 The allowlist in `scripts/make-release.sh` controls release contents. When
 adding runtime files, confirm they are included and add coverage to the release

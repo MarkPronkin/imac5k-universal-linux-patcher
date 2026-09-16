@@ -30,15 +30,17 @@ log() { printf 'imac-audio-jack-switch: %s\n' "$*"; }
 # the untranslated identifiers.
 pa() { LC_ALL=C pactl "$@" 2>/dev/null; }
 
-# The built-in speaker card is the one offering the four-channel profile -- the
-# same test the EQ module uses. It holds whichever profile is active, so this
+# The built-in speaker card is the sole PCI card offering the four-channel
+# profile, as in the EQ module. It holds whichever profile is active, so this
 # resolves the card with headphones in or out.
 speaker_card() {
     pa list cards | awk '
         /^Card #/                     { name=""; has40=0 }
         /^\tName: /                   { name=$2 }
         $1 == "'"${PROFILE_40}"':"    { has40=1 }
-        /^\tActive Profile: /         { if (has40 && name) { print name; exit } }'
+        /^\tActive Profile: /         {
+            if (has40 && name ~ /^alsa_card\.pci-/) { candidate=name; count++ } }
+        END { if (count == 1) print candidate }'
 }
 
 active_profile() {
@@ -128,7 +130,7 @@ to_headphones() {
     # there is anywhere else to go leaves the streams on a dummy sink.
     wait_for_sink "$aux" || { log "flat sink ${aux} never appeared; leaving the tuning alone"; return 1; }
     carried=$(inputs_on "$EQ_SINK" auto_null)
-    systemctl --user stop "$EQ_UNIT" || log "could not stop ${EQ_UNIT}"
+    systemctl --user stop "$EQ_UNIT" || { log "could not stop ${EQ_UNIT}"; return 1; }
     claim_default "$aux" "$EQ_SINK" auto_null
     # shellcheck disable=SC2086
     [[ -n $carried ]] && move_inputs "$aux" $carried
@@ -142,7 +144,7 @@ to_speakers() {
     carried=$(inputs_on "$aux" auto_null)
     # The chain links to the four-channel device as it starts; started before
     # the card is back on that profile, it has nothing to attach to.
-    wait_for_profile "$card" "$PROFILE_40" || log "card is not on ${PROFILE_40}; starting the tuning anyway"
+    wait_for_profile "$card" "$PROFILE_40" || { log "card is not on ${PROFILE_40}; waiting for a later event"; return 1; }
     # Restart, not start, when the sink is missing: a chain whose target went
     # away keeps running with nothing loaded, and `start` is a no-op on it.
     local verb=start
@@ -169,8 +171,8 @@ reconcile() {   # $1 = card; updates $state
     local want
     if headphones_present "$1"; then want=in; else want=out; fi
     if [[ $want != "$state" ]]; then
+        apply_state "$1" "$want" || return 1
         state=$want
-        apply_state "$1" "$state"
     elif [[ $state == out ]] && ! sink_exists "$EQ_SINK"; then
         log "tuned sink is gone; restarting the tuning"
         to_speakers "$1"
@@ -194,8 +196,8 @@ main() {
 
     # Reconcile once at startup: the jack may already be in use at login, or
     # from before this service was restarted.
-    if headphones_present "$card"; then state=in; else state=out; fi
-    apply_state "$card" "$state"
+    state=unknown
+    reconcile "$card" || log "initial switch failed; will retry"
 
     # Card events carry port availability; pactl reports them without polling.
     # Sink removals are watched too: the tuned sink can vanish after the last
@@ -206,7 +208,7 @@ main() {
         sleep "$SETTLE"
         card=$(speaker_card); [[ -n $card ]] || continue
         reconcile "$card"
-    done < <(stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered -E "on card|'remove' on sink #")
+    done < <(LC_ALL=C stdbuf -oL pactl subscribe 2>/dev/null | stdbuf -oL grep --line-buffered -E "on card|'remove' on sink #")
 
     log "pactl subscribe ended"
     exit 1   # the unit restarts; a dead watcher would silently strand the jack

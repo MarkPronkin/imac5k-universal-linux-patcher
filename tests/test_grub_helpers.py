@@ -202,6 +202,28 @@ module_desc() { cat "$1"; }
         self.assertIn("/Test - trial", self.custom.read_text())
         self.assertTrue((self.boot / "initramfs-linux-cachyos-imac-trial.img").exists())
 
+    def test_promotion_rejects_an_entry_that_references_another_image_path(self):
+        result = self.run_helper("imac-alt-entry", 'grub_add trial "$GOOD_INPUT"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.custom.write_text(self.custom.read_text().replace(
+            '/initramfs-linux-cachyos-imac-trial.img', '/other/initramfs-linux-cachyos-imac-trial.img'))
+        result = self.run_helper("imac-alt-entry", "grub_promote trial")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not boot", result.stderr)
+        self.assertEqual(self.module.read_text(), "installed-test-module")
+        self.assertFalse(Path(str(self.module) + ".prev-promote").exists())
+
+    def test_drop_uses_recorded_image_after_kernel_package_change(self):
+        result = self.run_helper("imac-alt-entry", 'grub_add trial "$GOOD_INPUT"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_helper("imac-alt-entry", '''
+imac_kernel_pkgbase() { echo linux-other; }
+grub_drop trial
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.boot / "initramfs-linux-cachyos-imac-trial.img").exists())
+        self.assertNotIn("/Test - trial", self.custom.read_text())
+
     def test_decompressed_module_inside_initramfs_can_be_promoted(self):
         result = self.run_helper("imac-test-entry", 'grub_stage "$GOOD_INPUT"', IMAGE_UNCOMPRESSED="1")
         self.assertEqual(result.returncode, 0, result.stderr)

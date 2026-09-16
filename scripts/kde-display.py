@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 
 def doctor(*args):
@@ -27,9 +28,9 @@ def panel(config):
 def block(text, output_id):
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
     for part in re.split(r"(?m)(?=^Output:)", text):
-        if re.match(rf"Output:\s*{output_id}\s", part):
+        if re.match(rf"Output:\s*{re.escape(str(output_id))}\s", part):
             return part
-    return ""
+    raise ValueError(f"KScreen output {output_id} is missing from its text response.")
 
 
 def profile(text, output_id):
@@ -57,7 +58,7 @@ def identity(text, output_id):
 
 def is_5k(output):
     return any(str(m["id"]) == str(output["currentModeId"])
-               and m["size"] == {"width": 5120, "height": 2880}
+               and m["size"].get("width") == 5120 and m["size"].get("height") == 2880
                for m in output["modes"])
 
 
@@ -79,6 +80,9 @@ def main():
     state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "imac-patcher/kde-color.json"
     try:
         if os.environ.get("XDG_SESSION_TYPE") != "wayland" or not os.environ.get("WAYLAND_DISPLAY"):
+            if args.status:
+                print("n/a")
+                return 0
             raise ValueError("Run this from a terminal in your Plasma Wayland session.")
         output = panel(json.loads(doctor("--json")))
         if getattr(args, "5k_active"):
@@ -90,8 +94,12 @@ def main():
             print("applied" if current == "EDID" else "not-applied")
             return 0
         saved = read_state(state)
+        if saved and saved.get("uuid") and not panel_id:
+            raise ValueError("KScreen omitted the panel identity; cannot safely change the saved selection.")
         if args.apply:
             if current == "EDID":
+                if saved and saved.get("uuid", panel_id) != panel_id:
+                    state.unlink(missing_ok=True)
                 return 0
             # Re-save when the panel is not the one the stored setting came
             # from, so --remove restores this panel's own previous profile.
@@ -110,7 +118,7 @@ def main():
                 # The stitch reboot replaced the panel this setting was taken
                 # from. KDE gave the panel now present its own defaults, so
                 # there is nothing of ours left on it to undo.
-                state.unlink()
+                state.unlink(missing_ok=True)
                 print(f"{output['name']}: the saved colour setting belongs to the pre-5K panel; "
                       "discarded it and left this panel at its own setting.")
                 return 0
@@ -118,16 +126,17 @@ def main():
             if target not in ("sRGB", "ICC", "EDID"):
                 raise ValueError("Invalid saved colour profile selection.")
         doctor(f"output.{output['id']}.colorProfileSource.{target}")
-        if profile(doctor("--outputs"), output["id"]) != target:
+        for attempt in range(10):
+            if profile(doctor("--outputs"), output["id"]) == target:
+                break
+            time.sleep(0.1)
+        else:
             raise ValueError("KScreen did not apply the colour profile; check Display Configuration.")
         if args.remove:
-            state.unlink()
+            state.unlink(missing_ok=True)
         print(f"{output['name']}: colour profile source set to {target}.")
         return 0
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        if args.status:
-            print("n/a")
-            return 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1
 

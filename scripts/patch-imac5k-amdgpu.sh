@@ -22,7 +22,7 @@
 # * This replaces a core GPU module on your real system. If the built module
 #   fails to load, you get software rendering until you --restore (your desktop
 #   still boots). TEST ON THE USB CLONE FIRST, never first on your only install.
-# * Needs ~8 GB free and 20–40 min of compile time (amdgpu/display is large).
+# * Needs at least 10 GiB free and 20–40 min of compile time (amdgpu/display is large).
 # ───────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -103,9 +103,18 @@ if ((GRUB)); then
 fi
 
 # ── restore mode ───────────────────────────────────────────────────────────
-find_amdgpu() { find "$(dirname "$MODDIR")" -maxdepth 2 \( -name amdgpu.ko -o -name amdgpu.ko.zst -o -name amdgpu.ko.xz \) 2>/dev/null | head -1; }
+find_amdgpu() {
+    local candidate found=
+    for candidate in "$MODDIR/amdgpu.ko" "$MODDIR/amdgpu.ko.zst" "$MODDIR/amdgpu.ko.xz"; do
+        [[ -f $candidate ]] || continue
+        [[ -z $found ]] || { warn "multiple installed amdgpu modules under $MODDIR"; return 1; }
+        found=$candidate
+    done
+    [[ -n $found ]] || return 1
+    printf '%s\n' "$found"
+}
 if [[ "${1:-}" == "--restore" ]]; then
-	AMDKO="$(find_amdgpu)" || true
+	AMDKO="$(find_amdgpu)" || die "no installed amdgpu module found under $MODDIR"
 	BAK="${AMDKO}.stock-backup"
 	[[ -f "$BAK" ]] || die "no backup found at ${BAK} — nothing to restore"
 	say "restoring stock amdgpu module"
@@ -139,10 +148,13 @@ EOF
 	exit 1
 fi
 
-command -v gcc >/dev/null || die "install build tools first:  pacman -S --needed base-devel bc cpio pahole"
+for tool in gcc make ld bc pahole flex bison patch xz curl tar cpio zstd modinfo depmod objcopy python3 sha256sum flock; do
+    command -v "$tool" >/dev/null || die "missing $tool — see DEPENDENCIES.md for build prerequisites"
+done
+[[ -f $BUILDLINK/.config ]] || die "matching kernel headers have no .config"
 [[ -e "$BUILDLINK/Module.symvers" ]] || die "install kernel headers first:  pacman -S $(imac_kernel_pkgbase "$KREL")-headers  (needed so the module matches this kernel)"
 MAKE_ARGS=()
-if ((GRUB)) && imac_kernel_uses_clang "$KREL"; then
+if imac_kernel_uses_clang "$KREL"; then
 	for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
 		command -v "$tool" >/dev/null || die "missing $tool — install clang llvm lld for this kernel"
 	done
@@ -151,38 +163,39 @@ fi
 
 # ── fetch matching kernel source (for the driver .c files) ─────────────────
 mkdir -p "$WORK"; cd "$WORK"
-SRC="linux-${KVER}"
-if [[ ! -d "$SRC" ]]; then
-	say "downloading kernel ${KVER} source"
-	MAJ="${KVER%%.*}"
-	curl -fL --retry 3 -o "${SRC}.tar.xz" \
-		"https://cdn.kernel.org/pub/linux/kernel/v${MAJ}.x/${SRC}.tar.xz" \
-		|| die "could not download ${SRC}.tar.xz from kernel.org"
-	say "extracting"
-	tar -xf "${SRC}.tar.xz"
+WORK=$PWD
+exec {build_lock}>"$WORK/.build.lock"
+flock -n "$build_lock" || die "another graphics build is using $WORK"
+python3 - "$WORK" <<'SPACE'
+import shutil, sys
+if shutil.disk_usage(sys.argv[1]).free < 10 * 1024**3:
+    sys.exit("At least 10 GiB free in IMAC5K_WORK is required.")
+SPACE
+ARCHIVE="linux-${KVER}.tar.xz"
+MAJ="${KVER%%.*}"
+BASE="https://cdn.kernel.org/pub/linux/kernel/v${MAJ}.x"
+# Verify even cached downloads; never trust a partially extracted source tree.
+curl -fL --retry 3 -o "$WORK/SHA256SUMS.download" "$BASE/sha256sums.asc" || die "could not download kernel checksums"
+awk -v name="$ARCHIVE" '$2 == name && length($1) == 64 && $1 ~ /^[[:xdigit:]]+$/ { print $1 "  " name; n++ } END { exit n != 1 }' \
+    "$WORK/SHA256SUMS.download" > "$WORK/kernel.sha256" || die "no checksum for $ARCHIVE"
+if [[ ! -f $ARCHIVE ]]; then
+    say "downloading kernel ${KVER} source"
+    curl -fL --retry 3 -o "$ARCHIVE.part" "$BASE/$ARCHIVE" || die "could not download $ARCHIVE"
+    mv "$ARCHIVE.part" "$ARCHIVE"
 fi
+sha256sum -c "$WORK/kernel.sha256" || die "kernel archive checksum mismatch; remove $WORK/$ARCHIVE and retry"
+STACK_HASH=$(sha256sum "$PATCH_FILE" "${EXTRA_PATCHES[@]}" | sha256sum | cut -c1-16)
+SOURCE_WORK=$(mktemp -d "$WORK/build-${KREL}-${STACK_HASH}.XXXXXX")
+trap 'rm -rf -- "$SOURCE_WORK"' EXIT
+say "extracting pristine source into $SOURCE_WORK"
+tar -xf "$ARCHIVE" -C "$SOURCE_WORK"
+SRC="$SOURCE_WORK/linux-${KVER}"
 cd "$SRC"
 
 # ── configure to match the running kernel exactly (vermagic + symbols) ─────
 say "configuring to match the running kernel"
-if ((GRUB)); then
-	# CachyOS and other custom kernels change configuration and internal ABI.
-	# Use their prepared Kbuild tree directly, including Clang/LTO settings.
-	# Regenerating a kernel.org .config can silently discard those settings.
-	BUILTREL="$(make "${MAKE_ARGS[@]}" -s -C "$BUILDLINK" kernelrelease)"
-else
-cp "$BUILDLINK/.config" .config
-cp "$BUILDLINK/Module.symvers" Module.symvers 2>/dev/null || true
-# Arch's kernel release is e.g. 7.2.2-arch1-1 while kernel.org source builds
-# as plain 7.2.2 -- write the suffix into a localversion file so the built
-# module's vermagic matches `uname -r` exactly (else it refuses to load).
-KSUFFIX="${KREL#"$KVER"}"                 # e.g. -arch1-1
-printf '%s' "$KSUFFIX" > localversion
-scripts/config --disable LOCALVERSION_AUTO 2>/dev/null || true
-scripts/config --set-str LOCALVERSION "" 2>/dev/null || true
-make olddefconfig >/dev/null
-BUILTREL="$(make -s kernelrelease)"
-fi
+# Both bootloaders must use the packaged kernel's configuration and compiler.
+BUILTREL="$(make "${MAKE_ARGS[@]}" -s -C "$BUILDLINK" kernelrelease)"
 [[ "$BUILTREL" == "$KREL" ]] || die "computed kernelrelease '$BUILTREL' != running '$KREL' — refusing to build a module that won't load"
 say "kernelrelease matches running kernel: $BUILTREL"
 
@@ -203,13 +216,13 @@ apply_patch() {          # apply_patch <file> <label>
 		say "${label} already applied — reusing"
 		return
 	fi
-	if patch -p1 --dry-run --force < "$f" >/dev/null 2>&1; then
+	if patch -p1 --dry-run --batch --forward --fuzz=0 < "$f" >/dev/null 2>&1; then
 		say "applying ${label}"
-		patch -p1 < "$f"
+		patch -p1 --batch --forward --fuzz=0 < "$f"
 		touch "$stamp"
 		return
 	fi
-	die "${label} did not apply cleanly to ${KVER} source. It likely needs re-porting for this kernel. Nothing installed. If this tree was patched by an older version of this script, delete it and re-run:  rm -rf ${WORK}/${SRC}"
+	die "${label} did not apply cleanly to ${KVER} source. It likely needs re-porting for this kernel. Nothing installed. If this tree was patched by an older version of this script, delete it and re-run:  rm -rf ${SRC}"
 }
 
 apply_patch "$PATCH_FILE" "iMac 5K patch stack"
@@ -219,17 +232,10 @@ done
 
 # ── build just the amdgpu module ───────────────────────────────────────────
 say "building amdgpu module — this is the slow part (~20-40 min)"
-if ((GRUB)); then
-	make "${MAKE_ARGS[@]}" -C "$BUILDLINK" -j"$(nproc)" \
-		M="$PWD/drivers/gpu/drm/amd/amdgpu" \
-		"CFLAGS_amdgpu_trace_points.o=-I$PWD/include/trace" modules \
-		|| die "module build failed against the installed kernel headers"
-else
-make modules_prepare >/dev/null
-make -j"$(nproc)" M=drivers/gpu/drm/amd/amdgpu modules \
-	|| make -j"$(nproc)" drivers/gpu/drm/amd/amdgpu/amdgpu.ko \
-	|| die "module build failed"
-fi
+make "${MAKE_ARGS[@]}" -C "$BUILDLINK" -j"$(nproc)" \
+    M="$PWD/drivers/gpu/drm/amd/amdgpu" \
+    "CFLAGS_amdgpu_trace_points.o=-I$PWD/include/trace" modules \
+    || die "module build failed against the installed kernel headers"
 
 BUILT="$(find drivers/gpu/drm/amd/amdgpu -name amdgpu.ko | head -1)"
 [[ -f "$BUILT" ]] || die "built amdgpu.ko not found"
@@ -237,15 +243,14 @@ BUILT="$(find drivers/gpu/drm/amd/amdgpu -name amdgpu.ko | head -1)"
 # quick sanity: vermagic must match the running kernel or it won't load
 VM="$(modinfo -F vermagic "$BUILT" 2>/dev/null | awk '{print $1}')"
 [[ "$VM" == "$KREL" ]] || die "built vermagic '$VM' != running '$KREL' — refusing to install"
-if ((GRUB)); then
-	EXPECTED_VM="$(modinfo -k "$KREL" -F vermagic amdgpu)"
-	[[ "$(modinfo -F vermagic "$BUILT")" == "$EXPECTED_VM" ]] \
-		|| die "built module ABI flags differ from the installed kernel — refusing to install"
-fi
+EXPECTED_VM="$(modinfo -k "$KREL" -F vermagic amdgpu)"
+[[ "$(modinfo -F vermagic "$BUILT")" == "$EXPECTED_VM" ]] \
+    || die "built module ABI flags differ from the installed kernel — refusing to install"
 
 # ── install (compressed to match Arch's .ko.zst) with a stock backup ───────
 AMDKO="$(find_amdgpu)" || die "stock amdgpu module not found under $MODDIR"
 BAK="${AMDKO}.stock-backup"
+say "Recovery: sudo $0 --restore while running ${KREL}; stock module: $BAK"
 [[ -f "$BAK" ]] || { say "backing up stock module -> $BAK"; cp "$AMDKO" "$BAK"; }
 
 say "stripping debug info (matches stock packaging)"
@@ -254,7 +259,7 @@ strip --strip-debug "$BUILT"
 say "installing patched amdgpu module"
 case "$AMDKO" in
 	*.zst) zstd -q -f -19 "$BUILT" -o "$AMDKO" ;;
-	*.xz)  xz  -c "$BUILT" > "$AMDKO" ;;
+	*.xz)  xz --check=crc32 --lzma2=dict=1MiB -c "$BUILT" > "$AMDKO" ;;
 	*)     cp "$BUILT" "$AMDKO" ;;
 esac
 depmod "$KREL"

@@ -40,7 +40,7 @@ check_limine_name {name}
             body = dispatch.split(f"\n{action})\n", 1)[1].split(f"\n{end})\n", 1)[0]
             self.assertIn('check_limine_name "$NAME"', body)
 
-    def test_repin_preserves_the_linux_t2_default_and_the_single_test_slot(self):
+    def test_repin_does_not_bless_unidentified_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             conf = root / "limine.conf"
@@ -55,5 +55,5 @@ add_entry() {{ echo "PIN $1"; }}
 repin_orphans
 ''')
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.splitlines(), ["PIN pro-fix"])
+            self.assertEqual(result.stdout.splitlines(), [])
             self.assertEqual((root / "omarchy_linux-t2.efi").read_text(), "t2")

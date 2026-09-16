@@ -72,6 +72,28 @@ run_modules remove audio eq
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ["RUN remove audio", "RUN remove eq"])
 
+    def test_invalid_or_failed_detection_never_runs_apply(self):
+        for body in ("return 1", "echo applied; return 1", "echo garbage", "echo applied; echo warning", ":"):
+            with self.subTest(body=body):
+                result = self.run_shell(f'''
+mod_audio_detect() {{ {body}; }}
+mod_audio_apply() {{ echo MUTATED; }}
+run_module apply audio
+''')
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn("MUTATED", result.stdout)
+
+    def test_status_reports_probe_failure_and_keeps_other_rows(self):
+        result = self.run_shell('mod_audio_detect() { return 1; }; show_status')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("detection failed", result.stdout)
+        self.assertIn("EQ", result.stdout)
+
+    def test_duplicate_modules_run_only_once(self):
+        result = self.run_shell('run_module() { echo "RUN $*"; }; run_modules apply audio audio eq')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.splitlines(), ["RUN apply audio", "RUN apply eq"])
+
 
 if __name__ == "__main__":
     unittest.main()

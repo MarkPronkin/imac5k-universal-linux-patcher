@@ -138,7 +138,12 @@ class ArchGrubBuildTests(unittest.TestCase):
     def test_mismatched_abi_flags_are_fatal(self):
         self.check_build(clang=True, mismatched=True)
 
-    def check_build(self, clang, mismatched=False):
+    def test_limine_uses_the_same_kbuild_and_abi_validation(self):
+        self.check_build(clang=False, grub=False)
+        self.check_build(clang=True, grub=False)
+        self.check_build(clang=True, mismatched=True, grub=False)
+
+    def check_build(self, clang, mismatched=False, grub=True):
         import os
         import subprocess
         import tempfile
@@ -155,7 +160,7 @@ class ArchGrubBuildTests(unittest.TestCase):
             (root / ".config").write_text("DO NOT RECONFIGURE THE SOURCE TREE\n")
             prelude = r'''
 set -euo pipefail
-GRUB=1
+GRUB=$TEST_GRUB
 KREL=7.2.2-cachyos-test
 BUILDLINK="$PWD/installed-headers"
 say() { echo "$*"; }
@@ -181,6 +186,7 @@ modinfo() {
             result = subprocess.run(["bash", "-c", prelude + toolchain + configure + build],
                                     cwd=root, text=True, capture_output=True, timeout=10,
                                     env={**os.environ, "TEST_CLANG": str(int(clang)),
+                                         "TEST_GRUB": str(int(grub)),
                                          "MISMATCHED": str(int(mismatched))})
             self.assertEqual(result.returncode, int(mismatched), result.stderr)
             calls = (root / "calls").read_text().splitlines()

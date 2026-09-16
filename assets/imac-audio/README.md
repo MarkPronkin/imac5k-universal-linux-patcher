@@ -41,13 +41,17 @@ this project installs the files its own way, into the user's home rather than
 
 ## How they are used
 
-`imac-patcher --apply eq` copies them out of here and rewrites two things in
+`imac-patcher --apply eq` copies them out of here and rewrites these settings in
 `iMacAudio.conf` as it installs it:
 
 - the impulse-response paths, from `/usr/share/imac-audio/` to the user's own
   `~/.local/share/imac-audio/`, so the module needs root for nothing;
 - the name of the chain's own output node, so desktops do not list the tuning
-  itself beside real applications.
+  itself beside real applications;
+- `target.object` and `node.dont-move`, to keep the tuning on the built-in
+  four-channel output;
+- `node.virtual=false`, so the tuned speaker output appears in desktop sound
+  pickers, including KDE's.
 
 The copies here keep upstream's paths and names, so they stay comparable with
 the commit above.

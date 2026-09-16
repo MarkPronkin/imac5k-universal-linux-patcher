@@ -38,7 +38,10 @@ fi
 
 echo
 echo "DRM driver bound to the GPU"
-lspci -k -s 01:00.0 | sed -n '/Kernel driver in use/p' || true
+for gpu in /sys/class/drm/card[0-9]*/device; do
+    [[ -e $gpu ]] || continue
+    lspci -k -s "$(basename "$(readlink -f "$gpu")")" | sed -n '/Kernel driver in use/p' || true
+done
 grep -H . /sys/class/drm/card*/device/uevent 2>/dev/null | grep -i driver || true
 
 echo
@@ -67,4 +70,3 @@ ip -4 route
 echo
 echo "Aquantia/OWC Ethernet"
 lspci -nnk | grep -A4 -i 'ethernet\|aquantia'
-

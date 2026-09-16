@@ -228,6 +228,25 @@ export PATH="{self.bin}:$PATH"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.steps(), [])
 
+    def test_failed_headphone_transition_is_retried_on_the_next_event(self):
+        result = self.run_switch(f'''
+headphones_present() {{ return 0; }}
+attempts=0
+apply_state() {{ attempts=$((attempts + 1)); ((attempts > 1)); }}
+state=out
+reconcile {CARD} && exit 9
+[[ $state == out ]] || exit 8
+reconcile {CARD}
+[[ $state == in && $attempts == 2 ]]
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_profile_timeout_never_starts_tuning(self):
+        self.stub_pactl(headphones=False, active=STEREO, sinks=((41, AUX),))
+        result = self.run_switch(f'to_speakers {CARD}')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("SYSTEMCTL restart" in s or "SYSTEMCTL start" in s for s in self.steps()))
+
     # ── what wakes the watcher ────────────────────────────────────────────
     def test_only_card_events_and_sink_removals_wake_the_watcher(self):
         # A stream ending is "'remove' on sink-input": the sink-removal filter
@@ -243,7 +262,7 @@ export PATH="{self.bin}:$PATH"
             f'reconcile() {{ echo "RECONCILE $1" >> "{self.trace}"; }}\nmain')
         self.assertIn("pactl subscribe ended", result.stdout)
         self.assertEqual([s for s in self.steps() if s.startswith("RECONCILE")],
-                         [f"RECONCILE {CARD}"] * 2)
+                         [f"RECONCILE {CARD}"] * 3)  # startup plus two matching events
 
     def test_startup_does_nothing_when_the_tuning_is_not_installed(self):
         # Without the eq module there is no tuned sink to hide, and the stock

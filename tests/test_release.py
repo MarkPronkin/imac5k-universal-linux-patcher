@@ -5,6 +5,7 @@ talked through -- so the whole path is exercised here: tarball, checksum,
 launcher symlink, rollback pruning and uninstall, all inside a temp HOME.
 """
 from functools import partialmethod
+import fcntl
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import os
@@ -27,15 +28,18 @@ GIT_ENV = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@in
            "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@invalid"}
 
 
-# Test the working tree, not the last commit: `git stash create` snapshots
-# tracked changes into a dangling commit without touching the index or the
-# working tree, and make-release.sh can archive that like any other ref. It is
-# computed once, so the reproducibility test builds the same ref twice. A file
-# that is new *and* untracked is not in a stash commit -- git add it.
+# Snapshot runtime files with a temporary index, including new files, without
+# staging anything in the user's index or moving their working-tree changes.
 def worktree_ref():
-    ref = subprocess.run(["git", "stash", "create"], cwd=REPO, check=True,
-                         text=True, capture_output=True, env=GIT_ENV).stdout.strip()
-    return ref or "HEAD"
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**GIT_ENV, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=REPO, check=True,
+                                  text=True, capture_output=True, env=env).stdout.strip()
+        git("read-tree", "HEAD")
+        git("add", "-A", "--", "install.sh", "scripts", "modules", "patches", "configs",
+            "assets", "docs", "README.md", "DEPENDENCIES.md", "LICENSE")
+        return git("commit-tree", git("write-tree"), "-p", "HEAD", "-m", "Offline release fixture")
 
 
 REF = None
@@ -52,8 +56,7 @@ def build_release(dist, ref=None, version=VERSION):
     (dist / f"imac5k-patcher-{version}.tar.gz").write_bytes(
         (built / f"imac5k-patcher-{version}.tar.gz").read_bytes())
     # One SHA256SUMS covers every release the fake server offers.
-    with (dist / "SHA256SUMS").open("a") as sums:
-        sums.write((built / "SHA256SUMS").read_text())
+    (dist / "SHA256SUMS").write_bytes((built / "SHA256SUMS").read_bytes())
 
 
 class ReleaseTests(unittest.TestCase):
@@ -101,7 +104,9 @@ class ReleaseTests(unittest.TestCase):
     def test_tarball_holds_the_runtime_tree_and_no_dev_state(self):
         with tarfile.open(self.dist / f"imac5k-patcher-{VERSION}.tar.gz") as tar:
             names = {n.split("/", 1)[1] for n in tar.getnames() if "/" in n}
-        for needed in ("VERSION", "scripts/imac-patcher", "scripts/lib/platform.sh",
+        for needed in ("VERSION", "COMMIT", "install.sh", "LICENSE", "README.md", "DEPENDENCIES.md",
+                       "scripts/hypr-color.py", "scripts/lib/limine-config.py",
+                       "scripts/imac-patcher", "scripts/lib/platform.sh",
                        "scripts/lib/grub.sh", "scripts/lib/arch-grub.sh", "docs/arch-grub.md",
                        "patches/cs8409-headset-capture.patch", "docs/headphones.md",
                        "scripts/imac-audio-jack-switch",
@@ -194,12 +199,14 @@ class ReleaseTests(unittest.TestCase):
         result = subprocess.run([str(REPO / "scripts/imac-patcher"), "upgrade"],
                                 env=self.env(), text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("git checkout", result.stdout)
+        self.assertIn("git checkout", result.stderr)
         self.assertIn("git -C", result.stdout)
 
     def test_a_tampered_tarball_is_refused(self):
         sums = self.dist / "SHA256SUMS"
-        sums.write_text("0" * 64 + sums.read_text()[64:])
+        sums.write_text("\n".join(
+            "0" * 64 + line[64:] if line.endswith(f"imac5k-patcher-{VERSION}.tar.gz") else line
+            for line in sums.read_text().splitlines()) + "\n")
         result = self.install()
         self.assertEqual(result.returncode, 1)
         self.assertIn("checksum mismatch", result.stderr)
@@ -210,6 +217,90 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.install("--uninstall").returncode, 0)
         self.assertFalse((self.bin / "imac-patcher").exists())
         self.assertFalse((self.share / "imac5k-patcher").exists())
+
+    def test_invalid_versions_never_create_an_installation(self):
+        for version in ("../escape", "1/../../escape", "-option", "1?asset", "1#fragment", "1\n2"):
+            with self.subTest(version=version):
+                result = self.install("--version", version)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid release version", result.stderr)
+                self.assertFalse((self.share / "imac5k-patcher/current").exists())
+
+    def test_same_version_reinstall_keeps_the_existing_tree(self):
+        self.assertEqual(self.install().returncode, 0)
+        current = self.share / "imac5k-patcher/current"
+        inode = current.resolve().stat().st_ino
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(current.resolve().stat().st_ino, inode)
+
+    def test_concurrent_install_is_refused_before_replacement(self):
+        self.assertEqual(self.install().returncode, 0)
+        lock = self.share / "imac5k-patcher.install.lock"
+        with lock.open("w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("another installer", result.stderr)
+        self.assertTrue((self.bin / "imac-patcher").exists())
+
+    def test_different_same_version_payload_does_not_remove_current(self):
+        self.assertEqual(self.install().returncode, 0)
+        current = self.share / "imac5k-patcher/current"
+        (current / "user-file").write_text("keep")
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((current / "user-file").read_text(), "keep")
+        self.assertTrue((current / "scripts/imac-patcher").exists())
+
+    def test_custom_launcher_is_removed_using_recorded_path(self):
+        custom = self.home / "custom bin"
+        self.assertEqual(self.install("--bin-dir", str(custom)).returncode, 0)
+        self.assertTrue((custom / "imac-patcher").is_symlink())
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertFalse((custom / "imac-patcher").is_symlink())
+
+    def test_uninstall_preserves_a_replacement_launcher(self):
+        self.assertEqual(self.install().returncode, 0)
+        launcher = self.bin / "imac-patcher"
+        launcher.unlink()
+        launcher.write_text("user replacement")
+        self.assertEqual(self.install("--uninstall").returncode, 0)
+        self.assertEqual(launcher.read_text(), "user replacement")
+
+    def test_pruning_never_enters_version_symlinks(self):
+        self.assertEqual(self.install().returncode, 0)
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "keep").write_text("keep")
+        (self.share / "imac5k-patcher/versions/0.0.1").symlink_to(outside, target_is_directory=True)
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual((outside / "keep").read_text(), "keep")
+
+    def test_missing_and_inexact_checksum_entries_are_refused(self):
+        sums = self.dist / "SHA256SUMS"
+        for content in ("", "0" * 64 + f"  imac5k-patcher-{VERSION}.tar.gz.extra\n"):
+            sums.write_text(content)
+            result = self.install()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exactly one entry", result.stderr)
+            self.assertFalse((self.bin / "imac-patcher").exists())
+
+    def test_explicit_no_verify_warns(self):
+        (self.dist / "SHA256SUMS").unlink()
+        result = self.install("--no-verify")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("verification disabled", result.stderr)
+
+    def test_latest_lookup_without_version(self):
+        self.publish(VERSION)
+        result = subprocess.run(["bash", str(INSTALL)], env=self.env(), text=True,
+                                capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_manifest_preserves_old_releases_after_new_build(self):
+        self.publish("9.9.10-test")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_old_versions_are_pruned_but_the_current_one_survives(self):
         self.install()

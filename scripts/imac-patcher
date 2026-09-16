@@ -40,9 +40,9 @@ fi
 # readlink -f, not plain dirname: a release install is reached through a
 # ~/.local/bin symlink, and the modules load their libs, patches and configs
 # relative to where the real script lives.
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
-source "${SCRIPT_DIR}/lib/platform.sh"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)" || exit 1
+REPO_DIR="$(dirname "$SCRIPT_DIR")" || exit 1
+source "${SCRIPT_DIR}/lib/platform.sh" || exit 1
 INSTALLER_5K="${SCRIPT_DIR}/patch-imac5k-amdgpu.sh"
 LOGDIR="${HOME}/.local/state/imac-patcher"
 CACHE="${HOME}/.cache/imac-patcher"
@@ -94,7 +94,7 @@ MODULES=(audio eq color suspend boot 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;31m!!\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; }
 hdr()  { if ((HAVE_GUM)); then gum style --border rounded --padding "0 2" --bold "$*"; else printf '\n== %s ==\n' "$*"; fi; }
 # gum needs an interactive input and an output terminal. Print the plain prompt
 # explicitly: Bash's read -p silently omits it when stdin is a pipe.
@@ -158,7 +158,7 @@ parse_args() {
                 if [[ $arg != safe && $arg != all ]] && ! module_exists "$arg"; then
                     warn "unknown module: $arg (ids: ${MODULES[*]})" >&2; return 2
                 fi
-                REQUESTED_MODULES+=("$arg") ;;
+                [[ " ${REQUESTED_MODULES[*]} " == *" $arg "* ]] || REQUESTED_MODULES+=("$arg") ;;
         esac
     done
     if [[ $ACTION == apply || $ACTION == remove ]]; then
@@ -181,7 +181,11 @@ RELEASES_API="${IMAC5K_API_URL:-https://api.github.com/repos/${PROJECT_REPO}/rel
 # A release tarball carries a VERSION file; a git checkout does not, so fall
 # back to describing the checkout.
 imac_version() {
-    if [[ -r "${REPO_DIR}/VERSION" ]]; then cat "${REPO_DIR}/VERSION"
+    if [[ -r "${REPO_DIR}/VERSION" ]]; then
+        local version
+        version=$(cat "${REPO_DIR}/VERSION") || return 1
+        [[ $version =~ ^[0-9][a-zA-Z0-9._+-]*$ ]] || { warn "invalid release VERSION file"; return 1; }
+        printf '%s\n' "$version"
     else git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || echo unknown; fi
 }
 imac_latest_release() {
@@ -190,7 +194,7 @@ imac_latest_release() {
         | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
         | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
-imac_upgrade() {
+imac_upgrade() (
     # Upgrading means replacing the tree this script is running from, which only
     # makes sense for a release install; a checkout is upgraded by git.
     if [[ ! -r "${REPO_DIR}/VERSION" ]]; then
@@ -200,7 +204,7 @@ imac_upgrade() {
     fi
     command -v curl >/dev/null || { warn "curl is needed to check for a new release"; return 1; }
     local current latest installer
-    current="$(imac_version)"
+    current="$(imac_version)" || return 1
     say "installed ${current} — checking for a newer release"
     latest="$(imac_latest_release)"
     [[ -n $latest ]] || { warn "could not reach ${RELEASES_API} — try again later"; return 1; }
@@ -213,21 +217,25 @@ imac_upgrade() {
     # that installer both live in. The tarball it fetches carries the installer
     # for the next upgrade, so each release bootstraps the one after it.
     installer="$(mktemp)" || return 1
+    trap 'rm -f "$installer"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     if [[ -r "${REPO_DIR}/install.sh" ]]; then
-        cat "${REPO_DIR}/install.sh" > "$installer"
+        cat "${REPO_DIR}/install.sh" > "$installer" || { warn "could not copy the installer"; return 1; }
     else
         curl -fsSL "https://raw.githubusercontent.com/${PROJECT_REPO}/main/install.sh" -o "$installer" \
             || { warn "could not download the installer"; rm -f "$installer"; return 1; }
     fi
+    [[ -s $installer ]] || { warn "the installer is empty"; return 1; }
     bash "$installer" --version "$latest"; local rc=$?
     rm -f "$installer"
     (( rc == 0 )) && say "patches already applied stay applied — check with: imac-patcher --status"
     return "$rc"
-}
+)
 case "$ACTION" in
     help)      usage; exit 0 ;;
-    version)   imac_version; exit 0 ;;
-    upgrade)   imac_upgrade; exit ;;
+    version)   imac_version; exit "$?" ;;
+    upgrade)   imac_upgrade; exit "$?" ;;
 esac
 
 # ── hardware gate ──────────────────────────────────────────────────────────
@@ -249,6 +257,7 @@ CORE_DEPS=(
     "awk gawk"           # the 5K helpers parse with awk
     "find findutils"
     "sudo sudo"
+    "flock util-linux"
 )
 # Check commands, not just one representative of the coreutils package: a
 # minimal PATH or partial installation can expose install but omit mkdir/head.
@@ -288,6 +297,10 @@ core_deps_check() {
 }
 core_deps_check || exit 1
 mkdir -p "$LOGDIR" "$CACHE" || exit 1
+if [[ $ACTION != status ]]; then
+    exec {patcher_lock}>"${LOGDIR}/operation.lock" || exit 1
+    flock -n "$patcher_lock" || { warn "another patcher operation is already running"; exit 1; }
+fi
 
 # ═══════════════════════ module: audio ═════════════════════════════════════
 AUDIO_REPO=https://github.com/jackdanyell/imac18-3-cs8409-linux-audio
@@ -384,16 +397,24 @@ audio_conflicts() {
 
 mod_audio_detect() {
     imac_audio_supported || { echo n/a; return; }
-    local status path kernels kernel ready=1 any=0
-    status=$(dkms status -m "$AUDIO_DKMS" 2>/dev/null)
+    local status path kernels kernel conflicts ready=1 any=0
     path=$(modinfo -k "$KREL" -n snd_hda_codec_cs8409 2>/dev/null)
+    if ! command -v dkms >/dev/null; then
+        if [[ $path == */updates/* || $path == */extra/* ]]; then echo partial
+        else echo not-applied; fi
+        return
+    fi
+    status=$(dkms status -m "$AUDIO_DKMS" 2>/dev/null) || {
+        warn "Could not inspect DKMS registrations."; return 1;
+    }
     [[ -n $status || $path == */updates/* || $path == */extra/* ]] && any=1
     kernels=$(audio_target_kernels)
     [[ -n $kernels ]] || kernels=$KREL
     while IFS= read -r kernel; do
         audio_kernel_ready "$kernel" || ready=0
     done <<< "$kernels"
-    [[ -z $(audio_conflicts) ]] || ready=0
+    conflicts=$(audio_conflicts) || { warn "Could not inspect DKMS registrations."; return 1; }
+    [[ -z $conflicts ]] || ready=0
     if (( ready )) && audio_live_is_patched; then echo applied
     elif (( any )); then echo partial
     else echo not-applied; fi
@@ -461,7 +482,10 @@ audio_arch_deps() {
         pkg="$(imac_tool_package "$tool")"
         [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
     done
-    [[ -n $(audio_target_kernels) ]] || packages+=("$(imac_kernel_headers_package)")
+    if [[ -z $(audio_target_kernels) ]]; then
+        pkg=$(imac_kernel_headers_package) || { warn "could not identify the kernel headers package"; return 1; }
+        packages+=("$pkg")
+    fi
     if ((${#packages[@]})); then
         warn "missing packages: ${packages[*]}"
         confirm "Install them now?" || return 1
@@ -587,7 +611,8 @@ mod_eq_desc()  { echo "The codec does no DSP at all; macOS's warmth is entirely 
 
 # The built-in speakers are one 4-channel card: two stereo speaker pins, which
 # PulseAudio/PipeWire present as the "Analog Surround 4.0" profile. That is
-# also how the card is told apart from HDMI here -- no other card offers it.
+# also how the card is told apart from HDMI. Ignore USB devices and refuse
+# ambiguous matches rather than applying this tuning to the first card.
 # LC_ALL=C because pactl translates these labels.
 eq_card() {   # prints "<card name> <active profile>"
     LC_ALL=C pactl list cards 2>/dev/null | awk '
@@ -595,7 +620,8 @@ eq_card() {   # prints "<card name> <active profile>"
         /^\tName: /                                { name=$2 }
         $1 == "'"${EQ_PROFILE_40}"':"              { has40=1 }
         /^\tActive Profile: /                      { active=$3
-                                                     if (has40 && name) { print name, active; exit } }'
+            if (has40 && name ~ /^alsa_card\.pci-/) { candidate=name " " active; count++ } }
+        END { if (count == 1) print candidate }'
 }
 
 eq_headphones_present() {
@@ -626,7 +652,7 @@ eq_claim_default() {   # $1 = card
     current=$(LC_ALL=C pactl get-default-sink 2>/dev/null)
     case "$current" in
         "$EQ_SINK") return 0 ;;
-        ""|auto_null|*"${1#alsa_card.}"*)
+        ""|auto_null|"alsa_output.${1#alsa_card.}.analog-"*)
             pactl set-default-sink "$EQ_SINK" 2>/dev/null \
                 && say "default output set to the tuned sink" ;;
         *) say "default output left on ${current}" ;;
@@ -759,8 +785,9 @@ UNIT
 # function. ${LV2_PATH:-} first, or a machine without it dies here, silently,
 # before a single message has been printed.
 eq_have_lv2() {   # $1 = bundle directory name
-    local dir search="${LV2_PATH:-}"
-    for dir in ${search//:/ } /usr/lib/lv2 /usr/lib64/lv2 /usr/local/lib/lv2 "${HOME}/.lv2"; do
+    local dir dirs=()
+    IFS=: read -r -a dirs <<< "${LV2_PATH:-}"
+    for dir in "${dirs[@]}" /usr/lib/lv2 /usr/lib64/lv2 /usr/local/lib/lv2 "${HOME}/.lv2"; do
         [[ -d "${dir}/$1" ]] && return 0
     done
     return 1
@@ -838,11 +865,11 @@ mod_eq_detect() {
     if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
         eq_sink_exists "$(eq_aux_sink "$card")" && output=1
     else
-        [[ $(LC_ALL=C pactl list sinks short 2>/dev/null) == *"$EQ_SINK"* ]] \
+        eq_sink_exists "$EQ_SINK" \
             && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
     fi
     if   (( conf && irs && units && jack && output && pin && wait && real )); then echo applied
-    elif (( conf || irs || units || jack || output )); then echo partial
+    elif (( conf || irs || units || jack || output )) || [[ -f $EQ_PROFILE_STATE || -f $EQ_VOLUME_STATE ]]; then echo partial
     else echo not-applied; fi
 }
 
@@ -928,8 +955,11 @@ mod_eq_apply() {
         install -Dm644 "${src}/${f}" "${EQ_IRS_DIR}/${f}" || return 1
     done
     install -Dm644 "${src}/iMacAudio.conf" "$EQ_CONF" || return 1
-    sed -i "s|${EQ_UPSTREAM_IRS_DIR}/|${EQ_IRS_DIR}/|g" "$EQ_CONF" || return 1
-    grep -qs -- "${EQ_IRS_DIR}/" "$EQ_CONF" || {
+    local ir_replacement=${EQ_IRS_DIR//\\/\\\\}
+    ir_replacement=${ir_replacement//&/\\&}
+    ir_replacement=${ir_replacement//|/\\|}
+    sed -i "s|${EQ_UPSTREAM_IRS_DIR}/|${ir_replacement}/|g" "$EQ_CONF" || return 1
+    grep -Fqs -- "${EQ_IRS_DIR}/" "$EQ_CONF" || {
         warn "the upstream config no longer points at ${EQ_UPSTREAM_IRS_DIR} -- check ${EQ_CONF}"; return 1; }
     # Cosmetic, unlike the paths above, so a config that no longer carries the
     # name upstream used is worth saying out loud but not worth refusing over.
@@ -970,7 +1000,7 @@ mod_eq_apply() {
     # guessing at stereo. Written once: re-applying must not overwrite it with
     # the 4.0 profile this module itself selected.
     if [[ ! -f $EQ_PROFILE_STATE && -n ${profile:-} && $profile != "$EQ_PROFILE_40" ]]; then
-        printf '%s\n' "$profile" > "$EQ_PROFILE_STATE"
+        printf '%s\n' "$profile" > "$EQ_PROFILE_STATE" || return 1
     fi
     # Order matters here. The units are stopped first so that a re-apply does
     # not bring the chain up against whichever profile WirePlumber restores;
@@ -1090,7 +1120,7 @@ eq_write_hide_rule() {   # $1 = card
 # sink, and renaming that one would be wrong.
 monitor.alsa.rules = [
   {
-    matches = [ { node.name = "~alsa_output.*analog-surround-40" } ]
+    matches = [ { node.name = "alsa_output.${1#alsa_card.}.analog-surround-40" } ]
     actions = { update-props = { media.class = "Audio/Sink/Internal" } }
   }
   {
@@ -1117,41 +1147,55 @@ eq_select_profile() {   # idempotent; the card takes a moment after a restart
 }
 
 mod_eq_remove() {
-    local card profile restore=output:analog-stereo+input:analog-stereo
+    local card profile current hw f result=0 restore=output:analog-stereo+input:analog-stereo
     read -r card profile <<<"$(eq_card)"
+    current=$(LC_ALL=C pactl get-default-sink 2>/dev/null) || current=
     [[ -r $EQ_PROFILE_STATE ]] && restore="$(cat "$EQ_PROFILE_STATE")"
     # Restore while the hidden 4.0 node still exists, before exposing hardware
     # as the user's output again. Old installs have no saved volume to restore.
-    eq_restore_hardware_volume "$card" || return 1
+    eq_restore_hardware_volume "$card" || result=1
     if command -v systemctl >/dev/null; then
         systemctl --user disable --now "$EQ_UNIT" "$EQ_JACK_UNIT" >/dev/null 2>&1 || true
-        rm -f "${EQ_UNIT_DIR}/${EQ_UNIT}" "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}"
         systemctl --user daemon-reload 2>/dev/null || true
     fi
-    rm -f "$EQ_CONF" "$EQ_BASE_CONF" "$EQ_LEGACY_CONF" "$EQ_HIDE_RULE" "$EQ_JACK_BIN"
+    rm -f "${EQ_UNIT_DIR}/${EQ_UNIT}" "${EQ_UNIT_DIR}/${EQ_JACK_UNIT}" || result=1
+    command -v systemctl >/dev/null && systemctl --user daemon-reload 2>/dev/null || true
+    rm -f "$EQ_CONF" "$EQ_BASE_CONF" "$EQ_LEGACY_CONF" "$EQ_HIDE_RULE" "$EQ_JACK_BIN" || result=1
     # Only a bundle this module built. A distribution's package is the package
     # manager's to remove, and one the user built themselves is theirs.
     if [[ -f $EQ_BANKSTOWN_STATE ]]; then
-        rm -rf "$EQ_BANKSTOWN_BUNDLE" && rm -f "$EQ_BANKSTOWN_STATE"
+        [[ ${EQ_BANKSTOWN_BUNDLE##*/} == bankstown.lv2 ]] || return 1
+        rm -rf -- "$EQ_BANKSTOWN_BUNDLE" && rm -f "$EQ_BANKSTOWN_STATE" || result=1
         rmdir "$EQ_LV2_USER_DIR" 2>/dev/null || true
     fi
     # Only if this module is the last thing in it; a drop-in directory the user
     # put something else in is theirs.
     rmdir "$EQ_CONF_DIR" 2>/dev/null || true
-    rm -rf "$EQ_IRS_DIR"
+    for f in "${EQ_IRS[@]}"; do rm -f -- "$EQ_IRS_DIR/$f" || result=1; done
+    rmdir "$EQ_IRS_DIR" 2>/dev/null || true
     eq_restart_pipewire
     # After the restart, for the same reason as in apply.
-    read -r card profile <<<"$(eq_card)"
     if [[ -n ${card:-} ]]; then
-        pactl set-card-profile "$card" "$restore" \
-            && say "card profile restored to ${restore}" \
-            && rm -f "$EQ_PROFILE_STATE"
+        if pactl set-card-profile "$card" "$restore"; then
+            say "card profile restored to ${restore}"
+            rm -f "$EQ_PROFILE_STATE" || result=1
+        else
+            warn "could not restore the card profile; keeping $EQ_PROFILE_STATE"
+            result=1
+        fi
+    elif [[ -f $EQ_PROFILE_STATE ]]; then
+        warn "speaker card unavailable; keeping $EQ_PROFILE_STATE"
+        result=1
     fi
-    # Whatever the card is now offering: with the filter sink gone, that is the
-    # hardware sink again.
-    local hw
-    hw=$(LC_ALL=C pactl list sinks short 2>/dev/null | awk '$2 ~ /^alsa_output/ {print $2; exit}')
-    [[ -n ${hw:-} ]] && pactl set-default-sink "$hw" && say "default output restored to ${hw}"
+    # Only replace our disappearing sink; keep the user's USB/HDMI/Bluetooth
+    # choice. Pick an analog output on the original card, never the first ALSA sink.
+    if [[ -n $card && ( $current == "$EQ_SINK" || $current == auto_null ) ]]; then
+        hw=$(LC_ALL=C pactl list short sinks 2>/dev/null | awk -v prefix="alsa_output.${card#alsa_card.}.analog-" 'index($2, prefix) == 1 {print $2; exit}')
+        if [[ -n $hw ]]; then
+            pactl set-default-sink "$hw" || result=1
+        fi
+    fi
+    return "$result"
 }
 
 # WirePlumber reads its rules at startup, so a changed hide/naming rule takes a
@@ -1177,31 +1221,22 @@ mod_color_title() { echo "Wide-gamut colour"; }
 mod_color_tier()  { echo safe; }
 mod_color_desc()  { echo "The panel is Display P3; Hyprland's default sRGB mode leaves everything oversaturated. Sets cm=\"dp3\" on the monitor."; }
 mod_color_detect() {
-    # The early Retina 5K panel predates the Display P3 models. KDE's EDID
-    # backend overrides this implementation and can use its actual gamut.
     [[ $product != iMac15,1 ]] || { echo n/a; return; }
     [[ -f "$MONITORS_LUA" ]] || { echo n/a; return; }
-    grep -q 'cm = "dp3"' "$MONITORS_LUA" && echo applied || echo not-applied
+    python3 "$SCRIPT_DIR/hypr-color.py" --status "$MONITORS_LUA"
 }
 mod_color_apply() {
     [[ $product != iMac15,1 ]] || { warn "The iMac15,1 panel should not be forced to Display P3."; return 1; }
     [[ -f "$MONITORS_LUA" ]] || { warn "$MONITORS_LUA not found"; return 1; }
-    cp "$MONITORS_LUA" "${MONITORS_LUA}.bak-$(date +%s)"
-    if grep -q 'cm = "' "$MONITORS_LUA"; then
-        sed -i 's/cm = "[a-z0-9]*"/cm = "dp3"/' "$MONITORS_LUA"
-    else
-        # add cm to the active (uncommented) hl.monitor line
-        sed -i '/^hl\.monitor({/ s/ })$/, cm = "dp3" })/' "$MONITORS_LUA"
-    fi
-    grep -q 'cm = "dp3"' "$MONITORS_LUA" || { warn "could not edit $MONITORS_LUA — do it by hand"; return 1; }
-    command -v hyprctl >/dev/null && hyprctl reload >/dev/null 2>&1
-    say "applied: $(grep -o 'colorManagementPreset: .*' <(hyprctl monitors all 2>/dev/null) | head -1)"
+    python3 "$SCRIPT_DIR/hypr-color.py" --apply "$MONITORS_LUA" || return 1
+    if command -v hyprctl >/dev/null; then hyprctl reload >/dev/null || return 1; fi
+    return 0
 }
 mod_color_remove() {
     [[ -f "$MONITORS_LUA" ]] || return 0
-    cp "$MONITORS_LUA" "${MONITORS_LUA}.bak-$(date +%s)"
-    sed -i 's/, cm = "dp3"//; s/cm = "dp3"/cm = "auto"/' "$MONITORS_LUA"
-    command -v hyprctl >/dev/null && hyprctl reload >/dev/null 2>&1
+    python3 "$SCRIPT_DIR/hypr-color.py" --remove "$MONITORS_LUA" || return 1
+    if command -v hyprctl >/dev/null; then hyprctl reload >/dev/null || return 1; fi
+    return 0
 }
 
 # ═══════════════════════ module: suspend ═══════════════════════════════════
@@ -1497,12 +1532,12 @@ mod_boot_desc()  { echo "Repairs two ways the boot menu goes wrong on this machi
 mod_boot_detect() {
     sudo -n true 2>/dev/null || { echo n/a; return; }
     local shadows fallback_uki hook
-    shadows="$(sudo -n bash -c 'n=0; for f in /boot/EFI/limine/limine.conf /boot/EFI/BOOT/limine.conf /boot/boot/limine/limine.conf /boot/limine/limine.conf; do [[ -f $f ]] && n=$((n+1)); done; echo $n')"
+    shadows="$(sudo -n bash -c 'n=0; for f in /boot/EFI/limine/limine.conf /boot/EFI/BOOT/limine.conf /boot/boot/limine/limine.conf /boot/limine/limine.conf; do [[ -f $f ]] && n=$((n+1)); done; echo $n')" || return 1
     fallback_uki="$(sudo -n bash -c 'f=/boot/EFI/BOOT/BOOTX64.EFI
         [[ -f $f ]] || { echo no; exit; }
         p=$(mktemp); trap "rm -f $p" EXIT
         objcopy -O binary --only-section=.cmdline "$f" "$p" 2>/dev/null
-        [[ -s $p ]] && echo yes || echo no')"
+        [[ -s $p ]] && echo yes || echo no')" || return 1
     hook=no; [[ -x $HYGIENE_HOOK ]] && hook=yes
 
     if [[ $shadows == 0 && $fallback_uki == no && $hook == yes ]]; then echo applied
@@ -1525,12 +1560,13 @@ Recovery: boot the OpenCore route or a Snapshot entry; restore with
 EOF
     confirm "Repair the boot configuration?" || return 1
 
-    sudo mkdir -p /boot/limine-conf-shadow-backup
+    sudo mkdir -p /boot/limine-conf-shadow-backup || return 1
     local f
     for f in "${LIMINE_SHADOW_CONFIGS[@]}"; do
         sudo test -f "$f" || continue
-        sudo cp -f "$f" "/boot/limine-conf-shadow-backup/$(printf '%s' "${f#/boot/}" | tr / _)"
-        sudo rm -f "$f" && say "removed shadowing config $f"
+        sudo cp -f "$f" "/boot/limine-conf-shadow-backup/$(printf '%s' "${f#/boot/}" | tr / _)" || return 1
+        sudo rm -f "$f" || return 1
+        say "removed shadowing config $f"
     done
 
     if fallback_is_uki; then
@@ -1538,20 +1574,20 @@ EOF
         sudo test -f /boot/EFI/BOOT/BOOTX64.LIMINE.EFI.unused && src=/boot/EFI/BOOT/BOOTX64.LIMINE.EFI.unused
         sudo test -f "$src" || { warn "no Limine binary found to restore (looked in $LIMINE_PKG_EFI)"; return 1; }
         say "restoring Limine at the EFI fallback (was a UKI copy)"
-        sudo cp -f "$FALLBACK_PATH" /boot/EFI/BOOT/BOOTX64.UKI-bypass.backup
-        sudo cp -f "$src" "$FALLBACK_PATH"
+        sudo cp -f "$FALLBACK_PATH" /boot/EFI/BOOT/BOOTX64.UKI-bypass.backup || return 1
+        sudo cp -f "$src" "$FALLBACK_PATH" || return 1
     fi
 
     say "installing the ESP hygiene hook"
-    sudo install -m755 "${SCRIPT_DIR}/95-limine-esp-hygiene" "$HYGIENE_HOOK"
-    sudo sync
+    sudo install -Dm755 "${SCRIPT_DIR}/95-limine-esp-hygiene" "$HYGIENE_HOOK" || return 1
+    sudo sync || return 1
     say "done — the boot menu will now show on every boot route"
 }
 
 mod_boot_remove() {
     # The repaired layout is what stock Omarchy installs, so there is nothing
     # sensible to "undo" there; only the hook is ours to take back.
-    sudo rm -f "$HYGIENE_HOOK"
+    sudo rm -f "$HYGIENE_HOOK" || return 1
     say "hygiene hook removed; the ESP layout is left as stock Omarchy installs it"
     warn "to restore the old UKI-over-fallback bypass: sudo cp /boot/EFI/BOOT/BOOTX64.UKI-bypass.backup ${FALLBACK_PATH}"
 }
@@ -1652,11 +1688,10 @@ mod_5k_preflight() {
     else
         say "kernel ${KREL} — supported"
     fi
-    # Build dependencies. The underlying installer only checks gcc, so a missing
-    # bc/pahole surfaces as a confusing failure 20 minutes into a compile.
-    local t tools=(gcc make ld strip objcopy bc pahole flex bison zstd curl tar patch xz cpio modinfo depmod)
+    # Match the direct installer's preflight before beginning the build.
+    local t tools=(gcc make ld strip objcopy bc pahole flex bison zstd curl tar patch xz cpio modinfo depmod python3)
     if imac_is_arch_grub; then tools+=(mkinitcpio grub-mkconfig); else tools+=(limine-mkinitcpio); fi
-    if imac_is_arch_grub && imac_kernel_uses_clang "$KREL"; then
+    if imac_kernel_uses_clang "$KREL"; then
         tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
     fi
     for t in "${tools[@]}"; do
@@ -1678,7 +1713,7 @@ mod_5k_preflight() {
         command -v "$t" >/dev/null || { warn "$t is still missing."; ok=0; }
     done
     local headers_pkg
-    headers_pkg="$(imac_kernel_headers_package "$KREL")"
+    headers_pkg="$(imac_kernel_headers_package "$KREL")" || { warn "could not identify the kernel headers package"; return 1; }
     if [[ -e "/usr/lib/modules/${KREL}/build/Module.symvers" ]]; then
         say "kernel headers present"
     else
@@ -1696,14 +1731,9 @@ mod_5k_preflight() {
         grub_read_cmdlines && grub_require_layout || ok=0
     fi
     free_gb=$(df --output=avail -BG "$HOME" 2>/dev/null | tail -1 | tr -dc 0-9)
-    if (( ${free_gb:-0} >= 8 )); then say "disk space: ${free_gb}G free"
-    else warn "only ${free_gb:-?}G free — the kernel source tree needs roughly 8G"; ok=0; fi
-    # A pre-populated tree makes this minutes instead of tens of minutes.
-    if [[ -d "${HOME}/.cache/kernel-5k-build/linux-${KREL%%-*}" ]]; then
-        say "kernel source already prepared — build will be quick"
-    else
-        say "kernel source will be downloaded (~150M) and built: expect 20-40 min"
-    fi
+    if (( ${free_gb:-0} >= 10 )); then say "disk space: ${free_gb}G free"
+    else warn "only ${free_gb:-?}G free — the kernel build needs at least 10 GiB"; ok=0; fi
+    say "the installer verifies its archive and extracts fresh source; expect 20-40 min"
     return $(( 1 - ok ))
 }
 mod_5k_apply() {
@@ -1798,7 +1828,8 @@ remove_shadow_configs() {
     local f
     for f in "${LIMINE_SHADOW_CONFIGS[@]}"; do
         sudo test -f "$f" || continue
-        sudo rm -f "$f" && say "removed shadowing config $f"
+        sudo rm -f "$f" || return 1
+        say "removed shadowing config $f"
     done
     return 0
 }
@@ -1808,20 +1839,21 @@ remove_shadow_configs() {
 # writes nothing. Testing its exit status calls every PE binary a UKI, which on
 # a stock ESP means overwriting Limine with a kernel image. Check for bytes.
 fallback_is_uki() {
-    sudo bash -c 'p=$(mktemp); trap "rm -f $p" EXIT
-        objcopy -O binary --only-section=.cmdline '"$FALLBACK_PATH"' "$p" 2>/dev/null
-        [[ -s $p ]]' 2>/dev/null
+    sudo bash -c 'p=$(mktemp) || exit 1; trap '\''rm -f "$p"'\'' EXIT
+        objcopy -O binary --only-section=.cmdline "$1" "$p" 2>/dev/null || exit 1
+        [[ -s $p ]]' bash "$FALLBACK_PATH" 2>/dev/null
 }
 
 sync_boot_files() {
+    [[ -n $UKI_PATH ]] || { warn "could not identify the default UKI"; return 1; }
     say "rebuilding UKI"
     sudo limine-mkinitcpio || return 1
-    remove_shadow_configs
+    remove_shadow_configs || return 1
     # Only relevant on machines still running the old "UKI over the fallback"
     # bypass; on a stock ESP that path is Limine and must not be touched.
     if fallback_is_uki; then
         say "refreshing UKI-bypass fallback ${FALLBACK_PATH}"
-        sudo cp -f "$UKI_PATH" "$FALLBACK_PATH" 2>/dev/null
+        sudo cp -f "$UKI_PATH" "$FALLBACK_PATH" || return 1
     fi
     sudo sync
 }
@@ -1829,7 +1861,8 @@ verify_cmdline() {   # $1 must be present, $2 must be absent
     # Read the UKI itself, not the EFI fallback: on a stock ESP the fallback is
     # the Limine binary and carries no .cmdline at all.
     local line
-    line="$(sudo bash -c 'tmp=$(mktemp); trap "rm -f $tmp" EXIT; objcopy -O binary --only-section=.cmdline '"$UKI_PATH"' "$tmp" && tr -d "\0" < "$tmp"')"
+    [[ -n $UKI_PATH ]] || { warn "could not identify the default UKI"; return 1; }
+    line="$(sudo bash -c 'tmp=$(mktemp) || exit 1; trap '\''rm -f "$tmp"'\'' EXIT; objcopy -O binary --only-section=.cmdline "$1" "$tmp" && test -s "$tmp" && tr -d "\0" < "$tmp"' bash "$UKI_PATH")" || return 1
     [[ -n "${1:-}" ]] && ! grep -q "$1" <<<"$line" && { warn "verify: embedded cmdline missing '$1'"; return 1; }
     [[ -n "${2:-}" ]] &&   grep -q "$2" <<<"$line" && { warn "verify: embedded cmdline still has '$2'"; return 1; }
     say "embedded cmdline verified"
@@ -1852,14 +1885,28 @@ state_label() {
         not-applied) printf '\033[0;37m· not applied\033[0m' ;;
         partial)     printf '\033[1;33m⚠ partial\033[0m' ;;
         n/a)         printf '\033[0;37m— n/a\033[0m' ;;
+        error)       printf '\033[1;31m! detection failed\033[0m' ;;
+    esac
+}
+# A failed probe must never authorize a write. Only the four documented
+# states are data; diagnostics belong on stderr.
+module_state() {
+    local state
+    if ! state=$("mod_${1}_detect"); then
+        warn "${1}: detection failed"; return 1
+    fi
+    case "$state" in
+        applied|not-applied|partial|n/a) printf '%s\n' "$state" ;;
+        *) warn "${1}: invalid detection result: ${state@Q}"; return 1 ;;
     esac
 }
 show_status() {
     hdr "imac-patcher — ${product}, kernel ${KREL}"
-    local m st tier badge
+    local m st tier badge result=0
     MODULE_STATES=(); MODULE_TIERS=()
     for m in "${MODULES[@]}"; do
-        st="$("mod_${m}_detect")"; tier="$("mod_${m}_tier")"
+        st=$(module_state "$m") || { st=error; result=1; }
+        tier="$("mod_${m}_tier")"
         MODULE_STATES[$m]=$st; MODULE_TIERS[$m]=$tier
         badge=''; [[ $tier == boot ]] && badge=$'\033[0;33m[boot]\033[0m'
         printf '  %-32s %-22b %s\n' "$("mod_${m}_title")" "$(state_label "$st")" \
@@ -1869,6 +1916,7 @@ show_status() {
     printf '  ids: %s\n' "${MODULES[*]}"
     startup_deps_note
     eq_prereq_note "${MODULE_STATES[eq]:-n/a}"
+    return "$result"
 }
 
 # Filled by the startup audit in show_status; declared here so the interactive
@@ -1905,7 +1953,7 @@ startup_deps_note() {
                 eq_have_lv2 bankstown.lv2 || tools+=(git cargo) ;;
             color)
                 if ((kde)); then tools=(python3 kscreen-doctor)
-                elif [[ -f $MONITORS_LUA ]]; then tools=(hyprctl); fi ;;
+                elif [[ -f $MONITORS_LUA ]]; then tools=(python3 hyprctl); fi ;;
             suspend)
                 tools=(systemctl)
                 # Not omarchy-hibernation-remove: it is a file in the omarchy
@@ -1928,12 +1976,15 @@ startup_deps_note() {
                 tools=(objcopy limine-mkinitcpio) ;;
             5k)
                 [[ ${MODULE_STATES[$id]} == n/a ]] && continue
-                tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod)
-                if ((fedora)); then tools+=(rpm rpmbuild koji python3 dracut grubby mokutil)
+                tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod python3)
+                if ((fedora)); then tools+=(rpm rpmbuild koji dracut grubby mokutil)
                 elif ((archgrub)); then
                     tools+=(zstd cpio mkinitcpio grub-mkconfig)
                     imac_kernel_uses_clang "$KREL" && tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
-                else tools+=(zstd cpio limine-mkinitcpio); fi
+                else
+                    tools+=(zstd cpio limine-mkinitcpio)
+                    imac_kernel_uses_clang "$KREL" && tools+=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
+                fi
                 [[ -f /usr/lib/modules/${KREL}/build/Module.symvers ]] || startup_need_headers missing ;;
         esac
         for tool in "${tools[@]}"; do
@@ -2014,7 +2065,7 @@ eq_prereq_note() {   # $1 = EQ state from the current status snapshot
 }
 run_module() {   # $1 = apply|remove, $2 = id
     local action=$1 id=$2 st
-    st="$("mod_${id}_detect")"
+    st=$(module_state "$id") || return 1
     [[ $st == n/a ]] && { say "${id}: not applicable on this machine — skipping"; return 0; }
     if [[ $action == apply && $st == applied ]]; then
         # Older EQ installs pass the file/profile checks but can retain a
@@ -2032,7 +2083,8 @@ run_module() {   # $1 = apply|remove, $2 = id
     if [[ $action == remove && $st == not-applied ]]; then say "${id}: not applied — nothing to remove"; return 0; fi
     hdr "$( [[ $action == apply ]] && echo Applying || echo Removing ): $("mod_${id}_title")"
     if "mod_${id}_${action}"; then
-        say "${id}: ${action} finished — now $("mod_${id}_detect")"
+        st=$(module_state "$id") || return 1
+        say "${id}: ${action} finished — now ${st}"
     else
         warn "${id}: ${action} failed (see messages above)"; return 1
     fi
@@ -2040,8 +2092,11 @@ run_module() {   # $1 = apply|remove, $2 = id
 
 run_modules() {   # $1 = apply|remove, remaining arguments = validated module IDs
     local action=$1 id result=0
+    local -A seen=()
     shift
     for id in "$@"; do
+        [[ -z ${seen[$id]:-} ]] || continue
+        seen[$id]=1
         run_module "$action" "$id" || result=1
     done
     return "$result"
@@ -2070,7 +2125,7 @@ run_all_modules() {
 }
 
 case "$ACTION" in
-    status) show_status; exit 0 ;;
+    status) show_status; exit "$?" ;;
     apply|remove)
         if [[ ${REQUESTED_MODULES[0]} == safe ]]; then
             run_safe_modules "$ACTION"
@@ -2112,7 +2167,7 @@ pick_render() {   # $1 = cursor row, $2 = notice line, rest = patch rows
     printf '%s%s\n' "$arrow" "$PICK_EXIT"
 }
 
-pick_done() { printf '\033[?25h'; exec 3<&-; }   # cursor back, terminal closed
+pick_done() { printf '\033[?25h'; exec 3<&-; trap - INT TERM; }   # cursor back, terminal closed
 
 pick_tui() {   # arrow-key picker; keys come off the terminal so stdin stays
     local rows=("$@") n=$# cur=0 notice='' lines key rest
@@ -2125,6 +2180,8 @@ pick_tui() {   # arrow-key picker; keys come off the terminal so stdin stays
     # included -- goes to /dev/null and modules fail in silence. Inside a group
     # the 2>/dev/null belongs to the group and ends with it.
     { exec 3</dev/tty; } 2>/dev/null || exec 3<&0
+    trap 'pick_done; exit 130' INT
+    trap 'pick_done; exit 143' TERM
     printf '\033[?25l'
     while :; do
         pick_render "$cur" "$notice" "${rows[@]}"
@@ -2177,7 +2234,7 @@ pick_patches() {   # $@ = rows to offer; fills PICKED with the chosen indexes
     if [[ -t 0 && -t 1 ]]; then pick_tui "$@"; else pick_plain "$@"; fi
 }
 
-show_status
+show_status || exit 1
 startup_deps_install
 echo
 sel=''

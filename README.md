@@ -13,6 +13,9 @@ imac-patcher
 
 That fetches the latest release (including prereleases), checks it against the published SHA-256, unpacks it under `~/.local/share/imac5k-patcher/`, and links `imac-patcher` into `~/.local/bin`. It installs the tool and stops there — nothing is patched until you run it and choose.
 
+The checksum detects a damaged or mismatched download. It comes from the same
+release server as the archive and is not an independent signature of its publisher.
+
 Prefer to read before you run, or want to work on the patches themselves? Clone instead — the patcher runs the same either way:
 
 ```bash
@@ -168,8 +171,8 @@ Fedora uses its matching source RPM.
 
 The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md).
 
-- 🛠️ **Build tools and kernel headers** — `base-devel bc pahole` plus the running kernel’s headers (`linux-headers`, `linux-lts-headers`, `linux-cachyos-headers`, etc., selected from its `pkgbase`). Clang-built GRUB kernels also need `clang llvm lld`. The patcher checks for these up front and offers to install anything missing, rather than failing part-way through a compile.
-- 💾 **About 8 GB of disk** for the kernel source tree.
+- 🛠️ **Build tools and kernel headers** — `base-devel bc pahole` plus the running kernel’s headers (`linux-headers`, `linux-lts-headers`, `linux-cachyos-headers`, etc., selected from its `pkgbase`). Clang-built kernels on either Arch bootloader also need `clang llvm lld`. See [DEPENDENCIES.md](DEPENDENCIES.md) for the complete tool list.
+- 💾 **At least 10 GiB free** for source preparation and compilation. Arch builds verify the source archive against kernel.org's published checksum and extract a fresh build tree each time.
 - ⏱️ **20–40 minutes** for the first build. Re-runs (e.g. after a kernel update) reuse the tree and are much faster.
 
 Re-run it after any kernel update — the patched module is built for one specific kernel version and a new kernel reverts you to stock (which the patcher will report as `partial`).
@@ -250,7 +253,7 @@ On KDE Plasma Wayland, `./scripts/imac-patcher --apply color` selects the panel'
 The panel is wide-gamut Display P3. Hyprland's default `srgb` mode doesn't gamut-map for it, so everything looks oversaturated. In `~/.config/hypr/monitors.lua`:
 
 ```lua
-hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 2, cm = "dp3" })
+hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2, cm = "dp3" })
 ```
 
 ---
@@ -304,7 +307,7 @@ The tool updates itself:
 imac-patcher upgrade
 ```
 
-It checks for a newer release, installs it if there is one, and says so if there isn't. The previous two versions stay under `~/.local/share/imac5k-patcher/versions/`, so a rollback is one symlink. Re-running the install command does the same thing. (A git checkout is upgraded with `git pull` — `upgrade` will tell you so rather than overwrite it.)
+It checks for a newer release, installs it if there is one, and says so if there isn't. The current release and two other recent installations stay under `~/.local/share/imac5k-patcher/versions/`. Install a specific version to switch back; the `current` symlink is replaced atomically. Reinstalling identical content preserves its existing directory. If that version's files differ, installation stops and preserves them. A git checkout is updated with `git pull`.
 
 Upgrading replaces the tool, not the patches: whatever you had applied stays applied. If a release changes a patch you're running, re-apply it to pick the new one up — `imac-patcher --status` shows where you stand.
 
@@ -316,6 +319,9 @@ curl -fsSL https://raw.githubusercontent.com/MarkPronkin/imac5k-universal-linux-
 ```
 
 Uninstalling removes the tool, **not the patches** — those outlive it, so reverse anything you want gone with `imac-patcher --remove <id>` first. `imac-patcher --status` lists what is applied.
+
+Custom `--bin-dir` launcher paths are recorded for uninstall. A launcher you
+replace yourself is preserved. Uninstall also removes the retained tool versions.
 
 ## 🛟 Safety
 

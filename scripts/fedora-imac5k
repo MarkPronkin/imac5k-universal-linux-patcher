@@ -137,35 +137,67 @@ else:
     sys.exit("grubby did not return kernel arguments")'
 }
 restore_args() {
-    local current old
-    current=$(managed_args)
-    old=$(cat "$STATE/display-args")
-    [[ -z $current ]] || grubby --update-kernel "$KERNEL" --remove-args "$current"
-    [[ -z $old ]] || grubby --update-kernel "$KERNEL" --args "$old"
+    local current old result=0
+    current=$(managed_args) || return 1
+    old=$(cat "$STATE/display-args") || return 1
+    if [[ -n $current ]]; then
+        grubby --update-kernel "$KERNEL" --remove-args "$current" || result=1
+    fi
+    if [[ -n $old ]]; then
+        grubby --update-kernel "$KERNEL" --args "$old" || result=1
+    fi
+    return "$result"
+}
+restore_stock_image() {
+    local image
+    image=$(mktemp "${INITRD}.restore.XXXXXX") || return 1
+    if ! cp -p "$STATE/initramfs.stock" "$image" || ! mv -f "$image" "$INITRD"; then
+        rm -f "$image"
+        echo "Could not restore $INITRD; backup: $STATE/initramfs.stock" >&2
+        return 1
+    fi
     return 0
 }
 restore_module() {
     need_root --restore
     need_tools grubby dracut depmod
     [[ -f $STATE/display-args && -f $STATE/initramfs.stock ]] || die "No complete 5K backup for ${KREL}. Boot the patched kernel before restoring it."
-    rm -f "$DEST" "$DEPMOD_CONF"
-    depmod "$KREL"
-    restore_args
-    # Restore a bootable stock image first, even if the subsequent rebuild fails.
-    cp "$STATE/initramfs.stock" "$INITRD"
-    dracut --force "$INITRD" "$KREL"
-    rm -f "$STATE/installed"
+    local result=0 rebuilt
+    restore_stock_image || result=1
+    rm -f "$DEST" "$DEPMOD_CONF" || result=1
+    depmod "$KREL" || result=1
+    restore_args || result=1
+    # Build away from the bootable image: even a partial dracut output cannot
+    # destroy the restored stock initramfs.
+    rebuilt=$(mktemp "${INITRD}.rebuild.XXXXXX") || return 1
+    if (( result == 0 )) && dracut --force "$rebuilt" "$KREL"; then
+        mv -f "$rebuilt" "$INITRD" || result=1
+    else
+        result=1
+    fi
+    rm -f "$rebuilt"
+    if (( result )); then
+        touch "$STATE/recovery-needed"
+        echo "Restore incomplete; stock backup retained in $STATE. Retry --restore for ${KREL}." >&2
+        return 1
+    fi
+    rm -f "$STATE/installed" "$STATE/recovery-needed"
     say "Stock amdgpu and original display arguments restored for ${KREL}. Reboot."
 }
 rollback_install() {
     trap - ERR
-    set +e
     echo "Install failed; reverting this kernel to the saved stock module and initramfs." >&2
-    rm -f "$DEST" "$DEPMOD_CONF"
-    depmod "$KREL"
-    restore_args
-    cp "$STATE/initramfs.stock" "$INITRD"
-    rm -f "$STATE/installed"
+    local result=0
+    restore_stock_image || result=1
+    rm -f "$DEST" "$DEPMOD_CONF" || result=1
+    depmod "$KREL" || result=1
+    restore_args || result=1
+    if (( result )); then
+        touch "$STATE/recovery-needed" || true
+        echo "Automatic recovery incomplete. Keep $STATE and retry --restore for ${KREL}." >&2
+    else
+        rm -f "$STATE/installed" "$STATE/recovery-needed" || true
+    fi
     exit 1
 }
 install_module() {
@@ -177,13 +209,15 @@ install_module() {
     [[ -f $INITRD && -f $KERNEL ]] || die "Expected Fedora kernel/initramfs under /boot."
     local current tmp
     current=$(managed_args)
-    if [[ ! -f $STATE/installed ]]; then
+    [[ ! -e $STATE/recovery-needed ]] || die "Previous recovery is incomplete; run --restore first."
+    say "Recovery for ${KREL}: sudo $0 --restore while running this kernel. Keep another Fedora kernel available in GRUB."
+    if [[ ! -f $STATE/initramfs.stock && ! -f $STATE/display-args ]]; then
         [[ ! -e $DEST && ! -e $DEPMOD_CONF ]] || die "Unmanaged imac5k module/config already exists."
         mkdir -p "$STATE"
         cp "$INITRD" "$STATE/initramfs.stock"
         printf '%s\n' "$current" > "$STATE/display-args"
     fi
-    [[ -f $STATE/initramfs.stock ]] || die "Stock initramfs backup is missing."
+    [[ -f $STATE/initramfs.stock && -f $STATE/display-args ]] || die "Complete stock backup is missing."
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     cp "$1" "$tmp/amdgpu.ko"
@@ -205,7 +239,9 @@ install_module() {
     printf 'override amdgpu %s updates/imac5k\n' "$KREL" > "$DEPMOD_CONF"
     depmod "$KREL"
     [[ $(realpath "$(modinfo -k "$KREL" -n amdgpu)") == "$(realpath "$DEST")" ]] || { false; }
-    dracut --force --add-drivers amdgpu "$INITRD" "$KREL"
+    dracut --force --add-drivers amdgpu "$tmp/initramfs" "$KREL"
+    install -m600 "$tmp/initramfs" "${INITRD}.imac-new"
+    mv -f "${INITRD}.imac-new" "$INITRD"
     [[ -z $current ]] || grubby --update-kernel "$KERNEL" --remove-args "$current"
     grubby --update-kernel "$KERNEL" --args amdgpu.tiled_stitch=1
     touch "$STATE/installed"

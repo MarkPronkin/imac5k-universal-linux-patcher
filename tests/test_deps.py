@@ -41,7 +41,7 @@ class DepsTests(unittest.TestCase):
         self.bin.mkdir()
         # A PATH holding only what the gate itself needs, so anything else can
         # be added or withheld per test.
-        for name in ("bash", "grep", "sed", "awk", *(n for n in COREUTILS if n != "install")):
+        for name in ("bash", "grep", "sed", "awk", "flock", *(n for n in COREUTILS if n != "install")):
             (self.bin / name).symlink_to(f"{REAL}/{name}")
         self.stub("sudo", 'exec "$@"')
         # A package manager that reports what it was asked for and, for the
