@@ -21,6 +21,7 @@ mod_eq_title() { echo EQ; }
 mod_eq_tier() { echo safe; }
 mod_eq_detect() { echo PROBE_EQ >&2; echo not-applied; }
 eq_have_lv2() { return 1; }
+imac_eq_supported() { return 0; }
 '''
 
 

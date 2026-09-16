@@ -41,6 +41,10 @@ imac_xhci_fix_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; 
 # on CS8409 machines. Other models keep their existing gate (a card that
 # offers the 4.0 profile).
 imac_eq_supported() { [[ ${product:-$(imac_product_name)} != iMacPro1,1 ]]; }
+# The iMac Pro (iMacPro1,1) drives 4 speaker drivers through the T2's Pro Audio
+# path (PCM devices 0, 4, 100). Only 2 of the 4 play without an explicit
+# channel map, so this gate is the complement of the CS8409 ones above.
+imac_t2speakers_supported() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 ]]; }
 # Vega 10 / DCE 12 (iMac Pro): the tile pair latches only when the stream is
 # brought up at the panel's native 10 bpc. Hyprland's default 8 bpc leaves the
 # second tile unlocked and the desktop stretched. See patches/README.md.
@@ -90,8 +94,8 @@ imac_tool_package() {   # $1 = command name
             pahole)                 echo dwarves ;;
             rpmbuild)               echo rpm-build ;;
             pactl)                  echo pulseaudio-utils ;;
-            pw-cli)                 echo pipewire-utils ;;
-            wpctl)                  echo wireplumber ;;
+            pw-cli|pw-dump)         echo pipewire-utils ;;
+            wpctl|wireplumber)      echo wireplumber ;;
             kscreen-doctor)         echo kscreen ;;
             systemctl)              echo systemd ;;
             grub-mkconfig)          echo grub2-tools ;;
@@ -106,8 +110,8 @@ imac_tool_package() {   # $1 = command name
         gcc|make|ld|strip|objcopy|flex|bison) echo base-devel ;;
         modinfo|depmod|lsmod|modprobe) echo kmod ;;
         pactl)                  echo libpulse ;;
-        pw-cli)                 echo pipewire ;;
-        wpctl)                  echo wireplumber ;;
+        pw-cli|pw-dump)         echo pipewire ;;
+        wpctl|wireplumber)      echo wireplumber ;;
         kscreen-doctor)         echo kscreen ;;
         python3)                echo python ;;
         systemctl)              echo systemd ;;

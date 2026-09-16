@@ -105,7 +105,7 @@ class ReleaseTests(unittest.TestCase):
         with tarfile.open(self.dist / f"imac5k-patcher-{VERSION}.tar.gz") as tar:
             names = {n.split("/", 1)[1] for n in tar.getnames() if "/" in n}
         for needed in ("VERSION", "COMMIT", "install.sh", "LICENSE", "README.md", "DEPENDENCIES.md",
-                       "scripts/hypr-color.py", "scripts/lib/limine-config.py",
+                       "scripts/hypr-color.py", "scripts/t2-speakers.py", "scripts/lib/limine-config.py",
                        "scripts/imac-patcher", "scripts/lib/platform.sh",
                        "scripts/lib/grub.sh", "scripts/lib/arch-grub.sh", "docs/arch-grub.md",
                        "patches/cs8409-headset-capture.patch", "docs/headphones.md",

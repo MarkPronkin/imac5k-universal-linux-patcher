@@ -255,6 +255,13 @@ esac''')
         self.assertNotIn("eq needs", result.stdout)
         self.assertNotIn("cargo", result.stdout)
         self.assertNotIn("command not found", result.stderr)
+        # Its own speaker fix is reported instead: a WirePlumber channel map
+        # needing only the PipeWire tools, no driver build and no DSP chain.
+        line = next(line for line in result.stdout.splitlines()
+                    if "t2speakers missing dependencies:" in line)
+        for command in ("python3", "pw-dump", "wireplumber"):
+            self.assertIn(command, line)
+        self.assertIn("systemctl", line)
 
     def test_arch_family_grub_uses_its_backend_and_dependencies(self):
         for distro in ("arch", "endeavouros", "cachyos"):

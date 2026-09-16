@@ -54,7 +54,7 @@ imac-patcher --remove eq        # undo one module
 | `partial` | Some changes are present, but a required file, running driver, or setting is missing; a reboot or re-apply may be needed |
 | `n/a` | The module is unavailable for the detected hardware, desktop, or platform; the command skips it |
 
-The module IDs are `audio`, `eq`, `color`, `suspend`, `boot`, and `5k`.
+The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `boot`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
 tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
 but blocks hibernate**; select individual modules to skip it. Suspend moves to
@@ -97,20 +97,20 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the six hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the seven hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
-|---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
+|---|---|---|---|---|---|---|---|---|---|
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
 
 ### 🐧 Distributions
 
@@ -243,6 +243,20 @@ Older installs could leave the hidden output at 40% (about −24 dB), making the
 The tuning was measured on an iMac17,1 (2015), which has the same 4.0 speaker layout; if it sounds inverted — treble from the woofers — the channel mapping on your board differs and `--remove eq` restores it.
 
 If it ever sounds thin and far too quiet, the card has fallen back to its stereo profile: the chain still produces four channels, but the two woofer ones link to nothing and you are hearing the tweeter half of a crossover. `--status` reports that as `partial` rather than `applied`; `pactl list cards | grep 'Active Profile'` confirms it, and re-applying selects the 4.0 profile again.
+
+### iMac Pro speakers
+
+On `iMacPro1,1`, the T2's four-channel Pro Audio speaker output can leave two speakers silent during stereo playback. This module sends stereo to all four channels. It requires a working T2 audio driver, the **Pro Audio** profile, PipeWire, and **WirePlumber 0.5 or newer**. The `audio` and `eq` modules above stay N/A on this model.
+
+```bash
+./scripts/imac-patcher --apply t2speakers
+```
+
+Turn the volume down before applying. The module installs one rule at `~/.config/wireplumber/wireplumber.conf.d/51-imacpro-t2-speakers.conf` (or under `XDG_CONFIG_HOME`) and restarts your WirePlumber service. Run it as your desktop user, without sudo.
+
+The rule matches the **Apple T2 Audio** card's four-channel `pro-output-0` speaker output, independently of its PCI address. Applications see a stereo input; the device adapter maps it to `FL FR RL RR` with simple upmix. Merely labelling four ports does not make ordinary stereo play through the second pair. Status checks the live stereo ports and mixer settings before reporting `applied`.
+
+Revert with `./scripts/imac-patcher --remove t2speakers`. Failed application restores the previous managed rule; an interrupted operation retains recovery state and tells you to run removal again. User-edited rules are preserved. Headphones, loopback, external audio devices, and other channel counts are excluded. The conversion has been tested with a virtual audio device; speaker order and sound quality still need validation on an iMac Pro.
 
 ---
 

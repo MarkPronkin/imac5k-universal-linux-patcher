@@ -77,6 +77,50 @@ preflight
         self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
         self.assertIn("T2 audio", result.stdout)
 
+    def test_t2speakers_is_only_for_the_imac_pro(self):
+        t2 = section("t2speakers", "color")
+        for model in MODELS:
+            with self.subTest(model=model):
+                result = self.run_shell(model, "imac_t2speakers_supported")
+                self.assertEqual(result.returncode == 0, model == "iMacPro1,1")
+                if model == "iMacPro1,1":
+                    continue
+                result = self.run_shell(model, f"HOME=/tmp\n" + t2 + "mod_t2speakers_detect\nmod_t2speakers_apply")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
+                self.assertIn("T2", result.stdout)
+
+    def test_status_lists_only_the_speaker_fix_for_this_model(self):
+        """The two speaker fixes are complements: the Pro sees t2speakers but
+        no EQ, every other model sees EQ but no t2speakers. Detection still
+        reports n/a underneath, so --apply/--remove keep skipping cleanly."""
+        from test_patcher_menu import driver
+        stubs = ""
+        for mod, title in (("audio", "Audio driver"), ("eq", "Speaker tuning"),
+                           ("t2speakers", "T2 speakers"), ("color", "Colour"),
+                           ("suspend", "Suspend"), ("boot", "Boot"), ("5k", "Display")):
+            stubs += (f'mod_{mod}_detect() {{ echo not-applied; }}\n'
+                      f'mod_{mod}_title() {{ echo "{title}"; }}\n'
+                      f'mod_{mod}_tier() {{ echo safe; }}\n')
+        for model, shown, hidden in (("iMacPro1,1", "T2 speakers", "Speaker tuning"),
+                                     ("iMac18,3", "Speaker tuning", "T2 speakers"),
+                                     ("iMac17,1", "Speaker tuning", "T2 speakers")):
+            with self.subTest(model=model):
+                result = self.run_shell(model, f'''
+MODULES=(audio eq t2speakers color suspend boot 5k)
+KREL=test
+hdr() {{ :; }}
+say() {{ printf '%s\\n' "$*"; }}
+''' + driver() + '''
+startup_deps_note() { :; }
+eq_prereq_note() { :; }
+''' + stubs + "\nshow_status")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(shown, result.stdout)
+                self.assertNotIn(hidden, result.stdout)
+                # Everything else is still listed on every model.
+                self.assertIn("Audio driver", result.stdout)
+
     def test_five_k_apply_sets_hyprland_to_10_bpc_on_the_active_output_only(self):
         start = PATCHER.index("# ═══════════════════════ module: 5k ")
         five_k = PATCHER[start:PATCHER.index("# ── boot helpers", start)]

@@ -41,7 +41,7 @@ printf '%s\\n' "$ACTION" "$FORCE" "${REQUESTED_MODULES[@]}"
                 result = self.launcher(*args)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("Usage: imac-patcher", result.stdout)
-                self.assertIn("audio eq color suspend boot 5k", result.stdout)
+                self.assertIn("audio eq t2speakers color suspend boot 5k", result.stdout)
                 self.assertEqual(list(self.home.iterdir()), [])
 
     def test_version_does_not_create_runtime_directories(self):

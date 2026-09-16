@@ -200,6 +200,33 @@ Needs working built-in speakers with the
 audio driver and reboot first. The other admitted models keep their existing
 driver; the bundled audio installer supports only iMac18,3.
 
+## T2 speakers module (safe tier, iMac Pro only)
+
+| Tool | Arch package | Fedora package |
+|---|---|---|
+| python3 (standard library only) | python | python3 |
+| pw-dump | pipewire | pipewire-utils |
+| wireplumber (0.5 or newer) | wireplumber | wireplumber |
+| systemctl (user units) | systemd | systemd |
+
+Requires a working T2 driver and one four-channel **Apple T2 Audio** speaker
+output using the **Pro Audio** profile. This module does not install the driver
+or change the card profile. It is N/A on every model except `iMacPro1,1`.
+
+The module installs one WirePlumber rule under
+`~/.config/wireplumber/wireplumber.conf.d/`, respecting `XDG_CONFIG_HOME`.
+It exposes stereo inputs and converts them to four device channels, then
+restarts only `wireplumber.service` and verifies the live ports and mixer.
+Use an active desktop user session, without sudo. PulseAudio alone and
+WirePlumber 0.4 cannot use this rule.
+
+Failed application restores the prior managed rule. Recovery state lives under
+`${XDG_STATE_HOME:-~/.local/state}/imac-patcher/`; pending recovery keeps status
+at `partial` so `--remove t2speakers` can retry a failed reload. Removal works
+with the target output absent or PipeWire stopped. User-edited configuration
+is preserved. A `WIREPLUMBER_CONFIG_DIR` override is refused on apply because
+it bypasses the normal configuration search paths.
+
 ## Color module (safe tier)
 
 - Hyprland: `python3` + `hyprctl` (edits `~/.config/hypr/monitors.lua`, then reloads)
