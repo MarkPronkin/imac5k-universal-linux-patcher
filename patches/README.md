@@ -92,6 +92,20 @@ on insertion points that are stable across both series. **The driver code the
 patches add is unchanged** — only the surrounding match context moved. Both
 patches apply in sequence at `--fuzz=0` to 7.2.x and to that Fedora source.
 
+### 7.2.4+ context (Apple Studio Display quirk)
+
+Linux 7.2.4 added an Apple Studio Display case (`APP` AE3A/AE42/AE46,
+`disable_second_tile`) just before `default:` in `apply_edid_quirks()`, where
+both full stacks inserted the iMac panel IDs, so the core patch no longer
+applied (reported on Omarchy `7.2.5-3-omarchy`, 2026-09-16). The lean core now
+inserts its case ahead of the PHY SSC case; the verbose core, which also logs
+unmatched Apple panels from `default:`, now matches the iMac IDs in its own
+switch just before the stock one (the function returns after that switch, so
+behaviour is unchanged). The two ID sets do not overlap. Both full stacks apply
+at `--fuzz=0` to pristine 7.2.5 and their `amdgpu.ko` builds against the
+`7.2.5-3-omarchy` headers; the changed `amdgpu_dm_helpers.c` hunks also apply to
+7.2.2–7.2.4, and the lean ones to 7.1.9 and 7.1.13.
+
 ## Lean mainline candidate: `imac5k-lean-core-7.2.x.patch`
 
 The upstream candidate: taprobane99's mechanism, reworked. **+355 code / +89

@@ -2529,14 +2529,14 @@
  
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_helpers.c
 +++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_helpers.c
-@@ -95,12 +95,163 @@
+@@ -95,12 +95,227 @@
  	       (u32)EDID_PRODUCT_ID(edid);
  }
  
 -static void apply_edid_quirks(struct dc_link *link, struct edid *edid,
 -			      struct dc_edid_caps *edid_caps)
 +static void edid_panel_id_to_str(const struct edid *edid, char *buf, size_t len)
-+{
+ {
 +	u16 code = ((u16)edid->mfg_id[0] << 8) | edid->mfg_id[1];
 +	char mfg[4];
 +
@@ -2549,7 +2549,7 @@
 +}
 +
 +static bool edid_is_apple_panel(const struct edid *edid)
- {
++{
 +	u16 code = ((u16)edid->mfg_id[0] << 8) | edid->mfg_id[1];
 +	char a = 'A' + ((code >> 10) & 0x1f) - 1;
 +	char p1 = 'A' + ((code >> 5) & 0x1f) - 1;
@@ -2694,13 +2694,12 @@
 +
 +	edid_panel_id_to_str(edid, panel, sizeof(panel));
 +	edid_extension_tags_to_str(edid, ext_tags, sizeof(ext_tags));
- 
- 	switch (panel_id) {
- 	/* Workaround for monitors that need a delay after detecting the link */
-@@ -134,7 +285,62 @@
- 		drm_dbg_driver(dev, "Skip PHY SSC reduction on panel id %X\n", panel_id);
- 		link->wa_flags.skip_phy_ssc_reduction = true;
- 		break;
++
++	/*
++	 * The Apple 5K cases sit in their own switch, ahead of the stock one,
++	 * so upstream additions to the stock table do not move this patch.
++	 */
++	switch (panel_id) {
 +	/*
 +	 * Apple 27" 5K dual-tile internal panel (iMac15,1 / 17,1 / 18,3 / 19,1 / 20,x / iMacPro1,1).
 +	 * Older family: AE01 root-compat, AE02 tile identity.
@@ -2748,8 +2747,8 @@
 +			 edid_caps->panel_patch.tiled_stream_enable_latch,
 +			 edid_caps->panel_patch.aux_ready_before_link_training,
 +			 edid_caps->panel_patch.prefer_tile_native_mode);
-+		break;
- 	default:
++		return;
++	default:
 +		if (apple_panel)
 +			drm_info(dev,
 +				 "APPLE5K: Apple panel not matched base=%s panel_id=0x%X signal=%d link[%u] name=\"%s\" ext=%u tags=%s\n",
@@ -2757,10 +2756,12 @@
 +				 link ? link->link_index : 0xffffffff,
 +				 edid_caps->display_name, edid->extensions,
 +				 ext_tags[0] ? ext_tags : "none");
- 		return;
- 	}
- }
-@@ -155,6 +361,7 @@
++		break;
++	}
+ 
+ 	switch (panel_id) {
+ 	/* Workaround for monitors that need a delay after detecting the link */
+@@ -155,6 +370,7 @@
  {
  	struct amdgpu_dm_connector *aconnector = link->priv;
  	struct drm_connector *connector = &aconnector->base;
@@ -2768,7 +2769,7 @@
  	struct edid *edid_buf = edid ? (struct edid *) edid->raw_edid : NULL;
  	struct cea_sad *sads;
  	int sad_count = -1;
-@@ -195,7 +402,8 @@
+@@ -195,7 +411,8 @@
  					edid_caps->frl_dsc_max_frl_rate, edid_caps->frl_dsc_total_chunk_kbytes);
  	}
  
@@ -2778,7 +2779,7 @@
  
  	sad_count = drm_edid_to_sad((struct edid *) edid->raw_edid, &sads);
  	if (sad_count <= 0)
-@@ -1236,6 +1444,7 @@
+@@ -1236,6 +1453,7 @@
  		DRM_ERROR("EDID err: %d, on connector: %s",
  				edid_status,
  				aconnector->base.name);
