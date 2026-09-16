@@ -1,12 +1,191 @@
 # Current work checkpoint
 
-**Latest stopping point (2026-09-11, 15:50):** the first real s2idle suspend
-on this iMac succeeded with the new Wi-Fi hook (`scripts/imac-wifi-sleep-hook`,
-beside the Thunderbolt one): 50 s asleep, display link-health PASS, Ethernet
-and Wi-Fi back. The BCM43602 firmware leaves brcmfmac's D3 handshake
-unanswered whatever the interface state, which refused every earlier systemd
-suspend. Next: more cycles, then the README status, the 0.2.0-alpha notes and
-a 0.2.1-alpha release; the push and release await the owner. Read
+**Resume checkpoint (2026-09-14, 17:54):** EFI recorder's **awake storage
+selftest passed**, logs `/var/tmp/imac-efi-sleep-jha88qad`: exact data
+read-back, nonvolatile/runtime attributes, deletion confirmed by EFI_NOT_FOUND,
+module unloaded, no sleeps (0/0) on boot 438e5fbc. Earlier checks failed because
+Apple adds its data-checksum attribute 0x80000000. Verifier now accepts only
+7 or 0x80000007 and still checks exact data; recovery preserves raw attributes.
+Also made the sysfs selftest write unbuffered to avoid retry on failed close.
+Twenty-three offline helper tests and the W=1 module build pass.
+
+The installer USB reappeared after reboot; it was safely unmounted and
+powered off again. Next command, prepared for launch:
+`sudo python3 notes/second-sleep-efi-capture.py run --tb-removed`.
+This repeats the latest failing test (real first s2idle, then five-second
+platform, serial, Wi-Fi detached, whole Thunderbolt subtree removed) with
+PM tracing and a 20-second second-transition EFI snapshot timer. Wake first
+sleep with keyboard after ~30 s; leave the second staged attempt alone.
+Snapshot execution and retention through the fault remain unproven.
+**After a reset, run `sudo python3 notes/second-sleep-efi-capture.py collect`
+and `sudo python3 notes/second-sleep-trace.py capture` BEFORE clearing,
+starting another recorder or any sleep.** Check new `/var/tmp/imac-efi-sleep-*`
+and `/var/tmp/imac-second-sleep-*` directories. Do not overwrite EFI records;
+the loader refuses existing ones. Trace/nonvs boot drop-ins remain.
+
+**Resume checkpoint (2026-09-14, 17:44):** whole-Thunderbolt removal also
+failed. Owner authenticated the pending test; run
+`/var/tmp/imac-second-sleep-ybtw83d_` on boot b118d60b removed all seven
+Alpine Ridge PCI functions, and the helper checked the subtree was still
+absent before each cycle. First real s2idle returned (73.09 s asleep);
+second `platform`, delay 5, serial, Wi-Fi detached began 17:37:44 and reset.
+No second result or cleanup exists. This rules out the removed functions'
+Linux PM callbacks for this reproducer; the root port, hardware and ACPI
+namespace were not physically removed. Current boot
+`438e5fbc-e398-4aae-ba13-e5ccc7012a8f` has counters 0/0, pm_test=none,
+pm_async=1, mem_sleep=deep. Captured before any new recording or sleep:
+`/var/tmp/imac-sleep-trace-capture-mcx8xmbe` (empty; this last test did not
+enable tracing). The boot again reported a ring-buffer magic mismatch.
+The old pkexec process/session 18988 is gone. Next: awake validation of
+`notes/second-sleep-efi-capture.py selftest`; the built module has not yet
+been loaded. Do not assume EFI snapshot capture works until hardware checks
+complete. Trace/nonvs boot drop-ins remain. Sleep is unresolved.
+
+**Resume checkpoint (2026-09-14, 16:09):** continuing the owner's midday
+request to remove the **whole Alpine Ridge PCI subtree**, not merely unbind
+the NHI driver. Current boot `b118d60b-7117-4d38-ac19-a83fa1cfe784` still has
+no sleeps (0/0). The mounted Omarchy installer stick on Alpine Ridge USB 4-1
+was safely unmounted (`udisksctl unmount -b /dev/sdb1`) and powered off
+(`udisksctl power-off -b /dev/sdb`); verified no attached USB/net/block
+devices below Thunderbolt and /sys/class/block/sdb absent. It remains
+physically plugged in and may re-enumerate when the controller is rescanned.
+Launched via pkexec at 16:10, but **still awaiting Polkit authentication at
+16:17**: no new run directory and counters remain 0/0. Pending command is
+`sudo python3 notes/second-sleep-pm-test.py platform --prime
+--mode s2idle --delay 5 --wifi-unbound --serial --tb-removed` (pkexec session
+18988, host PID 34174). Do not launch a duplicate while this is pending.
+Wake the first
+real sleep after ~30 s; leave the staged second attempt alone. Check the
+new `/var/tmp/imac-second-sleep-*` run and thunderbolt.json after return/reset.
+The earlier recorded attempt did reset: its capture qvgi5j9m was empty and
+the new kernel reported a ring-buffer magic mismatch. The trace/nonvs boot
+drop-ins remain. An alternative EFI snapshot helper was built under
+notes/pm-capture, but **has never been loaded or hardware-tested**; no EFI
+variables were written by it. Twenty-two offline helper checks pass.
+
+**Resume checkpoint (2026-09-14, 10:01):** persistent trace retention
+**passed a normal restart**. Capture `/var/tmp/imac-sleep-trace-capture-v2jpeiun`
+on boot `720291d7-38d9-44a0-bc3f-cec648746109` recovered the exact marker from
+boot `5352621b`; verification `/var/tmp/imac-sleep-trace-verified.json`.
+Counters remain 0/0 before the next experiment. Prepared and about to launch
+`sudo python3 notes/recorded-second-sleep.py`: starts the validated recorder,
+then `platform --prime --mode s2idle --delay 5 --wifi-unbound --serial
+--persistent-trace`. Wake the first real sleep after ~30 s; leave the second
+platform test alone. The helper now requires active PM trace events, marks
+each attempt, and saves the first wake's trace before the second attempt.
+Sixteen offline checks pass. **After any reset, run
+`sudo python3 notes/second-sleep-trace.py capture` BEFORE mark/start or
+another sleep.** Check `/var/tmp/imac-second-sleep-*` for the new run.
+Normal-reboot retention does not guarantee retention through the fault.
+
+**Resume checkpoint (2026-09-14, 09:55):** recorder activated successfully
+after a normal restart, on boot `5352621b-703b-49c2-932c-444ae95ae261`.
+The kernel mapped `imac_sleep` at physical 0x800000000, size 16 MiB.
+`notes/second-sleep-trace.py mark` completed: marker written/read back,
+tracing paused; metadata `/var/tmp/imac-sleep-trace-marker.json`, initial
+capture `/var/tmp/imac-sleep-trace-capture-k0jg399f`. No sleeps (0/0),
+pm_test=none, pm_async=1, mem_sleep=deep. **Next: one more normal restart,
+then `sudo python3 notes/second-sleep-trace.py capture` BEFORE mark/start
+or any sleep.** It must find the marker from boot `5352621b`; otherwise
+retention is unproven and another sleep test would not yet have a validated
+recorder. The nonvs and trace boot drop-ins remain installed. Read the newest
+Wi-Fi suspend handoff section for the follow-up sequence.
+
+**Resume checkpoint (2026-09-14, 09:50):** sequential device
+callbacks did not fix the second attempt either. Run
+`/var/tmp/imac-second-sleep-aiqewubm` used `platform --prime --mode s2idle
+--delay 5 --wifi-unbound --serial`: first real sleep returned (67.25 s
+asleep); the second platform test reset. Current boot `17f13188` has
+counters 0/0, pm_test=none, pm_async=1, mem_sleep=deep; nonvs remains.
+Persistent ftrace recorder **is now armed for the next boot**, through
+`/etc/limine-entry-tool.d/zz-imac-sleep-trace.conf`. The boot image was
+rebuilt and its embedded arguments/kernel verified. Boot backups and setup
+record: `/var/tmp/imac-sleep-trace-setup-7vu55vlk`. No restart or sleep has
+occurred since installing it. **Next: normal restart, then run
+`sudo python3 notes/second-sleep-trace.py mark` before any sleep.** A second
+normal restart and `capture` must prove marker retention before another sleep
+experiment. The helper's start/capture/disarm commands and exact workflow
+are in the latest Wi-Fi suspend handoff section. Fifteen offline checks pass.
+
+**Resume checkpoint (2026-09-14, 09:30):** the five-second platform test
+with Wi-Fi detached throughout also reset on its second attempt, after a
+successful real first sleep (`/var/tmp/imac-second-sleep-q2btp_79`). This
+avoided the separate Wi-Fi rebind crash. It did not prove whether late/noirq
+suspend or resume failed. Current boot `68b17b26` has had no sleeps (0/0),
+pm_test=none, pm_async=1, mem_sleep=deep, nonvs still on the boot cmdline.
+Next prepared test adds only sequential callbacks:
+`sudo python3 notes/second-sleep-pm-test.py platform --prime --mode s2idle
+--delay 5 --wifi-unbound --serial`. Wake the real first sleep after ~30 s;
+the staged second returns automatically. The helper restores pm_async.
+Thunderbolt firmware disassembly is available under `/tmp/imac-acpi-analysis`;
+stateful device power methods are candidates, not a confirmed cause. Read the
+latest Wi-Fi suspend handoff section for the exact evidence and commands.
+
+**Latest finding (2026-09-12, 13:19):** the short platform run never reached
+the kernel test. After a successful first sleep, immediate Wi-Fi re-unbind
+raced its asynchronous probe: `!work->func` in
+`brcmf_bus_cancel_reset_work → brcmf_pcie_remove`, then a NULL-pointer BUG;
+the login screen was frozen by systemd's pre-sleep user.slice freeze.
+Evidence: `notes/wifi-rebind-oops-2026-09-12.log` and
+`/var/tmp/imac-second-sleep-yexih9qd`. Current boot `3f29be64`, counters 0/0.
+Next prepared run adds `--wifi-unbound` to keep the unused card detached
+throughout: `sudo python3 notes/second-sleep-pm-test.py platform --prime
+--mode s2idle --delay 5 --wifi-unbound`. The helper now also waits for Wi-Fi
+initialization before any detach; 11 offline tests pass. The 70-second
+platform failure remains a separate unresolved result. Read the latest
+Wi-Fi suspend handoff section before proceeding.
+
+**Latest result (2026-09-12, 13:06):** the 70-second `pm_test=platform`
+attempt reset the machine too (`/var/tmp/imac-second-sleep-lwmth335`), after
+the same boot's successful real first sleep and 70-second devices test.
+This reproduces failure before actual s2idle, narrowing the added work to
+device late/noirq + ACPI s2idle preparation, or time spent in that state.
+Fresh boot is `b6a8dc5d`, counters 0/0, temporary settings cleared; S3/nonvs
+boot configuration remains. Next:
+`sudo python3 notes/second-sleep-pm-test.py platform --prime --mode s2idle --delay 5`
+to distinguish a callback hang from failure during the longer hold. Wake
+the real first sleep after ~30 s; the staged second returns automatically.
+
+**Latest test (2026-09-12, 13:01):** one real s2idle sleep followed by
+`pm_test=devices` for 70 s both returned on boot `830cfc6e`; the second was
+a simulated device test, not real sleep. Raw dmesg confirms a 71.66 s test
+interval, so the keyboard did not shorten it. Logs:
+`/var/tmp/imac-second-sleep-g7942jah`. Fixed the diagnostic's wait for a
+systemd service that has already been unloaded; restored all its temporary
+settings. Next: `sudo python3 notes/second-sleep-pm-test.py platform
+--after-first --mode s2idle` in the same boot (70 s, automatic return).
+Read the newest section of the Wi-Fi suspend handoff below.
+
+**Current investigation (2026-09-12, 12:49):** the failure still occurs on the
+second attempt, but its last `PM: suspend entry` log line is emitted *before*
+device suspend; it does not prove the machine reached sleep. Shared driver
+callbacks remain candidates. Also, the first S3+nonvs wake restored the
+desktop but lost Thunderbolt/its USB controller and failed the NHI rebind;
+S3 is not yet a shipping choice. `Darwin` OSI is already enabled by Linux on
+this Mac, so adding that boot option would do nothing. Prepared and
+offline-checked `notes/second-sleep-pm-test.py`: on the current fresh boot,
+`sudo python3 notes/second-sleep-pm-test.py devices --prime --mode s2idle`
+takes one real first sleep (wake after ~30 s), then a 70-second device-stage
+test that returns automatically if it survives. It preserves logs under
+`/var/tmp/imac-second-sleep-*` across a reset and restores temporary settings
+after completion. Hardware test pending. Read the newest section of
+[the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first.
+
+**Previous stopping point (2026-09-12, 12:30; qualifications above):** on this iMac the first sleep of
+a boot always survives and the second always resets the machine at about 50 s —
+seven boots, no exceptions. This holds in **both** s2idle and deep S3, so it is
+independent of the sleep mode. Ruled out: the watchdogs, panic-reboot, MCE, the
+RTC alarm, sleep duration, every CPU idle depth including a C3 cap (an earlier
+"deepest C-states" conclusion here was wrong, an artefact of test ordering),
+this project's own hooks and the bound state of the Thunderbolt NHI and Wi-Fi
+card, applesmc, and a shotgun unload of thunderbolt/brcmfmac/mei/i2c_i801. New
+result: **one deep S3+`acpi_sleep=nonvs` sleep returned** (2 min 54 s in S3,
+where S3 previously reset on wake), but Thunderbolt/USB recovery failed as
+noted above. The machine
+may still be armed for that test; `sudo bash notes/s3-nonvs-test.sh disarm` plus
+a reboot reverts it. **The Wi-Fi hook (65c2d88) stays unpushed** and nothing
+about suspend ships until suspend is dependable; 0.2.0-alpha unmasks suspend for
+every Retina 5K iMac and must be re-gated in 0.2.1-alpha. Read
 [the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md) first;
 its newest section is at the top.
 
