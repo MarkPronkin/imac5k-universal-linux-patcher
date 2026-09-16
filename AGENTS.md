@@ -1,5 +1,19 @@
 # Current work checkpoint
 
+**Release 0.2.1-alpha (2026-09-16):** the work that sat uncommitted on the
+local review branch is on `test` as topic commits (XHC1 fix, second-sleep
+investigation record, full-audit fixes, `t2speakers`), the review branch is
+deleted, and `v0.2.1-alpha` is released from `test`, published from the
+owner's GitHub account (MarkPronkin). The release workflow no longer
+publishes; it verifies the published archive against a rebuild from the tag.
+`main` is unchanged (local `7e379ad`, `origin/main` `da90c1b`). Read
+[the release record](notes/release-0.2.1-alpha-2026-09-16.md) first: what
+went to `test`, how the release is built and credited, and the open items.
+Suspend on the iMac18,3 works repeatedly with the XHC1 fix; the newest
+sections of [the Wi-Fi suspend handoff](notes/wifi-suspend-handoff-2026-09-11.md)
+have the evidence and [notes/s3-sleep.md](notes/s3-sleep.md) parks deep S3.
+The resume checkpoints below (2026-09-12 to 2026-09-14) are superseded.
+
 **Resume checkpoint (2026-09-14, 17:54):** EFI recorder's **awake storage
 selftest passed**, logs `/var/tmp/imac-efi-sleep-jha88qad`: exact data
 read-back, nonvolatile/runtime attributes, deletion confirmed by EFI_NOT_FOUND,
