@@ -43,6 +43,22 @@ overlap; it was a context-only conflict. 7.2.4 already had the change, so
 
 Not done: the patched module has not been installed or booted on 7.2.5.
 
+## Publication
+
+- `v0.2.2-alpha` is annotated by MarkPronkin and points at `fd4b6d9`
+  (`42408b4` fix, then this record); `test` was fast-forwarded from
+  `1c16c0a`. `main` was not touched.
+- Two builds from the tag in fresh clones were identical:
+  `f6492bbf01278c9d0c59c5fccb04aba6a0b44e5ef5b0ce5da4e670928ad057fd`,
+  274258 bytes, `VERSION` 0.2.2-alpha, `COMMIT` `fd4b6d9`.
+- Published at 15:24 UTC with `gh release create` as MarkPronkin; the API
+  lists MarkPronkin as author and uploader of both assets; target `test`,
+  pre-release. Verification run 35115178661 passed.
+- `install.sh --version v0.2.2-alpha` into a scratch HOME verified the
+  checksum and installed 0.2.2-alpha. The unpinned lookup got HTTP 403 at
+  that moment because this machine's anonymous API quota (60/h) was used
+  up, not because of the release.
+
 ## Open items
 
 Those of [0.2.1-alpha](release-0.2.1-alpha-2026-09-16.md#open-items) still
