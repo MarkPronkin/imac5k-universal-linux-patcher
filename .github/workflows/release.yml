@@ -1,22 +1,36 @@
-# Push a tag, get a release: the tarball and its checksum are built here, from
-# the tagged commit, so what people download always matches a commit in this
+# Releases are published from the maintainer's own GitHub account (see
+# docs/development.md), so GitHub credits each one to a person rather than to
+# github-actions. This workflow then checks what was published: it rebuilds the
+# tarball from the tagged commit and fails if the uploaded tarball or its
+# checksum differ, so what people download always matches a commit in this
 # repository and can be reproduced by running scripts/make-release.sh on it.
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0        # make-release.sh archives a git ref
+
+      - name: Check the pre-release flag
+        run: |
+          # Anything with a suffix (-alpha, -rc1) is a pre-release.
+          if [[ $TAG == *-* && $PRERELEASE != true ]]; then
+              echo "::error::$TAG has a suffix but is not marked as a pre-release"
+              exit 1
+          fi
 
       - name: Check syntax and run offline tests
         run: ./scripts/check.sh
@@ -27,22 +41,17 @@ jobs:
       - name: Require isolated startup tests
         run: sudo env IMAC5K_REQUIRE_STARTUP_TESTS=1 python3 -m unittest discover -s tests -p 'test_startup.py' -v
 
-      - name: Build the release tarball
-        id: build
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          scripts/make-release.sh "$version" "$GITHUB_SHA"
+      - name: Rebuild the release tarball
+        run: scripts/make-release.sh "${TAG#v}" "$GITHUB_SHA"
 
-      - name: Publish
+      - name: Compare with the published files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Anything with a suffix (-alpha, -rc1) is a pre-release.
-          prerelease=""
-          [[ "${GITHUB_REF_NAME}" == *-* ]] && prerelease=--prerelease
-          gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes $prerelease \
-              dist/imac5k-patcher-${{ steps.build.outputs.version }}.tar.gz \
-              dist/SHA256SUMS
+          archive="imac5k-patcher-${TAG#v}.tar.gz"
+          mkdir published
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published \
+              --pattern "$archive" --pattern SHA256SUMS
+          cmp "dist/$archive" "published/$archive"
+          cmp dist/SHA256SUMS published/SHA256SUMS
+          cat published/SHA256SUMS

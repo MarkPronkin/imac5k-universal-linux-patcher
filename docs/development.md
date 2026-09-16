@@ -150,10 +150,10 @@ keep hardware restrictions inside the module itself.
 Build from a committed revision:
 
 ```bash
-./scripts/make-release.sh 0.2.0-alpha HEAD
+./scripts/make-release.sh 0.2.1-alpha HEAD
 ```
 
-This produces `dist/imac5k-patcher-0.2.0-alpha.tar.gz` and `dist/SHA256SUMS`.
+This produces `dist/imac5k-patcher-0.2.1-alpha.tar.gz` and `dist/SHA256SUMS`.
 It archives the requested Git commit, so uncommitted edits are excluded.
 The checksum manifest includes every release archive currently in `dist/`.
 `VERSION` and `COMMIT` identify the release, and archive metadata is fixed to
@@ -169,6 +169,23 @@ adding runtime files, confirm they are included and add coverage to the release
 contents test. Launchers use symlinks, so resolve resources from the script's
 real location rather than the caller's working directory.
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`: checks, archive
-creation, then publication with its checksum. Tags containing a hyphen are
-published as prereleases. Building locally does not publish anything.
+Publish from the maintainer's own GitHub account, so GitHub credits the
+release to them and not to `github-actions`. Push an annotated tag, build the
+archive from that tag in a fresh clone (its `dist/` then lists only this
+archive in `SHA256SUMS`), and upload both files with the release:
+
+```bash
+git tag -a v0.2.1-alpha -m "v0.2.1-alpha: ..." && git push origin v0.2.1-alpha
+git clone --branch v0.2.1-alpha . /tmp/imac5k-release
+/tmp/imac5k-release/scripts/make-release.sh 0.2.1-alpha v0.2.1-alpha
+gh release create v0.2.1-alpha --verify-tag --prerelease --target test \
+    --title v0.2.1-alpha --notes-file release-notes.md \
+    /tmp/imac5k-release/dist/imac5k-patcher-0.2.1-alpha.tar.gz \
+    /tmp/imac5k-release/dist/SHA256SUMS
+```
+
+`--target` names the branch the release comes from. Versions containing a
+hyphen are prereleases. Publishing triggers `.github/workflows/release.yml`:
+it runs the checks, rebuilds the archive from the tagged commit, and fails if
+the published tarball or `SHA256SUMS` differ or a suffixed version is not
+marked as a prerelease. Pushing a tag or building locally publishes nothing.
