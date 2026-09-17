@@ -17,7 +17,8 @@ class ArchGrubTests(unittest.TestCase):
         base = "\n".join(shell_function(PATCHER, name) for name in (
             "mod_suspend_tier", "mod_suspend_detect", "mod_suspend_apply", "mod_suspend_remove",
             "hibernation_setup_present", "suspend_remove_hibernation",
-            "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files",
+            "suspend_systemd_ok", "suspend_uses_s2idle", "suspend_sleep_mode_ok",
+            "suspend_install_sleep_files", "suspend_remove_sleep_files",
             "mod_5k_apply", "mod_5k_remove"))
         start = PATCHER.index("# ── suspend: the iMac18,3 USB controller fix (DKMS) ──")
         base += "\n" + PATCHER[start:PATCHER.index("\nmod_suspend_apply() {", start)]
@@ -34,6 +35,8 @@ HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
 # The USB controller fix is iMac18,3-only; this backend runs as another model
 # with no trace of it, and never reaches the host's DKMS or /sys.
 imac_xhci_fix_supported() {{ return 1; }}
+# Not a T2 model either, so the T2 rules never look at the host's PCI bus.
+imac_has_t2() {{ return 1; }}
 dkms() {{ :; }}
 XHCI_FIX_LOAD_CONF="{self.tmp.name}/modules-load.d/imac5k-xhci-d0.conf"
 XHCI_FIX_SYSFS="{self.tmp.name}/sys-module/imac5k_xhci_d0"

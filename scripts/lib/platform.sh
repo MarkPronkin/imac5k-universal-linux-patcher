@@ -35,6 +35,15 @@ imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 # Apple's XHC1._PS3 resets the iMac18,3 on the PCH USB controller's second D3
 # entry. Other models' firmware has not been examined; they keep stock xHCI PM.
 imac_xhci_fix_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+# Models with an Apple T2 (iMac Pro, 2020 iMacs). Their internal devices sit
+# behind the T2's BCE, which linux-t2's t2bce driver stack suspends and
+# resumes itself; the suspend module follows t2linux's rules on these.
+imac_has_t2() {
+    case ${product:-$(imac_product_name)} in
+        iMacPro1,1|iMac20,1|iMac20,2) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 # The iMac Pro's built-in audio is the T2 (t2bce_audio, ALSA card AppleT2x4,
 # UCM profiles), not the CS8409 codec the EQ chain targets: there is no
 # four-channel CS8409 device to pin the chain to, and the tuning was measured

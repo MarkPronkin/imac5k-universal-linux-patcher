@@ -59,7 +59,9 @@ s2idle (deep S3 resets on this hardware), and removes the retired `idle=poll`
 parameter through GRUB if present. On the iMac18,3 it also builds the
 `imac5k-xhci-d0` USB controller fix through DKMS for every installed kernel with
 headers (with Clang on a Clang-built kernel such as CachyOS's) and loads it at
-boot; without it every second sleep resets the machine. Read the suspend section of the
+boot; without it every second sleep resets the machine. On T2 models (iMac Pro,
+2020 iMacs) it instead requires `linux-t2`'s `t2bce` driver, refuses while
+anything unloads the T2 driver around sleep, and installs no s2idle drop-in. Read the suspend section of the
 [README](../README.md) before applying it.
 
 ## Test entries

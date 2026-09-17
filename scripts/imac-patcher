@@ -72,7 +72,16 @@ NO_CSTATES_PARAM='idle=poll'
 NO_CSTATES_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-no-cstates.conf"
 # Deep S3 enters but the firmware resets the machine on wake; s2idle is the
 # only working mode, and this systemd drop-in makes every suspend use it.
+# T2 models do not get it (see the T2 section of the suspend module).
 SLEEP_CONF_DROPIN=/etc/systemd/sleep.conf.d/imac5k-s2idle.conf
+# T2 models (iMac Pro, 2020 iMacs): suspend needs linux-t2's t2bce stack bound
+# to the T2 bridge, and no hook that unloads the T2 driver around sleep.
+T2_BRIDGE_ID=0x106b:0x1801
+T2_DRIVER=t2bce_core
+T2_PCI_DIR=/sys/bus/pci/devices
+T2_UNLOAD_HOOK_DIRS=(/etc/systemd/system-sleep /usr/lib/systemd/system-sleep
+                     /etc/systemd/system /etc/elogind/system-sleep
+                     /usr/lib/elogind/system-sleep)
 # iMac18,3: Apple's \_SB.PCI0.XHC1._PS3 resets the machine on the PCH USB
 # controller's second D3 entry of a boot, so every second suspend rebooted
 # it. A small DKMS module keeps Linux from running XHC1's ACPI power methods
@@ -1277,7 +1286,7 @@ mod_suspend_title() { echo "Allow suspend, block hibernate"; }
 # is still there, since cleaning either up rebuilds the boot image; a clean
 # system gets the safe tier.
 mod_suspend_tier()  { if boot_config_has "$NO_CSTATES_PARAM" || hibernation_setup_present; then echo boot; else echo safe; fi }
-mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). On the iMac18,3 it also builds a small DKMS module, loaded at every boot, that stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; USB keyboard wake keeps working. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
+mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). On the iMac18,3 it also builds a small DKMS module, loaded at every boot, that stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; USB keyboard wake keeps working. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked, and on Omarchy the hibernation setup is removed via omarchy-hibernation-remove. On T2 models (iMac Pro, 2020 iMacs) it follows t2linux: it requires linux-t2's t2bce driver, which suspends and resumes the T2 itself, refuses while an old hook or service unloads the T2 driver around sleep, and leaves the sleep mode to the kernel instead of forcing s2idle. Also removes the retired idle=poll boot config if present, rebuilding the boot image."; }
 mod_suspend_detect() {
     local masked=0
     for t in "${HIBERNATE_TARGETS[@]}"; do
@@ -1293,12 +1302,14 @@ mod_suspend_detect() {
     [[ -x $TB_SLEEP_HOOK ]] && hook=1
     local wifi=0
     [[ -x $WIFI_SLEEP_HOOK ]] && wifi=1
-    local s2idle=0
+    local s2idle=0 mode=0 t2=0
     grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN" && s2idle=1
+    suspend_sleep_mode_ok && mode=1
+    [[ -z $(suspend_t2_problems) ]] && t2=1
     local xhci=0 xhci_any=0
     suspend_xhci_fix_ok && xhci=1
     xhci_fix_present && xhci_any=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && wifi && s2idle && xhci )); then echo applied
+    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && ! hibernating && hook && wifi && mode && t2 && xhci )); then echo applied
     elif (( masked || suspend_blocked || stale || hibernating || hook || wifi || s2idle || xhci_any )); then echo partial
     else echo not-applied; fi
 }
@@ -1367,17 +1378,36 @@ suspend_drop_no_cstates() {
 # versions ignore it and suspend into deep S3, which resets this machine on
 # wake.
 suspend_systemd_ok() {
+    suspend_uses_s2idle || return 0
     local v
     v=$(systemctl --version 2>/dev/null | awk 'NR == 1 { print $2 }')
     [[ $v =~ ^[0-9]+$ ]] && (( v >= 256 )) && return 0
     warn "suspend needs systemd 256 or newer for MemorySleepMode= (found: ${v:-none}); older versions suspend into deep S3, which resets this machine on wake"
     return 1
 }
+# The S3 wake reset was measured on the iMac18,3's firmware. T2 models keep
+# the kernel's sleep mode: linux-t2's T2 resume work, including its fix for
+# slow CPU bring-up after deep sleep (tested on a 27-inch T2 iMac), is built
+# and tested on that path.
+suspend_uses_s2idle() { ! imac_has_t2; }
+suspend_sleep_mode_ok() {
+    if suspend_uses_s2idle; then
+        grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN"
+    else
+        [[ ! -e $SLEEP_CONF_DROPIN ]]
+    fi
+}
 suspend_install_sleep_files() {
     sudo install -m755 "${SCRIPT_DIR}/imac-tb-sleep-hook" "$TB_SLEEP_HOOK" || return 1
     sudo install -m755 "${SCRIPT_DIR}/imac-wifi-sleep-hook" "$WIFI_SLEEP_HOOK" || return 1
-    sudo install -D -m644 "${SCRIPT_DIR}/../configs/imac5k-s2idle.conf" "$SLEEP_CONF_DROPIN" || return 1
-    say "installed $TB_SLEEP_HOOK and $WIFI_SLEEP_HOOK (unbind the Thunderbolt NHI and the BCM43602 Wi-Fi around sleep) and $SLEEP_CONF_DROPIN (suspend uses s2idle)"
+    say "installed $TB_SLEEP_HOOK and $WIFI_SLEEP_HOOK (unbind the Thunderbolt NHI and the BCM43602 Wi-Fi around sleep)"
+    if suspend_uses_s2idle; then
+        sudo install -D -m644 "${SCRIPT_DIR}/../configs/imac5k-s2idle.conf" "$SLEEP_CONF_DROPIN" || return 1
+        say "installed $SLEEP_CONF_DROPIN (suspend uses s2idle)"
+    else
+        sudo rm -f "$SLEEP_CONF_DROPIN" || return 1
+        say "T2 model: the kernel's default sleep mode is kept (no s2idle drop-in)"
+    fi
 }
 suspend_remove_sleep_files() { sudo rm -f "$TB_SLEEP_HOOK" "$WIFI_SLEEP_HOOK" "$SLEEP_CONF_DROPIN"; }
 
@@ -1528,7 +1558,60 @@ suspend_remove_xhci_fix() {
     done
 }
 
+# ── suspend: T2 models (iMac Pro, 2020 iMacs) ──
+# t2linux (wiki.t2linux.org/guides/postinstall/, "Suspend"): linux-t2's t2bce
+# stack suspends and resumes the T2's BCE, VHCI and audio itself; the older
+# apple-bce driver cannot. Unloading either around sleep tears down the T2's
+# queues and can leave internal devices unavailable after resume. So suspend
+# needs t2bce bound to the T2 bridge and no hook that unloads the T2 driver.
+# The bound driver's name, or nothing when the bridge is unbound; fails when
+# no T2 bridge is on the bus.
+t2_bridge_driver() {
+    local dev id
+    for dev in "$T2_PCI_DIR"/*; do
+        id="$(cat "$dev/vendor" 2>/dev/null):$(cat "$dev/device" 2>/dev/null)"
+        [[ $id == "$T2_BRIDGE_ID" ]] || continue
+        [[ -e $dev/driver ]] && basename "$(readlink -f "$dev/driver")"
+        return 0
+    done
+    return 1
+}
+# Sleep hooks and units, such as the older t2linux suspend services, that
+# unload the T2 driver: a module unload and a T2 driver name in one file.
+t2_unload_hooks() {
+    local dir file
+    for dir in "${T2_UNLOAD_HOOK_DIRS[@]}"; do
+        for file in "$dir"/*; do
+            [[ -f $file ]] || continue
+            grep -qsE '(^|[^[:alnum:]_])(rmmod|modprobe[^#]*[[:space:]](-[[:alpha:]]*r[[:alpha:]]*|--remove))([^[:alnum:]_-]|$)' "$file" \
+                && grep -qsE 'apple[-_]bce|t2bce' "$file" && printf '%s\n' "$file"
+        done
+    done
+    return 0
+}
+# What keeps suspend unsafe on this T2 model, one line each; nothing on a
+# ready T2 model and on every other model.
+suspend_t2_problems() {
+    imac_has_t2 || return 0
+    local driver hooks
+    if ! driver=$(t2_bridge_driver); then
+        echo "no Apple T2 bridge (PCI ${T2_BRIDGE_ID/0x/}) was found"
+    elif [[ $driver != "$T2_DRIVER" ]]; then
+        echo "the T2 is driven by ${driver:-no driver}, not linux-t2's $T2_DRIVER — the T2 driver that can suspend and resume; boot a current linux-t2 kernel"
+    fi
+    hooks=$(t2_unload_hooks)
+    [[ -z $hooks ]] || echo "remove what unloads the T2 driver around sleep (t2bce handles sleep itself; unloading it can leave internal devices dead after resume): ${hooks//$'\n'/ }"
+}
+suspend_t2_ok() {
+    local problems line
+    problems=$(suspend_t2_problems)
+    [[ -z $problems ]] && return 0
+    while IFS= read -r line; do warn "suspend: $line"; done <<< "$problems"
+    return 1
+}
+
 mod_suspend_apply() {
+    suspend_t2_ok || return 1
     suspend_systemd_ok || return 1
     # Before suspend is unmasked: without the fix the second sleep resets.
     suspend_install_xhci_fix || return 1

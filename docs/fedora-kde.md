@@ -260,7 +260,9 @@ family masked, the Thunderbolt and Wi-Fi sleep hooks installed, and a systemd
 drop-in that makes suspend use s2idle (deep S3 resets; needs systemd 256 or
 newer). On the iMac18,3 it also builds the `imac5k-xhci-d0` USB controller fix
 with DKMS for the running kernel, which stops the firmware from resetting the
-machine on every second sleep, and loads it at boot. Under Secure Boot the DKMS
+machine on every second sleep, and loads it at boot. On T2 models (iMac Pro,
+2020 iMacs) it requires `linux-t2`'s `t2bce` driver, refuses while anything
+unloads the T2 driver around sleep, and installs no s2idle drop-in. Under Secure Boot the DKMS
 signing key must be enrolled first, as for audio (`mokutil --import
 /var/lib/dkms/mok.pub`, reboot, confirm); the module refuses to continue until it
 is. If the retired `idle=poll` variant left the argument on the current kernel's

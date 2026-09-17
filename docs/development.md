@@ -34,7 +34,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_eq.py` | Speaker routing and volume restoration |
 | `test_t2speakers.py` | T2 speaker identity, channel counts, live ports/mixer, ownership, apply rollback and removal recovery |
 | `test_t2speakers_audio.py` | Optional private PipeWire graph: reproduces silent rear channels and checks actual four-channel output from stereo, mono, and PulseAudio clients |
-| `test_suspend.py`, `test_tb_sleep_hook.py`, `test_wifi_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the iMac18,3 USB controller fix (DKMS build, boot load, detection, removal, Secure Boot) against fake DKMS and sysfs; the Thunderbolt and Wi-Fi sleep hooks against a fake sysfs tree |
+| `test_suspend.py`, `test_tb_sleep_hook.py`, `test_wifi_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the T2 rules (t2bce bound, no T2 unload hooks, no s2idle drop-in) against a fake PCI tree; the iMac18,3 USB controller fix (DKMS build, boot load, detection, removal, Secure Boot) against fake DKMS and sysfs; the Thunderbolt and Wi-Fi sleep hooks against a fake sysfs tree |
 | `test_xhci_fix.py` | The USB controller fix's DKMS package, boot-load file and release path agree with the patcher; its source skips XHC1's ACPI power methods instead of holding D0; the model gate and startup audit |
 | `test_audio_jack.py` | Headphone jack detection, which streams follow the jack, and the two switching transitions |
 | `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |

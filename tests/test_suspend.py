@@ -9,6 +9,7 @@ stubbed omarchy-hibernation-remove; the Fedora override with a stubbed grubby.
 Nothing touches the host.
 """
 import configparser
+import shlex
 from pathlib import Path
 import re
 import subprocess
@@ -25,19 +26,20 @@ SLEEP_CONF = ROOT / "configs/imac5k-s2idle.conf"
 
 # File paths are set per test, so no real path can leak into a run.
 CONSTS = "\n".join(line for line in PATCHER.splitlines()
-                   if re.match(r"^(HIBERNATE_TARGETS|NO_CSTATES_PARAM|XHCI_FIX_(DKMS|VERSION|MODULE))=", line))
+                   if re.match(r"^(HIBERNATE_TARGETS|NO_CSTATES_PARAM|XHCI_FIX_(DKMS|VERSION|MODULE)|T2_(BRIDGE_ID|DRIVER))=", line))
 XHCI_START = "# ── suspend: the iMac18,3 USB controller fix (DKMS) ──"
 
 
 def xhci_helpers():
-    """The shared USB-controller-fix helpers (some are subshell functions)."""
+    """The shared USB-controller-fix and T2 helpers (some are subshell functions)."""
     start = PATCHER.index(XHCI_START)
     return PATCHER[start:PATCHER.index("\nmod_suspend_apply() {", start)]
 
 
 # The helpers every backend shares; the Fedora override calls them too.
 SHARED = "\n".join(shell_function(PATCHER, name) for name in (
-    "suspend_systemd_ok", "suspend_install_sleep_files", "suspend_remove_sleep_files")) + "\n" + xhci_helpers()
+    "suspend_systemd_ok", "suspend_uses_s2idle", "suspend_sleep_mode_ok",
+    "suspend_install_sleep_files", "suspend_remove_sleep_files")) + "\n" + xhci_helpers()
 
 UNMASK_SUSPEND = "SYSTEMCTL unmask suspend.target"
 MASK_HIBERNATE = ("SYSTEMCTL mask hibernate.target"
@@ -93,6 +95,7 @@ sudo() { "$@"; }
 XHCI_STUBS = r'''
 KREL=7.2.3-test
 imac_xhci_fix_supported() { [[ ${PRODUCT:-iMac17,1} == iMac18,3 ]]; }
+imac_has_t2() { [[ ${PRODUCT:-iMac17,1} == @(iMacPro1,1|iMac20,1|iMac20,2) ]]; }
 imac_kernel_uses_clang() { return 1; }
 imac_tool_package() { echo "$1"; }
 imac_kernel_headers_package() { echo linux-headers; }
@@ -155,7 +158,9 @@ XHCI_FIX_LOAD_CONF={tmp}/modules-load.d/imac5k-xhci-d0.conf
 XHCI_FIX_SYSFS={tmp}/sys-module/imac5k_xhci_d0
 XHCI_FIX_MODULES_DIR={tmp}/lib-modules
 CACHE={tmp}/cache
-mkdir -p "$FAKE" "$XHCI_FIX_MODULES_DIR/7.2.3-test/build"
+T2_PCI_DIR={tmp}/pci
+T2_UNLOAD_HOOK_DIRS=({tmp}/etc-system-sleep {tmp}/etc-systemd-system)
+mkdir -p "$FAKE" "$XHCI_FIX_MODULES_DIR/7.2.3-test/build" "$T2_PCI_DIR" "${{T2_UNLOAD_HOOK_DIRS[@]}}"
 touch "$XHCI_FIX_MODULES_DIR/7.2.3-test/build/Module.symvers"
 '''
 
@@ -717,6 +722,137 @@ echo Y > "$XHCI_FIX_SYSFS/parameters/active"
         result = self.fedora("PRODUCT=iMac18,3\nSB_STATE='SecureBoot enabled'\nmod_suspend_apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("MODPROBE imac5k_xhci_d0", result.stdout)
+
+
+def t2_bridge(driver="t2bce_core"):
+    """A fake T2 (bridge plus audio function), the bridge bound to driver.
+
+    driver=None leaves the bridge unbound.
+    """
+    code = (
+        'mkdir -p "$T2_PCI_DIR/0000:03:00.0" "$T2_PCI_DIR/0000:03:00.1"\n'
+        'echo 0x106b > "$T2_PCI_DIR/0000:03:00.1/vendor"; echo 0x1801 > "$T2_PCI_DIR/0000:03:00.1/device"\n'
+        'echo 0x106b > "$T2_PCI_DIR/0000:03:00.0/vendor"; echo 0x1803 > "$T2_PCI_DIR/0000:03:00.0/device"\n'
+    )
+    if driver:
+        code += (f'mkdir -p "$FAKE/drivers/{driver}"\n'
+                 f'ln -s "$FAKE/drivers/{driver}" "$T2_PCI_DIR/0000:03:00.1/driver"\n')
+    return code
+
+
+def write_file(rel, body):
+    """Shell that writes body to rel, a path under the test's temporary root."""
+    return f'printf %s {shlex.quote(body)} > "$(dirname "$FAKE")/{rel}"\n'
+
+
+# The older t2linux suspend service that unloads apple-bce around sleep.
+OLD_UNLOAD_SERVICE = """[Unit]
+Description=Disable and Re-Enable Apple BCE Module
+Before=sleep.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rmmod -f apple-bce
+ExecStop=/usr/bin/modprobe apple-bce
+[Install]
+WantedBy=sleep.target
+"""
+T2_ALL_APPLIED = TARGETS_APPLIED + HOOK_INSTALLED
+
+
+class T2SuspendTests(unittest.TestCase):
+    """T2 models (iMac Pro, 2020 iMacs) follow t2linux's suspend rules.
+
+    linux-t2's t2bce stack suspends the T2 itself, so the module requires it
+    bound to the T2 bridge, refuses while anything unloads the T2 driver
+    around sleep, and keeps the kernel's sleep mode (no s2idle drop-in).
+    Both backends are exercised against the same fakes.
+    """
+    omarchy = OmarchySuspendTests.run_module
+    fedora = FedoraSuspendTests.run_module
+
+    def each(self, models=("iMacPro1,1", "iMac20,1", "iMac20,2")):
+        backends = (("omarchy", lambda code, env: self.omarchy(code, env=env)),
+                    ("fedora", lambda code, env: self.fedora(env + code)))
+        for model in models:
+            for name, run in backends:
+                with self.subTest(model=model, backend=name):
+                    yield model, (lambda code, env="", run=run, model=model:
+                                  run(code, f"PRODUCT={model}\n" + env))
+
+    def test_ready_t2_model_is_applied_without_the_s2idle_drop_in(self):
+        for _, run in self.each():
+            result = run("mod_suspend_detect", env=t2_bridge() + T2_ALL_APPLIED)
+            self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+            # The drop-in that forces s2idle is a leftover on these models.
+            result = run("mod_suspend_detect", env=t2_bridge() + T2_ALL_APPLIED + DROP_IN_INSTALLED)
+            self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_apply_keeps_the_kernel_sleep_mode_and_the_hooks(self):
+        for _, run in self.each():
+            # Older systemd is fine: MemorySleepMode= is not used.
+            result = run("mod_suspend_apply\n" + TARGETS_APPLIED + "mod_suspend_detect",
+                         env="SYSTEMD_VERSION=255\n" + t2_bridge() + DROP_IN_INSTALLED)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(UNMASK_SUSPEND, result.stdout)
+            self.assertIn(MASK_HIBERNATE, result.stdout)
+            tmp = Path(result.tmp)
+            self.assertFalse((tmp / "sleep.conf.d/imac5k-s2idle.conf").exists())
+            self.assertEqual((tmp / "system-sleep/imac-tb-sleep-hook").read_text(), HOOK.read_text())
+            self.assertTrue((tmp / "system-sleep/imac-wifi-sleep-hook").exists())
+            self.assertEqual(result.stdout.strip().splitlines()[-1], "applied")
+
+    def test_apply_refuses_without_t2bce_before_changing_anything(self):
+        cases = {
+            "apple-bce": (t2_bridge("apple-bce"), "driven by apple-bce"),
+            "unbound": (t2_bridge(None), "driven by no driver"),
+            "no bridge": ("", "no Apple T2 bridge"),
+        }
+        for _, run in self.each():
+            for case, (env, message) in cases.items():
+                with self.subTest(case=case):
+                    result = run("mod_suspend_apply", env=env)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn(message, result.stdout)
+                    self.assertNotIn("SYSTEMCTL", result.stdout)
+                    self.assertFalse((Path(result.tmp) / "system-sleep/imac-tb-sleep-hook").exists())
+                    result = run("mod_suspend_detect", env=env + T2_ALL_APPLIED)
+                    self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_apply_refuses_while_something_unloads_the_t2_driver(self):
+        hooks = {
+            "old service": ("etc-systemd-system/suspend-fix-t2.service", OLD_UNLOAD_SERVICE),
+            "sleep hook": ("etc-system-sleep/t2-sleep",
+                           '#!/bin/sh\n[ "$1" = pre ] && modprobe -rv t2bce_vhci t2bce_core\n'),
+        }
+        for _, run in self.each(("iMacPro1,1",)):
+            for case, (rel, body) in hooks.items():
+                with self.subTest(case=case):
+                    env = t2_bridge() + write_file(rel, body)
+                    result = run("mod_suspend_apply", env=env)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("unloads the T2 driver", result.stdout)
+                    self.assertIn(rel, result.stdout)
+                    self.assertNotIn("SYSTEMCTL", result.stdout)
+                    result = run("mod_suspend_detect", env=env + T2_ALL_APPLIED)
+                    self.assertEqual(result.stdout.strip(), "partial", result.stderr)
+
+    def test_files_that_only_load_or_mention_the_driver_are_not_unload_hooks(self):
+        body = "#!/bin/sh\nmodprobe apple-bce\n# t2bce stays loaded; see rmmod-free notes\n"
+        for _, run in self.each(("iMacPro1,1",)):
+            result = run("mod_suspend_apply", env=t2_bridge() + write_file("etc-system-sleep/load-only", body))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_other_models_ignore_the_t2_rules(self):
+        # No T2 bridge and an old unload service: irrelevant off T2 models,
+        # which still get the s2idle drop-in.
+        env = write_file("etc-systemd-system/x.service", OLD_UNLOAD_SERVICE)
+        for model, run in self.each(("iMac17,1", "iMac18,3", "iMac19,1")):
+            fix = XHCI_FIX_INSTALLED if model == "iMac18,3" else ""
+            result = run("mod_suspend_detect", env=env + T2_ALL_APPLIED + DROP_IN_INSTALLED + fix)
+            self.assertEqual(result.stdout.strip(), "applied", result.stderr)
+            result = run("mod_suspend_apply", env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((Path(result.tmp) / "sleep.conf.d/imac5k-s2idle.conf").exists())
 
 
 WIFI_HOOK = ROOT / "scripts/imac-wifi-sleep-hook"

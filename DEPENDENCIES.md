@@ -250,7 +250,13 @@ taken from so `--remove` never restores one panel's setting onto another.
 - systemd 256 or newer (`systemctl`) — sleep target masks, the Thunderbolt
   and Wi-Fi sleep hooks in `/usr/lib/systemd/system-sleep/`, and
   `MemorySleepMode=` in the `/etc/systemd/sleep.conf.d/` drop-in; the module
-  refuses older systemd
+  refuses older systemd (T2 models get no drop-in and need no particular
+  version)
+- T2 models (iMacPro1,1, iMac20,1, iMac20,2): a `linux-t2` kernel whose
+  `t2bce_core` driver is bound to the T2 bridge (PCI `106b:1801`); the module
+  refuses with `apple-bce` or no driver, and while a sleep hook or unit in
+  `/etc/systemd/system`, `/{etc,usr/lib}/systemd/system-sleep` or
+  `/{etc,usr/lib}/elogind/system-sleep` unloads the T2 driver
 - iMac18,3 only, the USB controller fix (`imac5k-xhci-d0`): dkms, gcc, make,
   kmod (`modinfo`, `depmod`, `modprobe`) and headers for the installed kernels
   (Arch: `<kernel package>-headers`, built for every kernel that has them;

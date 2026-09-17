@@ -53,6 +53,13 @@ preflight
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual("patcher will refuse" in result.stdout, model in OTHERS)
 
+    def test_only_the_t2_models_get_the_t2_suspend_rules(self):
+        t2 = ("iMac20,1", "iMac20,2", "iMacPro1,1")
+        for model in MODELS + OTHERS:
+            with self.subTest(model=model):
+                result = self.run_shell(model, "imac_has_t2")
+                self.assertEqual(result.returncode == 0, model in t2, result.stderr)
+
     def test_audio_is_unavailable_on_other_models_before_any_install(self):
         audio = section("audio", "eq")
         for model in MODELS:
