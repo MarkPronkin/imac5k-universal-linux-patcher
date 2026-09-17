@@ -63,6 +63,27 @@ Not done: nothing is tested on a T2 iMac. Unknowns there: whether deep sleep
 resumes, whether the Thunderbolt hook is needed, whether the PCH xHCI has
 the iMac18,3's second-sleep reset.
 
+## Publication
+
+- `v0.2.3-alpha` is annotated by MarkPronkin and points at `3fde421`
+  (`cff8f15` change, then this record); `test` was fast-forwarded from
+  `c1086d2`. `main` was not touched.
+- Two builds from the tag in fresh clones were identical:
+  `29aa803f6275f4baf6a8d8f1dedb8db5ae9af4bb0b6a68d9b7e06c5ddedc778b`,
+  276513 bytes, `VERSION` 0.2.3-alpha, `COMMIT` `3fde421`; no notes, tests
+  or workflow files inside.
+- Published at 17:05 UTC with `gh release create` as MarkPronkin; the API
+  lists MarkPronkin as author and uploader of both assets; target `test`,
+  pre-release. Verification run 35250571100 passed (checks, isolated
+  startup tests, rebuild and byte comparison).
+- `install.sh --version v0.2.3-alpha` into a scratch HOME verified the
+  checksum and installed 0.2.3-alpha.
+- The notes point iMac Pro testers to #1 and #3. #3 (the suspend thread) also
+  holds PandaWood's intermittent amdgpu divide-error report; in it the owner
+  said s2idle is enough on a desktop. This release keeps the kernel's mode
+  on T2 models only, following t2linux; revisit if the owner prefers s2idle
+  there too.
+
 ## Open items
 
 Those of [0.2.2-alpha](release-0.2.2-alpha-2026-09-16.md#open-items) still
