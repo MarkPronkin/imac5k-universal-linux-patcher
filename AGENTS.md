@@ -1,5 +1,11 @@
 # Current work checkpoint
 
+**Release 0.2.3-alpha (2026-09-17):** from `test`. The suspend module follows
+t2linux on T2 iMacs (iMac Pro, 2020 iMacs): it requires linux-t2's `t2bce`,
+refuses while anything unloads the T2 driver around sleep, and keeps the
+kernel's sleep mode instead of forcing s2idle (`cff8f15`). Not tested on T2
+hardware. See [the release record](notes/release-0.2.3-alpha-2026-09-17.md).
+
 **Release 0.2.2-alpha (2026-09-16):** a fix release from `test`. Linux 7.2.4
 added an Apple Studio Display quirk where both 5K core patches anchored, so
 the 5K build stopped on a fresh Omarchy install with `7.2.5-3-omarchy`. Both
