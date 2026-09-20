@@ -214,6 +214,31 @@ encoding on either chip.
 | gpu-screen-recorder | Always the Radeon: it encodes on the GPU it captures from |
 | OBS, Kdenlive | Choose the VA-API device in their settings |
 | Chromium | Its active GPU (the Radeon). Pointing it at Intel makes the HD 630 decode, but the Radeon cannot import the frames |
+| Firefox | The compositor's GPU, the Radeon — measured: it holds `renderD129` and nothing else, and `about:support` lists hardware decoding for H.264 and HEVC but not VP9 |
+| mpv | Intel by default, and VP9 with it: `--hwdec=vaapi-copy --vaapi-device=/dev/dri/intel-render` is confirmed working here |
+
+### Why VP9 is still software-decoded in the browser
+
+The chip decodes VP9 and the Radeon does not — `ffmpeg -hwaccel vaapi
+-hwaccel_device /dev/dri/renderD128` decodes a VP9 file here, and the same
+command on `renderD129` fails with *"hwaccel initialisation returned error"*.
+mpv gets it too, in copy mode.
+
+A browser does not, because it renders on the compositor's GPU and a frame
+decoded on one GPU has to be imported by the other to be drawn. Firefox has
+closed cross-GPU video decode as WONTFIX, and Chromium fails the import with
+`eglCreateImage failed`. The only lever for Firefox is `MOZ_DRM_DEVICE`,
+which moves **all** of its DMABuf use to the Intel chip rather than just
+video — every window it draws would then be composited across the two GPUs.
+It is worth an experiment on a throwaway profile, not a default:
+
+```bash
+MOZ_DRM_DEVICE=/dev/dri/intel-render firefox --new-instance --profile "$(mktemp -d)"
+```
+
+For YouTube specifically, an extension that forces H.264 gets hardware
+decoding on either chip today. AV1 is absent from both, and that one is a
+plain hardware limit.
 
 Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
