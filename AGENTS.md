@@ -12,10 +12,22 @@ ACPI brightness table is only installed after `iasl` round-trips every
 definition in the firmware's own table, and what is installed must differ from
 it by nothing but ABCL and the OEM revision; a missing or unverifiable table
 degrades to the firmware's 80 levels instead of failing. 47 offline tests in
-`tests/test_macos.py`; 498 pass overall. **Nothing here has been run on the
-hardware yet, and macOS mode has never been combined with working suspend
-anywhere** — upstream masks sleep and names i915 as a suspect. Test sleep
-again after applying it. Full write-up: [docs/macos-mode.md](docs/macos-mode.md).
+`tests/test_macos.py`; 501 pass overall.
+
+**Confirmed on the hardware the same day** (iMac18,3, 7.2.5-3-omarchy): the
+HD 630 comes up with i915 bound and no connectors, Quick Sync is `renderD128`
+(H.264 incl. low-power, HEVC Main10, encode and decode), the Radeon keeps
+`boot_vga` and Hyprland holds only its nodes, audio is unaffected, the panel
+**dims by eye for the first time on this machine**, and the NVRAM level is
+written at shutdown. Two bugs found by that boot and fixed: the table builder
+picked the DSDT because it searched every table for the string `PEG0GFX0`
+(it is the OEM table ID, matched in the header now), and its byte-equality
+round-trip check could never pass because iasl encodes the disassembler's
+External declarations into the AML — it compares definitions now.
+
+**Sleep is the one thing still untested**, and macOS mode has never been
+combined with working suspend anywhere: upstream masks sleep and names i915
+as a suspect. Full write-up: [docs/macos-mode.md](docs/macos-mode.md).
 
 **Release 0.2.3-alpha (2026-09-17):** from `test`. The suspend module follows
 t2linux on T2 iMacs (iMac Pro, 2020 iMacs): it requires linux-t2's `t2bce`,

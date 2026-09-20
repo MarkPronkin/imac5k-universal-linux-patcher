@@ -12,12 +12,25 @@ The Radeon Pro 575 keeps the display, the compositor and all 3D. The Intel chip
 never drives an output; it encodes and decodes video, the way macOS runs it
 (`NumFrameBuffer 0`, Quick Sync).
 
-**Status: ported, not yet hardware-tested here.** Every stage was verified on an
-iMac18,3 in [ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3),
-where this comes from. What is new here is the packaging: the model and
-bootloader gates, the kernel parameters as a Limine drop-in, and the checks
-around the ACPI table. **It has never been tested together with a working
-suspend** — see [Suspend](#suspend-is-the-open-question) below.
+**Status: confirmed on an iMac18,3 under Omarchy, 2026-09-21**, on kernel
+7.2.5-3-omarchy. Ported from
+[ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where
+every stage was developed and verified first.
+
+What the first boot showed here:
+
+| | |
+|---|---|
+| Intel HD 630 | present at `00:02.0`, i915 bound, **no connectors at all** — the headless VBT did its job, no eDP invented on DDI A |
+| Quick Sync | `renderD128`, the first render node, so it is the default for video: H.264 encode (including low-power), HEVC Main and Main10 encode and decode |
+| Radeon | keeps `boot_vga`, the panel and the compositor — Hyprland holds `card2`/`renderD129` only, so the `AQ_DRM_DEVICES` pin took |
+| Audio | CS8409 still ALSA card 0 with the EQ chain running, no Intel HDMI codec: `snd_hda_core.gpu_bind=0` did its job |
+| Brightness | **the panel dims**, confirmed by eye — it never did on this machine before |
+| Power | the iGPU runtime-suspends to D3hot, rc6 residency climbing |
+| NVRAM | `backlight-level` written at shutdown, so the panel lights at the saved level from power-on |
+
+**What has not been tested is sleep** — see
+[Suspend](#suspend-is-the-open-question) below.
 
 ## How the firmware is told
 
