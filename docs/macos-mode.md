@@ -1,0 +1,208 @@
+# macOS mode: the Intel iGPU and a backlight that works
+
+`imac-patcher --apply macos` makes the kernel tell Apple's firmware that macOS
+is starting. On the iMac18,3 that single call changes two things at once, which
+is why they are one module and not two:
+
+- the firmware stops hiding the **Intel HD 630** at `00:02.0`, and
+- its own ACPI backlight path starts driving the panel, so **`acpi_video0`
+  actually dims it** instead of accepting writes and doing nothing.
+
+The Radeon Pro 575 keeps the display, the compositor and all 3D. The Intel chip
+never drives an output; it encodes and decodes video, the way macOS runs it
+(`NumFrameBuffer 0`, Quick Sync).
+
+**Status: ported, not yet hardware-tested here.** Every stage was verified on an
+iMac18,3 in [ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3),
+where this comes from. What is new here is the packaging: the model and
+bootloader gates, the kernel parameters as a Limine drop-in, and the checks
+around the ACPI table. **It has never been tested together with a working
+suspend** — see [Suspend](#suspend-is-the-open-question) below.
+
+## How the firmware is told
+
+The x86 EFI stub already makes the call. `apple_set_os()` in
+`drivers/firmware/efi/libstub/x86-stub.c` runs from `efi_stub_entry()` for the
+models listed in `apple_match_product_name()`:
+
+```c
+static const char type1_product_matches[][15] = {
+	"MacBookPro11,3", "MacBookPro11,5", "MacBookPro13,3",
+	"MacBookPro14,3", "MacBookPro15,1", "MacBookPro15,3",
+	"MacBookPro16,1", "MacBookPro16,4",
+};
+```
+
+Eight fixed-width slots, stored uncompressed in the stub — they are plainly
+visible in `/usr/lib/modules/$(uname -r)/vmlinuz`. Rather than rebuild a whole
+kernel for a fourteen-byte change, `scripts/imac-setos` is installed as a
+mkinitcpio post hook at `/etc/initcpio/post/imac-setos` and rewrites the last
+slot to `iMac18,3` in every UKI mkinitcpio builds, kernel updates included.
+The bytes are exactly what the one-line source patch would compile to.
+
+The ordering this depends on holds on Omarchy and is checked after every apply:
+
+1. `limine-mkinitcpio` builds the UKI,
+2. mkinitcpio runs its post hooks on the image it just built — the edit lands,
+3. `limine-entry-tool` then registers it and pins its **BLAKE2B hash** in
+   `limine.conf`, which is set to `hash_mismatch_panic`.
+
+Nothing may modify a UKI after step 3, so the module never edits an image
+out of band: every change goes through a rebuild. If a future kernel moves or
+reshapes the model list, the hook prints a warning and leaves the image stock
+rather than failing a kernel update, and the patcher reports that the edit did
+not land.
+
+The upstream fix is to add `"iMac18,3"` to that list; the hook goes away once a
+kernel carries it.
+
+## What gets installed
+
+| File | Installed as | Why |
+|---|---|---|
+| `scripts/imac-setos` | `/etc/initcpio/post/imac-setos` | The set_os model-list edit, reapplied on every kernel update |
+| `configs/macos/zz-imac-igpu.conf` | `/etc/mkinitcpio.conf.d/` | i915 first in the initramfs, with the VBT and the SMBus rule |
+| `configs/macos/headless-vbt.bin` | `/usr/lib/firmware/imac18-3/headless-vbt.bin` | A valid VBT that declares no outputs |
+| `configs/macos/61-imac-dri-names.rules` | `/etc/udev/rules.d/` | Stable `/dev/dri/{amd,intel}-{card,render}` names |
+| `configs/macos/62-imac-smbus-acpi.rules` | `/etc/udev/rules.d/` and the initramfs | Re-enables the SMBus controller the firmware's backlight method uses |
+| `scripts/make-bcl-table.py` | builds `/etc/initcpio/acpi_override/imac-bcl100.aml` | The brightness table, extended from 80% to the full range |
+| `scripts/imac-backlight-nvram` + `configs/macos/imac-backlight-nvram.service` | `/usr/local/bin/`, `/etc/systemd/system/` | Saves the level to Apple NVRAM at shutdown |
+| `configs/macos/imac-gpu.lua` | `~/.config/hypr/` plus a `require` in `hyprland.lua` | Keeps Hyprland on the Radeon |
+| — | `/etc/limine-entry-tool.d/imac5k-macos.conf` | The four kernel parameters |
+
+The kernel parameters are
+`snd_hda_core.gpu_bind=0 i915.disable_display=1
+i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801`,
+written as a drop-in that **appends** with `+=`. Omarchy's
+`/etc/default/limine` appends too, and the entry tool reads both; editing that
+file's line in place matches nothing there.
+
+`scripts/imac-igpu-check` is a read-only status report — run it after the first
+reboot. `sudo` adds i915 parameters, DMC and runtime-PM detail.
+
+## Why a VBT and not just `disable_display=1`
+
+`i915.disable_display=1` gates connector `detect()` and hotplug polling. It does
+**not** stop connectors being created. This iMac's OpRegion has an empty VBT
+mailbox, and with no VBT `init_vbt_missing_defaults()` makes every DDI port a
+connector and marks port A internal — so i915 runs eDP AUX and panel-power
+sequencing on DDI A at probe. That is exactly what blanked the AMD-driven panel
+in the one upstream attempt at this on an iMac20,1 (Atharva Tiwari, Jan–Feb
+2026, unmerged).
+
+`i915.vbt_firmware=` takes precedence over the OpRegion, and a valid VBT with an
+empty BDB has no child devices, so `intel_setup_outputs()` iterates an empty
+encoder list: no connectors, no AUX, no PPS, while the display engine is still
+initialised and can still reach DC5/DC6. `scripts/make-headless-vbt.py` builds
+the 70-byte file and checks it against the same conditions
+`intel_bios_is_valid_vbt()` applies; `configs/macos/headless-vbt.bin` is its
+committed output, and a test rebuilds it and compares. `vbt_firmware` is an
+"unsafe" module parameter, so the kernel is tainted `U` — expected.
+
+`snd_hda_core.gpu_bind=0` is not optional. Once the iGPU is visible,
+`snd_hdac_i915_init()` waits for i915 to bind and defers the whole PCH
+HD-audio controller — the speakers and mics go with it.
+
+## Brightness
+
+Two separate things, and the module can deliver the first without the second.
+
+**Working brightness** comes from set_os alone. Omarchy's `omarchy-hw-display`
+already picks `acpi_video0`, so the brightness keys and the OSD need no change.
+
+**The full range** needs the firmware's ACPI table rewritten. Apple's `_BCL`
+(named `ABCL` in the PEG0GFX0 SSDT) stops at level 80 while its own setter
+`BSET(level)` scales `655 * level` onto the controller's 0..0xFFFF range, so
+Linux's 100% is 52400 — 80% of what macOS drives. `scripts/make-bcl-table.py`
+reads the machine's own table, rewrites only ABCL to levels 4..100, bumps the
+OEM revision and compiles it for mkinitcpio's `acpi_override` hook. Apple's
+table never leaves the machine.
+
+Nothing on the kernel command line can switch an initramfs ACPI override back
+off, which makes a bad table the one failure in macOS mode with no boot-time
+escape. Two checks stand in front of writing one:
+
+- the disassembled table must have the exact shape this firmware is known to
+  have (ABCL = 80 levels starting at `0x50`), and
+- `iasl` must round-trip the **untouched** table back to the firmware's own
+  bytes — ignoring only the checksum and the creator ID it stamps — before a
+  modified table built the same way is trusted.
+
+If either fails, or `iasl` is not installed, the module says so and installs no
+table. Brightness still works; it just tops out where the firmware's own table
+does. Nothing else about macOS mode changes.
+
+Finally, `imac-backlight-nvram` writes the level to Apple's `backlight-level`
+EFI variable at shutdown, so the firmware lights the panel at your level from
+power-on instead of jumping mid-splash when systemd-backlight restores it. It
+writes only when the value changed (firmware flash wear) and keeps only the
+standard attribute bits, because efivarfs rejects Apple's vendor bit.
+
+## Which GPU does what
+
+DRM minors are handed out in probe order, and i915 now loads first from the
+initramfs, so the HD 630 takes `renderD128`: anything that opens "the first
+render node" gets Quick Sync with no configuration. Upstream's measurements on
+this hardware — identical sources, matched bitrate targets — put H.264 encode
+at about 3.7× the Radeon's rate, reaching the same VMAF with a third fewer
+bits, plus VP9 and 10-bit HEVC decode the Polaris card does not have.
+
+The compositor must not follow. Hyprland/aquamarine opens every KMS device
+unless told otherwise, so `imac-gpu.lua` sets
+`AQ_DRM_DEVICES=/dev/dri/amd-card` — guarded, because an entry that does not
+exist leaves aquamarine with no GPU at all. Wayland, GL and Vulkan clients
+follow the compositor and stay on the Radeon.
+
+| Application | Device |
+|---|---|
+| ffmpeg, GStreamer, Strata | Intel by default; `-init_hw_device vaapi=amd:/dev/dri/amd-render` for the Radeon |
+| gpu-screen-recorder | Always the Radeon: it encodes on the GPU it captures from |
+| OBS, Kdenlive | Choose the VA-API device in their settings |
+| Chromium | Its active GPU (the Radeon). Pointing it at Intel makes the HD 630 decode, but the Radeon cannot import the frames |
+
+Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
+`iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
+and amdgpu → radeonsi on its own.
+
+## Suspend is the open question
+
+The repository this comes from **masks sleep entirely** — its own notes list
+i915 among the suspend suspects "now that macOS mode binds it". So macOS mode
+has never run on a machine where suspend works, which on the iMac18,3 is
+exactly what the `suspend` module delivers here.
+
+macOS mode adds a second PCI device with runtime PM to the sleep path, leaves
+`i2c_i801` unbound while a udev rule force-enables `00:1f.4`, and swaps in a
+recompiled SSDT. Any of those could land in the suspend path. **Test them
+together before trusting either**: apply `macos`, reboot, and run repeated
+s2idle cycles the way the suspend work was validated. If sleep regresses,
+`--remove macos` puts it back.
+
+## Recovery
+
+- **The desktop does not come back.** At the Limine menu press `e` on the entry
+  and append `module_blacklist=i915` to the command line. That boots with the
+  iGPU ignored and everything else in place.
+- **From a TTY (ctrl-alt-F2) or over SSH:** `imac-patcher --remove macos`
+  undoes all of it and rebuilds the boot image.
+- **The machine does not reach userspace at all** — the only way an ACPI table
+  can fail, and the reason for the checks above. Boot the installer USB,
+  `chroot` in, delete `/etc/mkinitcpio.conf.d/zz-imac-igpu.conf` and
+  `/etc/initcpio/acpi_override/imac-bcl100.aml`, and run `limine-mkinitcpio`.
+
+Removing the module takes back every file, clears the drop-in, rebuilds the
+UKI without the hook and verifies the parameters are gone.
+
+## Not supported
+
+- **iMacPro1,1** — permanently. Its Xeon W has no integrated graphics, so there
+  is nothing for set_os to expose.
+- **Other 5K models.** iMac15,1, 17,1, 19,1 and 20,x do have an iGPU (Haswell,
+  Skylake, Coffee Lake, Comet Lake), but the VBT here is built for Kaby Lake,
+  the udev rules key on this machine's PCI addresses, and the ACPI table shape
+  is checked against this firmware. Each needs its own verification first.
+- **Fedora and Arch/GRUB.** The edit lands inside a UKI that
+  `limine-mkinitcpio` builds; neither backend here builds one. Fedora would
+  also need dracut's own ACPI-override mechanism, and its signed kernel image
+  cannot be byte-patched without breaking Secure Boot. (Apple's firmware on
+  these iMacs has no Secure Boot, so that part is not an issue on Omarchy.)

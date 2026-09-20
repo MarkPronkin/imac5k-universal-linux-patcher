@@ -105,7 +105,8 @@ preflight
         stubs = ""
         for mod, title in (("audio", "Audio driver"), ("eq", "Speaker tuning"),
                            ("t2speakers", "T2 speakers"), ("color", "Colour"),
-                           ("suspend", "Suspend"), ("boot", "Boot"), ("5k", "Display")):
+                           ("suspend", "Suspend"), ("boot", "Boot"),
+                           ("macos", "macOS mode"), ("5k", "Display")):
             stubs += (f'mod_{mod}_detect() {{ echo not-applied; }}\n'
                       f'mod_{mod}_title() {{ echo "{title}"; }}\n'
                       f'mod_{mod}_tier() {{ echo safe; }}\n')
@@ -114,7 +115,7 @@ preflight
                                      ("iMac17,1", "Speaker tuning", "T2 speakers")):
             with self.subTest(model=model):
                 result = self.run_shell(model, f'''
-MODULES=(audio eq t2speakers color suspend boot 5k)
+MODULES=(audio eq t2speakers color suspend boot macos 5k)
 KREL=test
 hdr() {{ :; }}
 say() {{ printf '%s\\n' "$*"; }}

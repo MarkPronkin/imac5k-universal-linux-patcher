@@ -54,6 +54,16 @@ imac_eq_supported() { [[ ${product:-$(imac_product_name)} != iMacPro1,1 ]]; }
 # path (PCM devices 0, 4, 100). Only 2 of the 4 play without an explicit
 # channel map, so this gate is the complement of the CS8409 ones above.
 imac_t2speakers_supported() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 ]]; }
+# macOS mode (apple_set_os): iMac18,3 only. The Intel HD 630 at 00:02.0, the
+# Radeon's PCI address the udev rules key on, the no-outputs VBT built for
+# Kaby Lake and the firmware's ABCL brightness table were all verified on that
+# machine and nowhere else. iMacPro1,1 is a permanent no: its Xeon W has no
+# integrated graphics at all, so there is nothing for set_os to expose, and its
+# panel is not driven through this backlight path. The other 5K models do carry
+# an iGPU (15,1 Haswell, 17,1 Skylake, 19,1 Coffee Lake, 20,x Comet Lake), but
+# each one needs its own VBT, PCI addresses and ACPI table shape checked first.
+imac_macos_mode_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+
 # Vega 10 / DCE 12 (iMac Pro): the tile pair latches only when the stream is
 # brought up at the panel's native 10 bpc. Hyprland's default 8 bpc leaves the
 # second tile unlocked and the desktop stretched. See patches/README.md.
@@ -101,6 +111,7 @@ imac_tool_package() {   # $1 = command name
             ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
             modinfo|depmod|lsmod|modprobe) echo kmod ;;
             pahole)                 echo dwarves ;;
+            iasl)                   echo acpica-tools ;;
             rpmbuild)               echo rpm-build ;;
             pactl)                  echo pulseaudio-utils ;;
             pw-cli|pw-dump)         echo pipewire-utils ;;
@@ -123,6 +134,7 @@ imac_tool_package() {   # $1 = command name
         wpctl|wireplumber)      echo wireplumber ;;
         kscreen-doctor)         echo kscreen ;;
         python3)                echo python ;;
+        iasl)                   echo acpica ;;
         systemctl)              echo systemd ;;
         cargo)                  echo rust ;;
         grub-mkconfig)          echo grub ;;

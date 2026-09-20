@@ -54,7 +54,7 @@ imac-patcher --remove eq        # undo one module
 | `partial` | Some changes are present, but a required file, running driver, or setting is missing; a reboot or re-apply may be needed |
 | `n/a` | The module is unavailable for the detected hardware, desktop, or platform; the command skips it |
 
-The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `boot`, and `5k`.
+The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `boot`, `macos`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
 tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
 but blocks hibernate**; select individual modules to skip it. Suspend moves to
@@ -97,34 +97,34 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the seven hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the eight hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
-|---|---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ⚪ **Ported, untested**; Limine only |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 and Omarchy/Limine only: it is ported from upstream and hardware-proven there, but not yet tested here, least of all alongside suspend. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
 
 ### 🐧 Distributions
 
 Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) |
-|---|---|---|---|---|---|---|
-| **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout |
-| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB |
-| **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB |
-| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** |
-| **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend |
-| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
-| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
+|---|---|---|---|---|---|---|---|
+| **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout | ⚪ Conditional: Omarchy/Limine only |
+| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB | ➖ N/A on GRUB |
+| **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB | ➖ N/A on GRUB |
+| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ⚪ **Ported, untested** |
+| **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend | ➖ N/A: GRUB/dracut backend |
+| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported |
+| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported |
 
 Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. The install-and-boot path is hardware-validated on CachyOS; the staged test entries and promotion are implemented and covered offline, but have not been exercised on hardware. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
@@ -141,6 +141,8 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
 | 😴 **Suspend** | Hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, Apple's USB-controller firmware reset the machine on every second sleep, and deep S3 resets the machine. | ⚠️ Suspend works in s2idle (verified on iMac18,3, still experimental); deep S3 and hibernate blocked — see below |
+| 🔆 **Brightness** | The firmware hands Linux a backlight that accepts writes and dims nothing, because it only drives the panel for macOS. | ⚠️ Works in macOS mode, over the full range — ported, not yet tested here |
+| 🎞️ **Video encode/decode** | The Intel HD 630 next to the Radeon is hidden by the firmware, so its Quick Sync engine is unreachable and Polaris does all video. | ⚠️ Exposed in macOS mode, headless, as the default video GPU — ported, not yet tested here |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -272,6 +274,18 @@ hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2,
 
 ---
 
+## 🌗 macOS mode — the hidden Intel GPU and a working brightness slider
+
+`imac-patcher --apply macos` makes the kernel tell Apple's firmware that macOS is starting. The firmware then stops hiding the **Intel HD 630** sitting next to the Radeon, and its own backlight path starts driving the panel — so the brightness keys finally dim it, over the panel's full range rather than the 80% the firmware's ACPI table stops at. The Radeon keeps the display, the desktop and all 3D; the Intel chip only does video, the way macOS runs it. Upstream measured H.264 encode on it at about 3.7× the Radeon's rate, plus the VP9 and 10-bit HEVC decode Polaris does not have.
+
+The kernel's own EFI stub already makes that call, for eight MacBook Pro models listed in its boot code. A mkinitcpio hook adds `iMac18,3` to that list inside every boot image mkinitcpio builds, so there is no extra boot entry and kernel updates keep it.
+
+**This is ported from [ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where every stage was verified on an iMac18,3, and it has not been tested here yet.** It has also never run on a machine where suspend works — that repository masks sleep, and its own notes name `i915` as a suspend suspect. If you apply it, test sleep again afterwards. `imac-patcher --remove macos` puts everything back, and at the Limine menu `e` lets you add `module_blacklist=i915` to the command line for one boot.
+
+Read [docs/macos-mode.md](docs/macos-mode.md) before applying it: what gets installed, why the headless VBT is needed, how the brightness table is checked before it is written, and every recovery path.
+
+---
+
 ## 😴 Suspend — read this before you try it
 
 **Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in five separate ways, each now fixed or worked around:
@@ -303,6 +317,7 @@ If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resu
 - 🌗 **Skewed Apple logo on *warm* reboots** with 5K active — root-caused: the display was never turned off at reboot, so Apple's firmware inherited a live dual-tile panel. **Fixed and shipped** (`patches/5k-latch-clear.patch`): the display is shut down properly at reboot, every register the stitch wrote into the second tile is undone, and the panel is powered off before the handoff. Confirmed on hardware with a captured teardown. A follow-up (`patches/5k-latch-clear-going-down-only.patch`) limits that teardown to the reboot path — as first shipped it also ran on every ordinary stream-off and caused repeated black flashes on the second tile (see below). What remains: the warm-reboot logo is straight but slightly soft, because the firmware draws it on one tile after the handoff; a cold boot is crisp. Cosmetic.
 - 🪞 **Sheared seam after login** — two causes, both **fixed and shipped**: the driver's master pick left the slave tile out of the hardware sync group (`patches/5k-genlock-deterministic.patch`), and on a full modeset the one-shot alignment ran before the re-trained tile was up (`patches/5k-genlock-settle-resync.patch`, a re-sync 250 ms after each tiled commit). The black flashes on the second tile after the disk password, and the brief skew as the session exits before a reboot, were a regression from the first logo fix (its latch clear ran on every stream-off and each write toggled the tile's hotplug line, forcing a full re-detect and re-train on the next commit — 30–40 re-detects per boot instead of 4). Fixed and shipped: `patches/5k-latch-clear-going-down-only.patch`.
 - 🎬 **Video encode (VCE)** hangs the GPU on certain transcodes, taking the session down. Under investigation.
+- 🌗 **macOS mode is untested here** — the `macos` module is a port of hardware-proven upstream work, but nothing in it has been run on this machine yet, and the combination that matters most, macOS mode plus working suspend, has never been tried anywhere. Treat the first boot after applying it as a test, with [the recovery paths](docs/macos-mode.md#recovery) to hand.
 - 📺 **YouTube 4K is CPU-decoded** — Polaris has no VP9/AV1 silicon. Hardware limit, not fixable.
 
 ---
@@ -364,6 +379,8 @@ which is included in repository checkouts, but omitted from release installs.
 This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://github.com/ahmadtv/omarchy-imac18-3-patch)** by Ahmad Al-Awadi, which is where the patcher, the 5K stitch work and the original Omarchy backend come from. It is MIT licensed, and that copyright is retained in [`LICENSE`](LICENSE) alongside the one for the changes made here. The full commit history of the original is preserved in this repository, so `git log` attributes every one of those commits to its author.
 
 Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
+
+The `macos` module — the `set_os` hook, the headless i915 setup, the full-range brightness table and the NVRAM boot level — is ported from Ahmad Al-Awadi's [omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where it was developed and verified on an iMac18,3. It is MIT licensed, like the rest of that work.
 
 Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1, and is carried here under `assets/imac-audio/` byte-identical to [commit `5069f81`](https://github.com/taprobane99/iMac5KLinux/tree/5069f81eeb4af129480604762f39f9eaec9898d7/Audio). It is MIT licensed, and its copyright notice is carried with it in [`assets/imac-audio/LICENSE`](assets/imac-audio/LICENSE).
 

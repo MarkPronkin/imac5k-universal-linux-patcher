@@ -99,7 +99,7 @@ XHCI_FIX_MODULES_DIR=/usr/lib/modules
 # this machine the same way suspend does.
 HIBERNATE_HOOK_CONF=/etc/mkinitcpio.conf.d/omarchy_resume.conf
 HIBERNATE_DROPIN="${LIMINE_DROPIN_DIR}/resume.conf"
-MODULES=(audio eq t2speakers color suspend boot 5k)
+MODULES=(audio eq t2speakers color suspend boot macos 5k)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
@@ -129,9 +129,11 @@ Usage: imac-patcher [--force] [COMMAND]
   upgrade               install the newest release of the tool
   -h, --help            show this help
 
-Module IDs: audio eq t2speakers color suspend boot 5k
+Module IDs: audio eq t2speakers color suspend boot macos 5k
   suspend allows suspend and blocks hibernate; suspend is experimental.
   t2speakers enables all four iMac Pro speakers; it is n/a on other models.
+  macos exposes the Intel iGPU and the working backlight on iMac18,3 with
+  Omarchy/Limine; it is untested here and n/a everywhere else.
 
 --force may appear anywhere. It bypasses only the Retina 5K model gate;
 individual module compatibility checks still apply. Run as your desktop user.
@@ -1707,6 +1709,289 @@ mod_boot_remove() {
     warn "to restore the old UKI-over-fallback bypass: sudo cp /boot/EFI/BOOT/BOOTX64.UKI-bypass.backup ${FALLBACK_PATH}"
 }
 
+# ═══════════════════════ module: macos ════════════════════════════════════
+#
+# macOS mode. The kernel's own EFI stub tells Apple firmware that macOS is
+# starting — apple_set_os() in drivers/firmware/efi/libstub/x86-stub.c, which
+# it already does for eight MacBook Pro models. On the iMac18,3 that one call
+# changes two things: the firmware stops hiding the Intel HD 630 at 00:02.0,
+# and its own ACPI backlight path starts driving the panel, so acpi_video0
+# finally dims it instead of accepting writes and doing nothing. The Radeon
+# keeps the display, the compositor and all 3D; the Intel chip only encodes
+# and decodes video, the way macOS runs it (0 framebuffers, Quick Sync).
+#
+# The model list is a char[][15] stored uncompressed in the stub, so a
+# mkinitcpio post hook rewrites its last slot in every UKI mkinitcpio builds.
+# That ordering is the whole design: limine-mkinitcpio builds the image,
+# mkinitcpio runs post hooks on it, and only then does limine-entry-tool pin
+# its BLAKE2B hash in limine.conf. Nothing may touch a UKI after that point.
+#
+# Ported from ahmadtv/omarchy-imac18-3 (igpu/), where every stage was verified
+# on an iMac18,3. Not hardware-tested here yet, and never tested together with
+# a working suspend — upstream masks sleep. See docs/macos-mode.md.
+MACOS_CFG="${REPO_DIR}/configs/macos"
+MACOS_HOOK=/etc/initcpio/post/imac-setos
+MACOS_MKI=/etc/mkinitcpio.conf.d/zz-imac-igpu.conf
+MACOS_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-macos.conf"
+# snd_hda_core.gpu_bind=0 is not optional: once the iGPU is visible,
+# snd_hdac_i915_init() defers the whole PCH HD-audio controller until i915
+# binds, and the speakers and mics disappear with it. i2c_i801 is blacklisted
+# because in macOS mode the firmware drives the backlight over that SMBus
+# itself and inhibits the driver; 62-imac-smbus-acpi.rules re-enables the
+# controller's decoding so those firmware writes still land.
+MACOS_OPTS="snd_hda_core.gpu_bind=0 i915.disable_display=1 i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801"
+MACOS_OPTS_MARK='i915.vbt_firmware=imac18-3'
+MACOS_VBT_DIR=/usr/lib/firmware/imac18-3
+MACOS_VBT="${MACOS_VBT_DIR}/headless-vbt.bin"
+MACOS_RULES=(61-imac-dri-names.rules 62-imac-smbus-acpi.rules)
+MACOS_AML=/etc/initcpio/acpi_override/imac-bcl100.aml
+MACOS_ACPI_INSTALL_HOOKS=(/usr/lib/initcpio/install/acpi_override
+                          /etc/initcpio/install/acpi_override)
+MACOS_NVRAM_BIN=/usr/local/bin/imac-backlight-nvram
+MACOS_NVRAM_UNIT=/etc/systemd/system/imac-backlight-nvram.service
+MACOS_NVRAM_SERVICE=imac-backlight-nvram.service
+MACOS_HYPR="${HOME}/.config/hypr/imac-gpu.lua"
+MACOS_HYPR_MAIN="${HOME}/.config/hypr/hyprland.lua"
+MACOS_IGPU=/sys/bus/pci/devices/0000:00:02.0
+
+mod_macos_title() { echo "macOS mode: iGPU & brightness"; }
+mod_macos_tier()  { echo boot; }
+mod_macos_desc()  { echo "Makes the kernel tell Apple's firmware that macOS is starting, as it already does for some MacBook Pros. That exposes the Intel HD 630 the firmware otherwise hides, which then encodes and decodes video for every app that takes the first GPU (H.264 about 3.7x faster than the Radeon, plus VP9 and HEVC 10-bit), and it makes the brightness slider actually dim the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. The Radeon keeps the display and all 3D. One mkinitcpio hook keeps the edit through kernel updates, so the boot menu is unchanged. Ported from ahmadtv/omarchy-imac18-3 and not yet tested on this machine, least of all together with suspend."; }
+
+# The drop-in asks for the acpi_override hook only when the brightness table
+# was actually built: a hook with no .aml fails every later initramfs build.
+macos_initramfs_conf_ok() {
+    [[ -f $MACOS_MKI ]] || return 1
+    grep -q 'acpi_override' "$MACOS_MKI" || return 0
+    [[ -f $MACOS_AML ]]
+}
+macos_acpi_hook_available() {
+    local hook
+    for hook in "${MACOS_ACPI_INSTALL_HOOKS[@]}"; do
+        [[ -f $hook ]] && return 0
+    done
+    return 1
+}
+# Apply-time check only. The UKI lives on the ESP, which is root-only, and
+# detection must never ask for a password.
+macos_uki_lists_model() { sudo grep -qa 'iMac18,3' "$UKI_PATH" 2>/dev/null; }
+
+# Status is read without sudo, so the last component is the running boot
+# rather than the image on the ESP: the firmware exposes 00:02.0 only after
+# set_os, which makes its presence the one unforgeable sign that macOS mode
+# is live. Right after applying, that leaves the module "partial" until the
+# reboot — the same way the 5K module reports before its parameter is live.
+mod_macos_detect() {
+    local have=0 total=7
+    [[ -x $MACOS_HOOK ]] && ((have++))
+    [[ -f $MACOS_VBT ]] && ((have++))
+    [[ -f "/etc/udev/rules.d/${MACOS_RULES[0]}" && -f "/etc/udev/rules.d/${MACOS_RULES[1]}" ]] && ((have++))
+    macos_initramfs_conf_ok && ((have++))
+    boot_config_has "$MACOS_OPTS_MARK" && ((have++))
+    [[ "$(systemctl is-enabled "$MACOS_NVRAM_SERVICE" 2>/dev/null)" == enabled ]] && ((have++))
+    [[ -e $MACOS_IGPU ]] && ((have++))
+    # Keep an installed module removable even where it could not be applied
+    # today; only a machine with nothing installed reports n/a.
+    if ((have == 0)) && { ! imac_macos_mode_supported || ! imac_has_limine; }; then
+        echo n/a; return
+    fi
+    if   ((have == total)); then echo applied
+    elif ((have == 0));     then echo not-applied
+    else                         echo partial; fi
+}
+
+# Hyprland/aquamarine opens every KMS device unless told otherwise, and picks
+# its primary by connected panels, so the Radeon is pinned by a stable udev
+# name rather than by card number — those shift once i915 registers first.
+macos_install_hypr_pin() {
+    [[ -f $MACOS_HYPR_MAIN ]] || return 0
+    install -Dm644 "${MACOS_CFG}/imac-gpu.lua" "$MACOS_HYPR" || return 1
+    grep -q 'hypr.imac-gpu' "$MACOS_HYPR_MAIN" && return 0
+    cp "$MACOS_HYPR_MAIN" "${MACOS_HYPR_MAIN}.bak-$(date +%s)" || return 1
+    # hl.env() is read before the display server starts wherever the require
+    # sits, so appending is as good as inserting when the anchor is absent.
+    if grep -q '^require("hypr.monitors")' "$MACOS_HYPR_MAIN"; then
+        sed -i 's|^require("hypr.monitors")|require("hypr.imac-gpu") -- Radeon stays the desktop GPU when the Intel iGPU is exposed\nrequire("hypr.monitors")|' \
+            "$MACOS_HYPR_MAIN" || return 1
+    else
+        printf '%s\n' 'require("hypr.imac-gpu") -- Radeon stays the desktop GPU when the Intel iGPU is exposed' \
+            >> "$MACOS_HYPR_MAIN" || return 1
+    fi
+    say "Hyprland pinned to the Radeon in ${MACOS_HYPR_MAIN}"
+}
+macos_remove_hypr_pin() {
+    rm -f "$MACOS_HYPR" || return 1
+    [[ -f $MACOS_HYPR_MAIN ]] || return 0
+    grep -q 'hypr.imac-gpu' "$MACOS_HYPR_MAIN" || return 0
+    sed -i '/require("hypr.imac-gpu")/d' "$MACOS_HYPR_MAIN" || return 1
+}
+
+macos_offer_packages() {   # $1... = package names that are merely recommended
+    local installer=()
+    read -ra installer <<<"$(imac_pkg_installer)"
+    ((${#installer[@]})) || { warn "install these yourself: $*"; return 0; }
+    confirm "Install $* now?" || return 0
+    "${installer[@]}" "$@" || warn "installing $* failed — continuing without"
+    hash -r
+    return 0
+}
+
+mod_macos_preflight() {
+    if ! imac_macos_mode_supported; then
+        if [[ $product == iMacPro1,1 ]]; then
+            warn "The iMac Pro's Xeon W has no integrated GPU: there is nothing for set_os to expose."
+        else
+            warn "macOS mode is verified only on iMac18,3 (detected: ${product})."
+            warn "Other 5K models have an iGPU, but their VBT, PCI addresses and ACPI table are unchecked."
+        fi
+        return 1
+    fi
+    if imac_is_fedora || imac_is_arch_grub || ! imac_has_limine; then
+        warn "macOS mode needs the Omarchy/Limine boot path: the model list is edited inside the UKI that limine-mkinitcpio builds."
+        return 1
+    fi
+    local t missing=() pkgs=() installer=()
+    for t in limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl; do
+        command -v "$t" >/dev/null || missing+=("$t")
+    done
+    if ((${#missing[@]})); then
+        warn "missing tools: ${missing[*]}"
+        for t in "${missing[@]}"; do pkgs+=("$(imac_tool_package "$t")"); done
+        mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | sort -u)
+        read -ra installer <<<"$(imac_pkg_installer)"
+        if ((${#installer[@]})) && confirm "Install ${pkgs[*]} now?"; then
+            "${installer[@]}" "${pkgs[@]}" || return 1
+            hash -r
+        fi
+        for t in "${missing[@]}"; do
+            command -v "$t" >/dev/null || { warn "$t is still missing."; return 1; }
+        done
+    else
+        say "boot tools present"
+    fi
+    # Both optional, and each loses a different half of the feature: without
+    # iasl the brightness range stays at the firmware's 80 levels, without the
+    # VA-API driver the iGPU appears but nothing can encode on it.
+    local want=()
+    command -v iasl >/dev/null || want+=("$(imac_tool_package iasl)")
+    if command -v pacman >/dev/null && ! pacman -Qq intel-media-driver >/dev/null 2>&1; then
+        want+=(intel-media-driver)
+    fi
+    if ((${#want[@]})); then
+        say "recommended: ${want[*]} — acpica builds the full-range brightness table, intel-media-driver is the VA-API driver the iGPU needs"
+        macos_offer_packages "${want[@]}"
+    fi
+    return 0
+}
+
+mod_macos_apply() {
+    mod_macos_preflight || { warn "preflight failed — nothing was changed."; return 1; }
+    cat <<EOF
+
+What this changes, and how to undo it:
+  * a mkinitcpio hook rewrites 14 bytes in every UKI it builds, so the
+    kernel's EFI stub tells the firmware macOS is starting
+  * i915 loads first and headless: the Intel HD 630 becomes the default GPU
+    for video; the Radeon keeps the display, the desktop and all 3D
+  * these kernel parameters are added in ${MACOS_DROPIN}:
+      ${MACOS_OPTS}
+  * where the ACPI table can be rebuilt, brightness covers the panel's full
+    range, and the level is saved to Apple NVRAM at shutdown so the panel
+    lights at your level from power-on
+
+Undo:  $0 --remove macos
+
+If the desktop does not come back:
+  * at the Limine menu press 'e' on the entry and append
+    module_blacklist=i915 to the command line — that boots with the iGPU
+    ignored and everything else in place
+  * from a TTY (ctrl-alt-F2) or over SSH:  $0 --remove macos
+EOF
+    confirm "Boot in macOS mode from now on?" || return 1
+
+    sudo install -Dm755 "${SCRIPT_DIR}/imac-setos" "$MACOS_HOOK" || return 1
+    sudo install -Dm644 "${MACOS_CFG}/headless-vbt.bin" "$MACOS_VBT" || return 1
+    local rule
+    for rule in "${MACOS_RULES[@]}"; do
+        sudo install -Dm644 "${MACOS_CFG}/${rule}" "/etc/udev/rules.d/${rule}" || return 1
+    done
+    sudo udevadm control --reload || return 1
+    sudo udevadm trigger -s drm -s pci || return 1
+
+    # Full-range brightness is the optional half. Nothing on the kernel
+    # command line can switch an initramfs ACPI override back off, so a table
+    # that cannot be built and verified is simply not installed: macOS mode
+    # then still dims the panel, over the firmware's own 80 levels.
+    local acpi=0
+    if ! macos_acpi_hook_available; then
+        warn "mkinitcpio has no acpi_override hook — keeping the firmware's brightness range"
+    elif ! command -v iasl >/dev/null; then
+        warn "iasl is missing — keeping the firmware's brightness range (about 80% of maximum)"
+    elif sudo python3 "${SCRIPT_DIR}/make-bcl-table.py" "$MACOS_AML"; then
+        acpi=1
+    else
+        warn "the full-range brightness table was not built — keeping the firmware's range"
+    fi
+
+    sudo install -Dm644 "${MACOS_CFG}/zz-imac-igpu.conf" "$MACOS_MKI" || return 1
+    if ((acpi)); then
+        printf '%s\n%s\n' \
+            '# Full brightness range: the upgraded PEG0GFX0 SSDT from make-bcl-table.py.' \
+            'HOOKS+=(acpi_override)' | sudo tee -a "$MACOS_MKI" >/dev/null || return 1
+    else
+        sudo rm -f "$MACOS_AML" || return 1
+    fi
+
+    sudo mkdir -p "$LIMINE_DROPIN_DIR" || return 1
+    printf '%s\n%s\n%s\n' \
+        '# Written by imac-patcher (macOS mode: Intel video and brightness).' \
+        '# Delete this file to drop the parameters, or run: imac-patcher --remove macos' \
+        "KERNEL_CMDLINE[default]+=\" ${MACOS_OPTS}\"" \
+        | sudo tee "$MACOS_DROPIN" >/dev/null || return 1
+    say "wrote ${MACOS_DROPIN}"
+
+    sudo install -Dm755 "${SCRIPT_DIR}/imac-backlight-nvram" "$MACOS_NVRAM_BIN" || return 1
+    sudo install -Dm644 "${MACOS_CFG}/imac-backlight-nvram.service" "$MACOS_NVRAM_UNIT" || return 1
+    sudo systemctl daemon-reload || return 1
+    sudo systemctl enable --now "$MACOS_NVRAM_SERVICE" || return 1
+
+    macos_install_hypr_pin || return 1
+
+    sync_boot_files || return 1
+    macos_uki_lists_model || {
+        warn "the rebuilt UKI does not list iMac18,3 — read the imac-setos lines in the output above."
+        warn "The kernel's model list has probably moved; nothing here changes the boot until that is fixed."
+        return 1
+    }
+    say "UKI carries the set_os model list entry"
+    verify_cmdline "$MACOS_OPTS_MARK" || return 1
+    ((acpi)) && say "brightness table rebuilt: levels 4..100 instead of 1..80"
+    say "reboot to start in macOS mode, then check it with: ${SCRIPT_DIR}/imac-igpu-check"
+    return 0
+}
+
+mod_macos_remove() {
+    local rule
+    sudo rm -f "$MACOS_HOOK" "$MACOS_MKI" "$MACOS_AML" "$MACOS_VBT" "$MACOS_DROPIN" || return 1
+    sudo rmdir "$MACOS_VBT_DIR" 2>/dev/null
+    for rule in "${MACOS_RULES[@]}"; do
+        sudo rm -f "/etc/udev/rules.d/${rule}" || return 1
+    done
+    sudo udevadm control --reload || return 1
+    sudo udevadm trigger -s drm -s pci || return 1
+    sudo systemctl disable --now "$MACOS_NVRAM_SERVICE" >/dev/null 2>&1
+    sudo rm -f "$MACOS_NVRAM_BIN" "$MACOS_NVRAM_UNIT" || return 1
+    sudo systemctl daemon-reload || return 1
+    macos_remove_hypr_pin || return 1
+    # Older layouts appended the parameters straight into /etc/default/limine.
+    if grep -qs -- "$MACOS_OPTS_MARK" "$LIMINE_DEFAULT"; then
+        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-unmacos-$(date +%s)" || return 1
+        sudo sed -i "s| ${MACOS_OPTS}||" "$LIMINE_DEFAULT" || return 1
+    fi
+    sync_boot_files && verify_cmdline "" "$MACOS_OPTS_MARK" || return 1
+    say "reboot to return to the plain boot: the iGPU is hidden again and brightness goes back to the firmware's range"
+}
+
 # ═══════════════════════ module: 5k ════════════════════════════════════════
 mod_5k_title() { echo "Native 5K display"; }
 mod_5k_tier()  { echo boot; }
@@ -2107,6 +2392,14 @@ startup_deps_note() {
                 ((archgrub)) && continue
                 [[ -f $LIMINE_DEFAULT ]] || continue
                 tools=(objcopy limine-mkinitcpio) ;;
+            macos)
+                imac_macos_mode_supported || continue
+                ((fedora)) && continue
+                ((archgrub)) && continue
+                [[ -f $LIMINE_DEFAULT ]] || continue
+                # iasl is deliberately absent: without it the module still
+                # applies, with the firmware's own brightness range.
+                tools=(limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl) ;;
             5k)
                 [[ ${MODULE_STATES[$id]} == n/a ]] && continue
                 tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod python3)

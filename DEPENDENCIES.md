@@ -280,6 +280,33 @@ taken from so `--remove` never restores one panel's setting onto another.
 - limine-mkinitcpio or mkinitcpio — rebuilds the initramfs/UKI
 - N/A on Fedora and Arch-family GRUB; detection returns n/a there
 
+## macOS mode module (boot tier, iMac18,3 + Omarchy only)
+
+| Tool | Arch package | Fedora package |
+|---|---|---|
+| limine-mkinitcpio | limine-mkinitcpio-hook | — |
+| mkinitcpio | mkinitcpio | — |
+| objcopy | binutils | — |
+| python3 | python | — |
+| udevadm, systemctl | systemd | — |
+| iasl (optional) | acpica | — |
+| intel-media-driver (optional) | intel-media-driver | — |
+
+Required tools are checked in the preflight, which offers to install anything
+missing. The two optional ones each cost a different half of the feature and
+never block the install: without `iasl` the brightness range stays at the
+firmware's 80 levels, and without `intel-media-driver` the iGPU is exposed but
+no application can use it for video. `libva-utils` adds `vainfo`, which
+`scripts/imac-igpu-check` reports from when present.
+
+The module also needs mkinitcpio's `acpi_override` install hook
+(`/usr/lib/initcpio/install/acpi_override`, shipped with mkinitcpio) for the
+full-range brightness table; without it the firmware's range is kept.
+
+N/A on every model but iMac18,3, and on Fedora and Arch-family GRUB: the edit
+this module makes lands inside the UKI `limine-mkinitcpio` builds. See
+docs/macos-mode.md.
+
 ## scripts/verify.sh (optional probes)
 
 The baseline probes use `lspci`, `modinfo`, `nmcli`, and `ip`, alongside standard
