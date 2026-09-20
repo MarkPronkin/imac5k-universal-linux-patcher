@@ -271,6 +271,25 @@ compositing, the cross-GPU copy and audio. Upstream measured 4K VP9 on the
 CPU at about 1.1 cores, so the copy does not eat the saving. What has not
 been measured is power, or how this scales to 4K60.
 
+**Fullscreen is black.** Windowed playback is correct; going fullscreen
+leaves a black picture with the audio still playing. Decoding is not what
+breaks — sampled across the transition, the Intel GT stayed at 25% busy, the
+web process at 41% of a core, and it kept both render nodes open, all
+unchanged for 45 seconds. Every frame is still being decoded on the iGPU and
+none of them reach the screen.
+
+That is the same wall Chromium hits, arriving later. Windowed, WebKit
+composites the frame into its own GL texture, which is the `glupload` path
+that works across the two GPUs. Fullscreen, the video takes a route where
+the Radeon has to import the Intel buffer directly, and Intel's tiling
+modifiers do not cross. Hyprland's `render:direct_scanout` is off here, so
+the compositor is not bypassing composition — the handoff is inside WebKit.
+
+`WEBKIT_GST_DMABUF_SINK_DISABLED=1` disables the dmabuf video sink and
+should send fullscreen down the GL sink as well;
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` is the blunter fallback, at the cost of
+routing frames through shared memory. Neither is tested yet.
+
 Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
 and amdgpu → radeonsi on its own.
