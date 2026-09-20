@@ -501,6 +501,29 @@ class BrightnessTableTests(unittest.TestCase):
             self.assertFalse(BCL.is_stock(table))
             self.assertFalse(BCL.is_upgraded(table))
 
+    def test_the_table_is_picked_by_its_header_not_by_a_mention_of_it(self):
+        """The DSDT names PEG0GFX0 without defining ABCL, so searching the
+        whole blob picks the wrong table and finds no brightness method."""
+        with tempfile.TemporaryDirectory() as tmp:
+            def table(signature, table_id, body=b""):
+                path = Path(tmp) / (signature + str(len(body)))
+                # ACPI header: sig, length, revision, checksum, OEM ID (6),
+                # OEM table ID (8) at offset 16, then the rest.
+                path.write_bytes(signature.encode() + bytes(12) + table_id
+                                 + bytes(12) + body)
+                return path
+            ssdt = table("SSDT", b"PEG0GFX0")
+            dsdt = table("DSDT", b"Apple00 ", b"...PEG0GFX0...")
+            truncated = Path(tmp) / "truncated"
+            truncated.write_bytes(b"SSDT")
+            self.assertEqual(BCL.oem_table_id(ssdt), "PEG0GFX0")
+            self.assertEqual(BCL.oem_table_id(dsdt), "Apple00")
+            self.assertEqual(BCL.oem_table_id(truncated), "")
+
+    def test_the_failure_report_names_the_methods_the_table_does_define(self):
+        self.assertEqual(BCL.method_names(STOCK_DSL), ["ABCL"])
+        self.assertEqual(BCL.method_names("nothing here"), [])
+
     def test_the_oem_revision_is_raised_so_the_kernel_prefers_the_upgrade(self):
         self.assertIn('"PEG0GFX0", 0x00001001)', BCL.bump_oem_revision(STOCK_DSL))
 

@@ -101,6 +101,24 @@ def rewrite_abcl(dsl, levels=LEVELS):
     return dsl[:match.start()] + package + dsl[match.end():]
 
 
+def method_names(dsl):
+    """Every method the disassembled table defines, for a failure report."""
+    return re.findall(r"^\s*Method \((\w+),", dsl, re.M)
+
+
+def keep_disassembly(dsl, directory):
+    """Save the disassembly so the table can be looked at by hand."""
+    if directory is None:
+        print("Re-run with --keep-dsl DIR to save the disassembly and look at it.",
+              file=sys.stderr)
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    kept = directory / dsl.name
+    kept.write_text(dsl.read_text())
+    print("disassembly saved to %s (it contains your firmware's table; it is "
+          "not uploaded anywhere)" % kept, file=sys.stderr)
+
+
 def comparable(aml):
     """The table with the fields a recompile legitimately rewrites masked out."""
     blob = bytearray(aml)
@@ -115,6 +133,18 @@ def differing_offsets(original, rebuilt):
     if len(left) != len(right):
         return None            # a length change is not a per-byte difference
     return [i for i, (a, b) in enumerate(zip(left, right)) if a != b]
+
+
+def oem_table_id(path):
+    """An ACPI table's OEM table ID: 8 bytes at offset 16 of the header.
+
+    Matching the header, not the string anywhere in the blob, is what keeps
+    this off the DSDT, which mentions PEG0GFX0 without defining ABCL.
+    """
+    blob = path.read_bytes()
+    if len(blob) < 24:
+        return ""
+    return blob[16:24].decode("ascii", "replace").strip()
 
 
 def run(cmd, **kwargs):
@@ -144,6 +174,8 @@ def main():
     parser.add_argument("out", nargs="?", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--force", action="store_true",
                         help="write the table even if iasl does not round-trip the original")
+    parser.add_argument("--keep-dsl", type=Path, metavar="DIR",
+                        help="save the disassembled table here when it cannot be rebuilt")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -160,10 +192,12 @@ def main():
             dest = Path(work) / (src.name + ".dat")
             dest.write_bytes(src.read_bytes())
             names.append(dest)
-        target = next((p for p in names if MARKER.encode() in p.read_bytes()), None)
+        target = next((p for p in names if oem_table_id(p) == MARKER), None)
         if target is None:
-            sys.exit("no %s table on this machine -- this is not the firmware "
-                     "this script was written for" % MARKER)
+            sys.exit("no table with OEM table ID %s on this machine (found: %s)."
+                     " This is not the firmware this script was written for."
+                     % (MARKER, ", ".join(sorted({oem_table_id(p) for p in names}))))
+        print("using %s (OEM table ID %s)" % (target.stem, MARKER))
         others = [p.name for p in names if p != target]
 
         original = target.read_bytes()
@@ -181,11 +215,16 @@ def main():
             return 0
         if not is_stock(text):
             entries = abcl_entries(text)
-            print("ABCL is not the table this script knows (first entry %s, %s entries; "
-                  "expected %s and %d). Leaving the firmware's range alone."
-                  % (entries[0] if entries else "absent",
-                     len(entries) if entries else 0, STOCK_FIRST, STOCK_COUNT),
-                  file=sys.stderr)
+            if entries is None:
+                print("no ABCL method in %s. Methods it does define: %s"
+                      % (target.stem, ", ".join(method_names(text)) or "none"),
+                      file=sys.stderr)
+            else:
+                print("ABCL is not the table this script knows (first entry %s, %d entries; "
+                      "expected %s and %d)." % (entries[0], len(entries), STOCK_FIRST, STOCK_COUNT),
+                      file=sys.stderr)
+            keep_disassembly(dsl, args.keep_dsl)
+            print("Leaving the firmware's brightness range alone.", file=sys.stderr)
             return 4
 
         # Round-trip the untouched table first: if iasl cannot reproduce the
