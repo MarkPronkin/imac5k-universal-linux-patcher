@@ -1992,6 +1992,48 @@ mod_macos_remove() {
     say "reboot to return to the plain boot: the iGPU is hidden again and brightness goes back to the firmware's range"
 }
 
+# The full-range brightness table is an optional upgrade to an otherwise
+# complete install: a machine with no iasl keeps the firmware's 80 levels and
+# is still correctly "applied". Re-applying is how it gets added afterwards,
+# the way re-applying eq repairs its hardware route. Called by run_module
+# instead of "already applied — skipping".
+macos_widen_brightness() {
+    if grep -qs 'acpi_override' "$MACOS_MKI" && [[ -f $MACOS_AML ]]; then
+        say "macos: already applied, and brightness covers the panel's full range"
+        return 0
+    fi
+    if ! macos_acpi_hook_available; then
+        say "macos: already applied; mkinitcpio has no acpi_override hook, so brightness stays at the firmware's range"
+        return 0
+    fi
+    if ! command -v iasl >/dev/null; then
+        say "macos: already applied; brightness is at the firmware's range — install $(imac_tool_package iasl) and re-apply to widen it"
+        return 0
+    fi
+    say "macos: already applied; building the full-range brightness table"
+    if ! sudo python3 "${SCRIPT_DIR}/make-bcl-table.py" "$MACOS_AML"; then
+        warn "the table was not built, so brightness stays at the firmware's range"
+        return 0
+    fi
+    if ! grep -qs 'acpi_override' "$MACOS_MKI"; then
+        printf '%s\n%s\n' \
+            '# Full brightness range: the upgraded PEG0GFX0 SSDT from make-bcl-table.py.' \
+            'HOOKS+=(acpi_override)' | sudo tee -a "$MACOS_MKI" >/dev/null || return 1
+    fi
+    sync_boot_files || return 1
+    say "brightness table installed: levels 4..100 — reboot for the full range"
+}
+
+# Only where it is actionable: applied, no table, and everything needed to
+# build one is present.
+macos_range_note() {   # $1 = macos state from the current status snapshot
+    [[ ${1:-} == applied ]] || return 0
+    grep -qs 'acpi_override' "$MACOS_MKI" && return 0
+    macos_acpi_hook_available || return 0
+    command -v iasl >/dev/null || return 0
+    printf '  macos brightness is at the firmware range — re-apply it to build the full-range table\n'
+}
+
 # ═══════════════════════ module: 5k ════════════════════════════════════════
 mod_5k_title() { echo "Native 5K display"; }
 mod_5k_tier()  { echo boot; }
@@ -2332,6 +2374,7 @@ show_status() {
     printf '  ids: %s\n' "${MODULES[*]}"
     startup_deps_note
     eq_prereq_note "${MODULE_STATES[eq]:-n/a}"
+    macos_range_note "${MODULE_STATES[macos]:-n/a}"
     return "$result"
 }
 
@@ -2501,6 +2544,10 @@ run_module() {   # $1 = apply|remove, $2 = id
             read -r card profile <<<"$(eq_card)"
             eq_set_hardware_volume "$card" || return 1
             say "eq: hardware output is at 100%; adjust listening volume with iMac Speakers"
+        elif [[ $id == macos ]]; then
+            # An install without the brightness table is complete but not at
+            # the panel's full range; re-applying is how that gets added.
+            macos_widen_brightness || return 1
         else
             say "${id}: already applied — skipping"
         fi

@@ -170,6 +170,8 @@ class ModuleTests(unittest.TestCase):
         self.bcl_stub(bcl_ok)
         if acpi_hook:
             (self.root / "acpi_override_hook").write_text("hook")
+        else:
+            (self.root / "acpi_override_hook").unlink(missing_ok=True)
         if igpu:
             (self.root / "sys").mkdir(exist_ok=True)
             (self.root / "sys/igpu").write_text("")
@@ -327,6 +329,60 @@ verify_cmdline() {{ echo "VERIFY ${{1:-}} ${{2:-}}" >> "{self.calls}"; }}
         result = self.run_module("mod_macos_apply", acpi_hook=False)
         self.assertIn("no acpi_override hook", result.stdout)
         self.assertNotIn("acpi_override", (self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf").read_text())
+
+    # ── widening the range after the fact ──────────────────────────────────
+    def test_reapplying_builds_the_table_an_earlier_apply_could_not(self):
+        """An install made without iasl is complete, so --apply would skip it;
+        the top-up is what lets the full range be added later."""
+        result = self.run_module("mod_macos_apply >/dev/null; macos_widen_brightness", iasl=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        conf = self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf"
+        self.assertNotIn("acpi_override", conf.read_text())
+        widened = self.run_module("macos_widen_brightness")
+        self.assertEqual(widened.returncode, 0, widened.stdout + widened.stderr)
+        self.assertIn("levels 4..100", widened.stdout)
+        self.assertIn("acpi_override", conf.read_text())
+        self.assertTrue((self.root / "etc/initcpio/acpi_override/imac-bcl100.aml").exists())
+        self.assertIn("SYNC", self.calls.read_text())
+
+    def test_reapplying_with_the_table_already_there_rebuilds_nothing(self):
+        self.run_module("mod_macos_apply >/dev/null")
+        self.calls.unlink(missing_ok=True)
+        result = self.run_module("macos_widen_brightness")
+        self.assertIn("covers the panel's full range", result.stdout)
+        self.assertFalse(self.calls.exists(), "the boot image was rebuilt for nothing")
+
+    def test_without_iasl_the_top_up_says_what_to_install(self):
+        self.run_module("mod_macos_apply >/dev/null", iasl=False)
+        result = self.run_module("macos_widen_brightness", iasl=False)
+        self.assertIn("firmware's range", result.stdout)
+        self.assertIn("re-apply", result.stdout)
+        self.assertNotIn("acpi_override",
+                         (self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf").read_text())
+
+    def test_the_driver_tops_up_instead_of_skipping_an_applied_install(self):
+        """Wiring: run_module's already-applied branch must reach the top-up."""
+        from test_patcher_menu import driver
+        self.run_module("mod_macos_apply >/dev/null", iasl=False)
+        self.calls.unlink(missing_ok=True)
+        result = self.run_module(
+            "mod_macos_detect() { echo applied; }\n" + driver() + "\nrun_module apply macos")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("already applied — skipping", result.stdout)
+        self.assertIn("levels 4..100", result.stdout)
+
+    def test_the_status_note_appears_only_when_it_can_be_acted_on(self):
+        self.run_module("mod_macos_apply >/dev/null", iasl=False)
+        actionable = self.run_module('macos_range_note applied')
+        self.assertIn("re-apply it to build the full-range table", actionable.stdout)
+        for state, kwargs in (("not-applied", {}), ("n/a", {}), ("applied", {"iasl": False}),
+                              ("applied", {"acpi_hook": False})):
+            with self.subTest(state=state, **kwargs):
+                quiet = self.run_module(f'macos_range_note {state}', **kwargs)
+                self.assertEqual(quiet.stdout, "", quiet.stdout)
+        self.run_module("mod_macos_apply >/dev/null")
+        done = self.run_module('macos_range_note applied')
+        self.assertEqual(done.stdout, "", done.stdout)
 
     # ── the compositor pin ─────────────────────────────────────────────────
     def test_hyprland_is_pinned_before_the_monitors_require(self):

@@ -151,7 +151,13 @@ and the OEM revision.
 
 If either fails, or `iasl` is not installed, the module says so and installs no
 table. Brightness still works; it just tops out where the firmware's own table
-does. Nothing else about macOS mode changes.
+does. Nothing else about macOS mode changes, and the install counts as
+complete — that is a supported end state, not a half-finished one.
+
+To add the table later, install `acpica` and run `imac-patcher --apply macos`
+again. An already-applied module is normally skipped; this one tops up the
+brightness range instead, rebuilds the boot image and asks for a reboot. The
+status listing says so too, but only when all of it is actually available.
 
 Finally, `imac-backlight-nvram` writes the level to Apple's `backlight-level`
 EFI variable at shutdown, so the firmware lights the panel at your level from
