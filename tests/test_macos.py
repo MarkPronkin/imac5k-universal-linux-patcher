@@ -211,6 +211,11 @@ verify_cmdline() {{ echo "VERIFY ${{1:-}} ${{2:-}}" >> "{self.calls}"; }}
 '''
         if iasl:
             stubs += "iasl() { :; }\n"
+        else:
+            # Absence has to be simulated, not assumed: iasl is installed on
+            # any machine this module has actually been applied to.
+            stubs += ("command() { [[ ${1:-} == -v && ${2:-} == iasl ]] && return 1;"
+                      " builtin command \"$@\"; }\n")
         script = stubs + module_section() + self.overrides() + code
         # The installed rules live under a test-owned udev directory.
         script = script.replace('"/etc/udev/rules.d/${rule}"', '"${UDEV_DIR}/${rule}"')

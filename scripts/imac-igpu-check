@@ -7,7 +7,9 @@ set -u
 IGPU=/sys/bus/pci/devices/0000:00:02.0
 AMD=/sys/bus/pci/devices/0000:01:00.0
 hdr() { printf '\n== %s\n' "$*"; }
-drv() { basename "$(readlink -f "$1/driver" 2>/dev/null)" 2>/dev/null || echo none; }
+# readlink -f on a device with no driver returns the path itself, whose
+# basename is the word "driver"; test the symlink instead.
+drv() { if [[ -L $1/driver ]]; then basename "$(readlink -f "$1/driver")"; else echo none; fi; }
 
 hdr "PCI / drivers"
 if [[ -e $IGPU ]]; then
@@ -30,12 +32,56 @@ for c in /sys/class/drm/card[0-9]; do
 done
 
 hdr "Compositor GPU pin"
+# Not /proc/PID/environ: that is the environment the process was started with,
+# and Hyprland applies its config `env` with setenv(), which never shows up
+# there. What the compositor actually opened is the evidence that counts.
 hp=$(pgrep -x Hyprland | head -1)
-[[ -n $hp ]] && tr '\0' '\n' < /proc/$hp/environ 2>/dev/null | grep -E '^(AQ_DRM_DEVICES|LIBVA_DRIVER_NAME)=' || echo "(no AQ_DRM_DEVICES / LIBVA_DRIVER_NAME in Hyprland's environment)"
+if [[ -z $hp ]]; then
+	echo "Hyprland is not running"
+else
+	held=$(ls -l "/proc/$hp/fd" 2>/dev/null | grep -o '/dev/dri/[a-zA-Z0-9]*' | sort -u | tr '\n' ' ')
+	echo "Hyprland has open: ${held:-<file descriptors unreadable>}"
+	intel_nodes="$(readlink -f /dev/dri/intel-card 2>/dev/null) $(readlink -f /dev/dri/intel-render 2>/dev/null)"
+	for node in $intel_nodes; do
+		[[ -n $node && " $held " == *" $node "* ]] && echo "  !! the compositor opened the Intel GPU: the AQ_DRM_DEVICES pin is NOT in effect"
+	done
+	[[ -n $held ]] && [[ " $held " != *"$(readlink -f /dev/dri/intel-card 2>/dev/null)"* ]] \
+		&& echo "  the Radeon only, so the pin is in effect"
+	if grep -q 'hypr.imac-gpu' "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua" 2>/dev/null; then
+		echo "hyprland.lua requires hypr.imac-gpu"
+	else
+		echo "hyprland.lua does NOT require hypr.imac-gpu"
+	fi
+fi
 if [[ -e /dev/dri/intel-card ]] && command -v fuser >/dev/null; then
-	echo "processes holding the Intel card/render node:"
+	echo "every process holding the Intel card/render node:"
 	fuser -v /dev/dri/intel-card /dev/dri/intel-render 2>&1 | sed 's/^/  /'
 fi
+
+hdr "Backlight (the other half of macOS mode)"
+for b in /sys/class/backlight/*; do
+	[[ -d $b ]] || continue
+	max=$(cat "$b/max_brightness" 2>/dev/null)
+	printf '%s: brightness=%s max=%s type=%s\n' "${b##*/}" \
+		"$(cat "$b/brightness" 2>/dev/null)" "$max" "$(cat "$b/type" 2>/dev/null)"
+	case $max in
+		96) echo "  full range: the upgraded ACPI table is live (levels 4..100, 65500 of 65535)" ;;
+		79) echo "  firmware range: levels 1..80, so 100% is 52400 of 65535 -- about 80% of the panel" ;;
+		*)  echo "  unrecognised range" ;;
+	esac
+done
+journalctl -k -b --no-pager 2>/dev/null | grep -i "Table Upgrade" | sed 's/^/  /' | tail -3
+SMBUS=/sys/bus/pci/devices/0000:00:1f.4
+[[ -e $SMBUS ]] && echo "SMBus 00:1f.4: enable=$(cat $SMBUS/enable 2>/dev/null) driver=$(drv $SMBUS) <- must be enabled; the firmware drives the backlight over it"
+NVRAM_VAR=/sys/firmware/efi/efivars/backlight-level-7c436110-ab2a-4bbb-a880-fe41995c9f82
+if [[ -r $NVRAM_VAR ]]; then
+	echo "NVRAM backlight-level: $(od -An -tu2 -j4 -N2 "$NVRAM_VAR" | tr -d ' ') of 65535 (what the firmware lights the panel at from power-on)"
+else
+	echo "NVRAM backlight-level: unreadable"
+fi
+echo "save-at-shutdown unit: $(systemctl is-enabled imac-backlight-nvram.service 2>&1)"
+echo "whether it really dims can only be seen by eye:"
+echo "  sudo brightnessctl -d acpi_video0 set 40%   # then: set 100%"
 
 hdr "Kernel log (i915, DMC, GuC/HuC, VBT, HDA binding)"
 journalctl -k -b --no-pager 2>/dev/null | grep -E -i 'i915|kbl_|dmc|guc|huc|vbt|snd_hda_intel|hdaudio' | grep -v -i 'amdgpu' | tail -40
