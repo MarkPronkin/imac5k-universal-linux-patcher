@@ -278,17 +278,22 @@ web process at 41% of a core, and it kept both render nodes open, all
 unchanged for 45 seconds. Every frame is still being decoded on the iGPU and
 none of them reach the screen.
 
-That is the same wall Chromium hits, arriving later. Windowed, WebKit
-composites the frame into its own GL texture, which is the `glupload` path
-that works across the two GPUs. Fullscreen, the video takes a route where
-the Radeon has to import the Intel buffer directly, and Intel's tiling
-modifiers do not cross. Hyprland's `render:direct_scanout` is off here, so
-the compositor is not bypassing composition — the handoff is inside WebKit.
+**And it is not about video either.** Epiphany's window goes black the
+moment it enters fullscreen with nothing playing at all, so this is
+WebKitGTK fullscreen on this machine, not the iGPU, not the cross-GPU
+handoff and not the decoder. `WEBKIT_GST_DMABUF_SINK_DISABLED=1` changes
+nothing, as expected once the cause is known. An earlier version of this
+section blamed the Radeon importing Intel buffers in fullscreen; that was
+wrong, and the empty-window test is what disproved it.
 
-`WEBKIT_GST_DMABUF_SINK_DISABLED=1` disables the dmabuf video sink and
-should send fullscreen down the GL sink as well;
-`WEBKIT_DISABLE_DMABUF_RENDERER=1` is the blunter fallback, at the cost of
-routing frames through shared memory. Neither is tested yet.
+What is untested: whether other WebKitGTK browsers do the same here, and
+whether the 5120x2880 stitched panel is involved — a fullscreen surface at
+that size is unusual, and this display is unusual in more than one way.
+Chromium and Firefox fullscreen are the obvious controls.
+
+So the useful summary for VP9: **windowed playback in a WebKit browser gets
+hardware decode on the iGPU and is correct.** Fullscreen in Epiphany is
+broken here for its own unrelated reasons.
 
 Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
