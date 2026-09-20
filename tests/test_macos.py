@@ -532,17 +532,21 @@ class BrightnessTableTests(unittest.TestCase):
         after = BCL.rewrite_abcl(BCL.bump_oem_revision(STOCK_DSL)).replace("\n", " ").split()
         self.assertEqual([w for w in before if "0x" not in w], [w for w in after if "0x" not in w])
 
-    def test_recompile_noise_is_ignored_but_a_real_change_is_not(self):
-        """iasl stamps its own creator ID and checksum; anything else differing
-        means the round-trip is not faithful and no table gets written."""
-        original = bytearray(b"SSDT" + bytes(60))
-        rebuilt = bytearray(original)
-        rebuilt[9] = 0x42                       # checksum
-        rebuilt[28:36] = b"INTL\x01\x02\x03\x04"  # creator id and revision
-        self.assertEqual(BCL.differing_offsets(bytes(original), bytes(rebuilt)), [])
-        rebuilt[40] = 0xFF
-        self.assertEqual(BCL.differing_offsets(bytes(original), bytes(rebuilt)), [40])
-        self.assertIsNone(BCL.differing_offsets(bytes(original), bytes(rebuilt) + b"\0"))
+    def test_disassembly_noise_is_ignored_but_a_real_change_is_not(self):
+        """A rebuilt table legitimately differs in its header comment and in
+        the External declarations iasl encodes into the AML (measured at about
+        ten bytes each). A changed definition is what must not slip through."""
+        rebuilt = ("/* iasl header: different file name, different size */\n"
+                   + STOCK_DSL.replace("Method (ABCL",
+                                       "External (\\_SB.PCI0.PEG0.GFX0, DeviceObj)\n"
+                                       "        Method (ABCL"))
+        self.assertEqual(BCL.normalize_asl(STOCK_DSL), BCL.normalize_asl(rebuilt))
+        self.assertNotEqual(BCL.normalize_asl(STOCK_DSL),
+                            BCL.normalize_asl(rebuilt.replace("0x32,", "0x33,", 1)))
+
+    def test_whitespace_and_line_comments_do_not_count_as_a_difference(self):
+        reflowed = STOCK_DSL.replace("\n", "\n   ") + "   // trailing note\n"
+        self.assertEqual(BCL.normalize_asl(STOCK_DSL), BCL.normalize_asl(reflowed))
 
 
 class BacklightNvramTests(unittest.TestCase):

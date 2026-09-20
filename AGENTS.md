@@ -8,9 +8,10 @@ the panel's full range. Gated to iMac18,3 + Omarchy/Limine
 no iGPU. Changed from upstream: the kernel parameters go in a
 `limine-entry-tool.d` drop-in that appends with `+=` (upstream's in-place edit
 of `/etc/default/limine` matches nothing on this machine's `+=` line), the
-ACPI brightness table is only installed after `iasl` round-trips the firmware's
-own table byte for byte, and a missing or unverifiable table degrades to the
-firmware's 80 levels instead of failing. 47 offline tests in
+ACPI brightness table is only installed after `iasl` round-trips every
+definition in the firmware's own table, and what is installed must differ from
+it by nothing but ABCL and the OEM revision; a missing or unverifiable table
+degrades to the firmware's 80 levels instead of failing. 47 offline tests in
 `tests/test_macos.py`; 498 pass overall. **Nothing here has been run on the
 hardware yet, and macOS mode has never been combined with working suspend
 anywhere** — upstream masks sleep and names i915 as a suspect. Test sleep

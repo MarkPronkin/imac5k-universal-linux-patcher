@@ -18,9 +18,13 @@ checks stand in the way of writing one:
 
   * the disassembled table must have exactly the shape this firmware is known
     to have (ABCL = 80 levels starting at 0x50), and
-  * iasl must round-trip the untouched table back to the firmware's own bytes,
-    proving the disassembler/compiler pair is faithful on it before a modified
-    table built the same way is trusted.
+  * iasl must round-trip the untouched table: every definition has to come
+    back identical through a disassemble-compile-disassemble cycle, proving
+    the pair is faithful on this table before a modified one built the same
+    way is trusted. Bytes are deliberately not compared -- the disassembler
+    adds External declarations, which are encoded into the AML at about ten
+    bytes each and skipped by the interpreter, so a faithful rebuild is
+    legitimately larger than the firmware's original.
 
 Either check failing exits 4, which the patcher treats as "keep the firmware's
 80 levels" rather than an error: brightness still works in macOS mode, just not
@@ -50,9 +54,12 @@ MARKER = "PEG0GFX0"
 # rest is the level list the kernel exposes as 0..max_brightness.
 STOCK_FIRST, STOCK_COUNT = "0x50", 0x52
 LEVELS = list(range(4, 101))
-# Bytes an iasl recompile is allowed to change: the checksum, and the creator
-# ID and revision it stamps in place of Apple's.
-IGNORED_FIELDS = ((9, 10), (28, 36))
+# Noise in a disassembly: iasl's header comment carries file names and byte
+# counts, and External declarations are re-emitted from the rebuilt table's
+# own AML, so neither says anything about whether the definitions survived.
+COMMENT_BLOCK = re.compile(r"/\*.*?\*/", re.S)
+LINE_COMMENT = re.compile(r"//[^\n]*")
+EXTERNAL_DECL = re.compile(r"^[ \t]*External \([^\n]*\)[ \t]*$", re.M)
 
 DEFBLOCK = re.compile(r'("%s", )0x([0-9A-Fa-f]{8})\)' % MARKER)
 ABCL = re.compile(
@@ -119,20 +126,12 @@ def keep_disassembly(dsl, directory):
           "not uploaded anywhere)" % kept, file=sys.stderr)
 
 
-def comparable(aml):
-    """The table with the fields a recompile legitimately rewrites masked out."""
-    blob = bytearray(aml)
-    for start, end in IGNORED_FIELDS:
-        blob[start:end] = b"\0" * (end - start)
-    return bytes(blob)
-
-
-def differing_offsets(original, rebuilt):
-    """Offsets where two tables differ, ignoring checksum and creator fields."""
-    left, right = comparable(original), comparable(rebuilt)
-    if len(left) != len(right):
-        return None            # a length change is not a per-byte difference
-    return [i for i, (a, b) in enumerate(zip(left, right)) if a != b]
+def normalize_asl(dsl):
+    """A disassembly reduced to its definitions, for comparing two of them."""
+    text = COMMENT_BLOCK.sub(" ", dsl)
+    text = LINE_COMMENT.sub(" ", text)
+    text = EXTERNAL_DECL.sub(" ", text)
+    return " ".join(text.split())
 
 
 def oem_table_id(path):
@@ -149,6 +148,21 @@ def oem_table_id(path):
 
 def run(cmd, **kwargs):
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
+def disassemble_copy(work, aml, name, others):
+    """Disassemble a table built here, in a directory of its own.
+
+    iasl writes its output beside its input and resolves names against the
+    files it is handed, so each round trip gets its own copy of the namespace.
+    """
+    room = Path(work) / ("read-back-" + name)
+    room.mkdir(exist_ok=True)
+    target = room / (name + ".dat")
+    target.write_bytes(aml.read_bytes())
+    for other in others:
+        (room / other).write_bytes((Path(work) / other).read_bytes())
+    return disassemble(str(room), target, others)
 
 
 def disassemble(work, table, others):
@@ -227,36 +241,43 @@ def main():
             print("Leaving the firmware's brightness range alone.", file=sys.stderr)
             return 4
 
-        # Round-trip the untouched table first: if iasl cannot reproduce the
-        # firmware's own bytes, its output for the modified one is not trusted.
-        rebuilt = compile_table(work, dsl, "roundtrip").read_bytes()
-        drift = differing_offsets(original, rebuilt)
-        if drift is None or drift:
-            detail = ("length %d vs %d" % (len(original), len(rebuilt)) if drift is None
-                      else "%d bytes differ, first at offset 0x%X" % (len(drift), drift[0]))
-            print("iasl did not round-trip this firmware's table (%s)." % detail, file=sys.stderr)
+        # Round-trip the untouched table first: if iasl cannot reproduce this
+        # firmware's definitions, its output for the modified one is not
+        # trusted either.
+        rebuilt = compile_table(work, dsl, "roundtrip")
+        rebuilt_asl = disassemble_copy(work, rebuilt, "roundtrip", others).read_text()
+        faithful = normalize_asl(text) == normalize_asl(rebuilt_asl)
+        if not faithful:
+            print("iasl did not round-trip this firmware's table: the rebuilt "
+                  "table's definitions differ from the original's.", file=sys.stderr)
+            keep_disassembly(dsl, args.keep_dsl)
             if not args.force:
-                print("Leaving the firmware's range alone; pass --force to override.",
-                      file=sys.stderr)
+                print("Leaving the firmware's brightness range alone; pass "
+                      "--force to override.", file=sys.stderr)
                 return 4
             print("--force given: continuing on an unverified round-trip.", file=sys.stderr)
         else:
-            print("iasl round-trips this table byte for byte")
+            print("iasl round-trips every definition in this table (AML %d -> %d "
+                  "bytes; the growth is the External declarations the "
+                  "disassembler adds, which the interpreter skips)"
+                  % (len(original), rebuilt.stat().st_size))
 
-        upgraded = rewrite_abcl(bump_oem_revision(text))
-        dsl.write_text(upgraded)
+        expected = rewrite_abcl(bump_oem_revision(text))
+        dsl.write_text(expected)
         built = compile_table(work, dsl, "out")
 
         # Read the result back through the disassembler: what gets installed is
         # checked as a table, not merely as the text that was compiled.
-        check_dir = Path(work) / "verify"
-        check_dir.mkdir()
-        check = check_dir / "out.dat"
-        check.write_bytes(built.read_bytes())
-        for name in others:
-            (check_dir / name).write_bytes((Path(work) / name).read_bytes())
-        if not is_upgraded(disassemble(str(check_dir), check, others).read_text()):
+        built_asl = disassemble_copy(work, built, "out", others).read_text()
+        if not is_upgraded(built_asl):
             sys.exit("the compiled table does not read back with the new levels")
+        if normalize_asl(built_asl) != normalize_asl(expected):
+            message = ("the compiled table differs from the intended one by more "
+                       "than the brightness levels and the OEM revision")
+            if faithful:
+                sys.exit(message + "; nothing was installed")
+            print("warning: %s (expected, on an unverified round-trip)" % message,
+                  file=sys.stderr)
 
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_bytes(built.read_bytes())

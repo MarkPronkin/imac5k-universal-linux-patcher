@@ -124,9 +124,17 @@ escape. Two checks stand in front of writing one:
 
 - the disassembled table must have the exact shape this firmware is known to
   have (ABCL = 80 levels starting at `0x50`), and
-- `iasl` must round-trip the **untouched** table back to the firmware's own
-  bytes — ignoring only the checksum and the creator ID it stamps — before a
-  modified table built the same way is trusted.
+- `iasl` must round-trip the **untouched** table: every definition in it has
+  to come back identical through a disassemble–compile–disassemble cycle,
+  before a modified table built the same way is trusted. Bytes are
+  deliberately not compared. The disassembler adds `External` declarations for
+  names defined in other tables, those are encoded into the AML at about ten
+  bytes each, and the interpreter skips them — so a faithful rebuild of this
+  machine's table is legitimately 124 bytes larger than the firmware's.
+
+What finally gets installed is checked once more the same way: its
+disassembly must differ from the original's by nothing but the ABCL package
+and the OEM revision.
 
 If either fails, or `iasl` is not installed, the module says so and installs no
 table. Brightness still works; it just tops out where the firmware's own table
