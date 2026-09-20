@@ -1874,11 +1874,13 @@ mod_macos_preflight() {
     # VA-API driver the iGPU appears but nothing can encode on it.
     local want=()
     command -v iasl >/dev/null || want+=("$(imac_tool_package iasl)")
-    if command -v pacman >/dev/null && ! pacman -Qq intel-media-driver >/dev/null 2>&1; then
-        want+=(intel-media-driver)
+    if command -v pacman >/dev/null; then
+        pacman -Qq intel-media-driver >/dev/null 2>&1 || want+=(intel-media-driver)
+        # vainfo, which is how imac-igpu-check shows what the chip can do.
+        pacman -Qq libva-utils >/dev/null 2>&1 || want+=(libva-utils)
     fi
     if ((${#want[@]})); then
-        say "recommended: ${want[*]} — acpica builds the full-range brightness table, intel-media-driver is the VA-API driver the iGPU needs"
+        say "recommended: ${want[*]} — acpica builds the full-range brightness table, intel-media-driver is the VA-API driver the iGPU needs, libva-utils reports what it can do"
         macos_offer_packages "${want[@]}"
     fi
     return 0

@@ -25,9 +25,15 @@ picked the DSDT because it searched every table for the string `PEG0GFX0`
 round-trip check could never pass because iasl encodes the disassembler's
 External declarations into the AML — it compares definitions now.
 
-**Sleep is the one thing still untested**, and macOS mode has never been
-combined with working suspend anywhere: upstream masks sleep and names i915
-as a suspect. Full write-up: [docs/macos-mode.md](docs/macos-mode.md).
+**Sleep holds**: two s2idle cycles in one boot with macOS mode on, both
+returning cleanly with nothing from i915 in the log — including the second,
+which is the cycle that used to reset this machine. The full-range table is
+live too (`max_brightness` 96, `ACPI: Table Upgrade: override
+[SSDT-APPLE -PEG0GFX0]`). Measured afterwards, and worth remembering: there
+are two VA-API defaults, not one — a DRM display with no device named gets
+Intel (ffmpeg does), a Wayland display gets the compositor's GPU, which the
+pin makes the Radeon. No setting changes that; libva has no device-selection
+variable. Full write-up: [docs/macos-mode.md](docs/macos-mode.md).
 
 **Release 0.2.3-alpha (2026-09-17):** from `test`. The suspend module follows
 t2linux on T2 iMacs (iMac Pro, 2020 iMacs): it requires linux-t2's `t2bce`,

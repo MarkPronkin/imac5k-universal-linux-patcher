@@ -169,7 +169,22 @@ standard attribute bits, because efivarfs rejects Apple's vendor bit.
 
 DRM minors are handed out in probe order, and i915 now loads first from the
 initramfs, so the HD 630 takes `renderD128`: anything that opens "the first
-render node" gets Quick Sync with no configuration. Upstream's measurements on
+render node" gets Quick Sync with no configuration. Measured here, ffmpeg
+with no device named reports *"Trying to use DRM render node for device 0"*
+and loads `iHD_drv_video.so`.
+
+There are two defaults, not one, and the difference is by design:
+
+| A client that asks for | Gets |
+|---|---|
+| a DRM display with no device (`vainfo --display drm`, ffmpeg, anything opening a render node) | **Intel** |
+| a Wayland display (`vainfo` with no arguments, clients going through the compositor) | **the Radeon** — libva opens the compositor's GPU there, which is what the pin makes it |
+
+So "the iGPU is the default video device" is true of the DRM path and false
+of the Wayland one, and no setting changes that: libva has no device-selection
+variable (intel/libva#221 and #752, both open, no code), and
+`LIBVA_DRIVER_NAME` is not one — it applies to every display and would break
+VA-API on the Radeon. Upstream's measurements on
 this hardware — identical sources, matched bitrate targets — put H.264 encode
 at about 3.7× the Radeon's rate, reaching the same VMAF with a third fewer
 bits, plus VP9 and 10-bit HEVC decode the Polaris card does not have.
@@ -179,6 +194,19 @@ unless told otherwise, so `imac-gpu.lua` sets
 `AQ_DRM_DEVICES=/dev/dri/amd-card` — guarded, because an entry that does not
 exist leaves aquamarine with no GPU at all. Wayland, GL and Vulkan clients
 follow the compositor and stay on the Radeon.
+
+What the HD 630 offers here, in full — `vainfo` reports 32 profile and
+entrypoint pairs:
+
+- **decode:** H.264 (Baseline, Main, High), HEVC Main and **Main10**, VP9
+  Profile 0 and **Profile 2**, VP8, VC-1 (all three), MPEG-2, JPEG
+- **encode:** H.264 (plus a low-power path), HEVC Main and **Main10**, VP8,
+  MPEG-2, JPEG
+
+Against the Radeon that adds VP9 and VP8 decode, VC-1 aside, and HEVC Main10
+*encode*, none of which Polaris has. Kaby Lake has no AV1 at all and no VP9
+encode, and tops out near 4096x2304, so 5K captures must be scaled before
+encoding on either chip.
 
 | Application | Device |
 |---|---|
@@ -191,19 +219,24 @@ Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
 and amdgpu → radeonsi on its own.
 
-## Suspend is the open question
+## Suspend, which was the open question
 
 The repository this comes from **masks sleep entirely** — its own notes list
 i915 among the suspend suspects "now that macOS mode binds it". So macOS mode
-has never run on a machine where suspend works, which on the iMac18,3 is
+had never run on a machine where suspend works, which on the iMac18,3 is
 exactly what the `suspend` module delivers here.
 
-macOS mode adds a second PCI device with runtime PM to the sleep path, leaves
-`i2c_i801` unbound while a udev rule force-enables `00:1f.4`, and swaps in a
-recompiled SSDT. Any of those could land in the suspend path. **Test them
-together before trusting either**: apply `macos`, reboot, and run repeated
-s2idle cycles the way the suspend work was validated. If sleep regresses,
-`--remove macos` puts it back.
+**Tested on 2026-09-21 and it holds.** Two s2idle cycles in one boot with
+macOS mode on: both entered and returned, tasks restarted cleanly, no device
+failed to suspend and i915 said nothing at all on the way through. The second
+cycle is the one that matters on this machine — before the XHC1 fix, the
+first sleep of every boot worked and the second always reset it.
+
+That is two cycles, not a fortnight. macOS mode still adds a second PCI
+device with runtime PM to the sleep path, leaves `i2c_i801` unbound while a
+udev rule force-enables `00:1f.4`, and swaps in a recompiled SSDT, so keep an
+eye on sleep after applying it. If it ever regresses, `--remove macos` puts
+it back.
 
 ## Recovery
 

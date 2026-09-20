@@ -94,15 +94,36 @@ cat /proc/asound/cards
 for c in /proc/asound/card*/codec#*; do echo "$c: $(head -1 "$c")"; done
 command -v wpctl >/dev/null && wpctl status 2>/dev/null | sed -n '/Audio/,/Video/p' | grep -E 'Sinks|Sources|\*|[0-9]+\.' | head -20
 
+# Profiles, in full. An earlier version filtered to H.264/HEVC/VP9 and cut the
+# list at 14 lines, which hid VP9, VP8, VC-1, JPEG and MPEG-2 and made the
+# chip look less capable than it is.
+va_profiles() {   # va_profiles <render node> <entrypoint regex>
+	vainfo --display drm --device "$1" 2>/dev/null | grep -E "$2" \
+		| awk '{print $1}' | sed 's/VAProfile//; s/:$//' | sort -u | tr '\n' ' '
+}
 hdr "VA-API"
-if command -v vainfo >/dev/null; then
+if ! command -v vainfo >/dev/null; then
+	echo "vainfo missing (libva-utils)"
+else
+	# Which chip an application gets when it names no device. These differ,
+	# and the difference is the design: libva opens the compositor's GPU on
+	# a Wayland display, and the first render node on a DRM one.
+	echo "the device an app gets when it names none:"
+	for mode in drm wayland; do
+		line=$(vainfo --display $mode 2>/dev/null | grep -m1 'Driver version' | sed 's/.*Driver version: //')
+		printf '  %-8s %s\n' "$mode" "${line:-unavailable}"
+	done
+	echo "  drm is ffmpeg and anything opening a render node directly: that must be Intel."
+	echo "  wayland follows the compositor, so it is the Radeon on purpose."
 	for n in intel-render amd-render; do
 		[[ -e /dev/dri/$n ]] || continue
 		echo "--- $n"
-		vainfo --display drm --device /dev/dri/$n 2>&1 | grep -E 'Driver version|VAProfile(H264|HEVC|VP9).*(EncSlice|VLD)' | head -14
+		printf '  driver: %s\n' "$(vainfo --display drm --device "/dev/dri/$n" 2>/dev/null | grep -m1 'Driver version' | sed 's/.*Driver version: //')"
+		printf '  decode: %s\n' "$(va_profiles "/dev/dri/$n" 'VAEntrypointVLD')"
+		printf '  encode: %s\n' "$(va_profiles "/dev/dri/$n" 'VAEntrypointEnc')"
+		lp=$(va_profiles "/dev/dri/$n" 'VAEntrypointEncSliceLP')
+		[[ -n ${lp// /} ]] && printf '  low-power encode: %s\n' "$lp"
 	done
-else
-	echo "vainfo missing (libva-utils)"
 fi
 
 hdr "GT idle"
