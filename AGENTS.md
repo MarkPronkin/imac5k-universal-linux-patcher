@@ -33,7 +33,17 @@ live too (`max_brightness` 96, `ACPI: Table Upgrade: override
 are two VA-API defaults, not one — a DRM display with no device named gets
 Intel (ffmpeg does), a Wayland display gets the compositor's GPU, which the
 pin makes the Radeon. No setting changes that; libva has no device-selection
-variable. Full write-up: [docs/macos-mode.md](docs/macos-mode.md).
+variable.
+
+**Cross-GPU video decode does work, in a WebKit browser.** Firefox closed it
+WONTFIX (bug 1738545, this exact hardware pairing) and Chromium fails the
+frame import, but WebKit decodes through GStreamer, whose `va` plugin is
+multi-device: the unprefixed elements are the Intel ones here, `decodebin`
+picks `GstVaVp9Dec` unprompted, and Epiphany played VP9 with its web process
+holding both render nodes and the Intel GT 10-12% busy. Needs `gst-plugin-va`,
+which on Arch is its own package and not part of `gst-plugins-bad`. Upstream
+only ever tried Firefox and Chromium, so this is new. Full write-up:
+[docs/macos-mode.md](docs/macos-mode.md).
 
 **Release 0.2.3-alpha (2026-09-17):** from `test`. The suspend module follows
 t2linux on T2 iMacs (iMac Pro, 2020 iMacs): it requires linux-t2's `t2bce`,

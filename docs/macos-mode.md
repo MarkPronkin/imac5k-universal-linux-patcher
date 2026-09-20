@@ -240,6 +240,37 @@ For YouTube specifically, an extension that forces H.264 gets hardware
 decoding on either chip today. AV1 is absent from both, and that one is a
 plain hardware limit.
 
+### Except in a WebKit browser, where it works
+
+Tested 2026-09-21 with Epiphany (WebKitGTK 6.0) and `gst-plugin-va`
+installed: **VP9 decodes on the Intel chip and displays through the Radeon,
+in a browser.** The `WebKitWebProcess` playing the video holds both
+`/dev/dri/renderD128` and `/dev/dri/renderD129` at once, the Intel GT runs
+10–12% busy instead of idle, and the picture is correct — none of the green
+or corrupted output the Mozilla bug reports from cross-GPU attempts.
+
+WebKit decodes through GStreamer, and GStreamer is the only stack here that
+is multi-device by design. Its `va` plugin enumerates every render node and
+names the extra ones after theirs, so on this machine the unprefixed
+elements — the ones with default rank — are the Intel ones:
+
+```
+va:  vah264dec: VA-API H.264 Decoder in Intel(R) Gen Graphics
+va:  vavp9dec:  VA-API VP9 Decoder in Intel(R) Gen Graphics
+va:  varenderD129h264dec: VA-API H.264 Decoder in AMD Radeon Pro 580X in renderD129
+```
+
+`decodebin` picks `GstVaVp9Dec` on its own, so no configuration is needed at
+all; `GST_PLUGIN_FEATURE_RANK=varenderD129h264dec:MAX` is how to send a codec
+back to the Radeon if that is ever wanted. On Arch the plugin is its own
+package, `gst-plugin-va` — it is **not** in `gst-plugins-bad`.
+
+Cost, measured on one stream rather than a benchmark: the web process sat at
+about a third of one core with everything included — decode, page rendering,
+compositing, the cross-GPU copy and audio. Upstream measured 4K VP9 on the
+CPU at about 1.1 cores, so the copy does not eat the saving. What has not
+been measured is power, or how this scales to 4K60.
+
 Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
 and amdgpu → radeonsi on its own.
