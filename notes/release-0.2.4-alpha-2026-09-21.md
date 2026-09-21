@@ -48,4 +48,32 @@ Upgrade the tool, then `imac-patcher --apply eq` to install the new tuning.
 To opt into macOS mode on a supported system, run `imac-patcher --apply macos`
 and reboot. Upgrading the tool alone applies neither module.
 
-Publication details and verification results will be recorded after publishing.
+## Publication
+
+- Published [v0.2.4-alpha](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/releases/tag/v0.2.4-alpha)
+  at 00:38:17 UTC, 2026-09-21, as a prerelease targeting `test`.
+- Annotated tag points at `ce253394ea6728ef6431bb962cc917454835e77a`.
+  The branch and tag were pushed atomically; `main` was not changed.
+- GitHub confirms `MarkPronkin` as release author and uploader of both assets.
+- Archive: 339786 bytes. SHA-256:
+  `0c599c1b7800fa28e7ea3e6ac4343b1d9d9ee7d84c7aba2805186ef915420771`.
+- Two builds from the tag in fresh clones were byte-identical, including the
+  single-release `SHA256SUMS`. Published files were downloaded and compared
+  byte-for-byte with the build. Archive VERSION, COMMIT, macOS-mode runtime
+  files, both tuning configs, all WAVs and licence were verified; no
+  development notes, tests or workflow files are included.
+- Fresh tagged checkout: `IMAC5K_REQUIRE_STARTUP_TESTS=1
+  IMAC5K_REQUIRE_T2_AUDIO_TESTS=1 IMAC5K_REQUIRE_EQ_AUDIO_TESTS=1
+  ./scripts/check.sh` passed **516 tests, no skips**. Log:
+  `/tmp/imac5k-release-0.2.4.c27tKz/check.log`.
+- The published release installed successfully into a scratch data/bin
+  directory with checksum verification. `--version` reports `0.2.4-alpha`;
+  COMMIT matches the tag. No host installation or live module was changed.
+- Build, second build, downloaded assets and scratch install are under
+  `/tmp/imac5k-release-0.2.4.c27tKz/`.
+- GitHub [release verification 35548328884](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/35548328884)
+  passed: tag/prerelease metadata, offline checks, required isolated startup
+  checks, rebuild and byte comparison with both published assets.
+- GitHub [branch check 35548326728](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/35548326728)
+  passed at the released commit. The following documentation-only commit
+  records publication on `test`; the release tag remains at `ce25339`.

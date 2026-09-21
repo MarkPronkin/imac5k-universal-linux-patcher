@@ -85,3 +85,15 @@ The sandbox blocks private sockets and writing temporary Git objects used by
 release tests. Validation runs outside it as a normal user; no system patches
 are applied. The first private DSP run needed its JSON test-server config
 formatted for PipeWire's parser; both tuning versions passed after that fix.
+
+## Subsequent verification and release
+
+After the original local-only commit, a read-only check confirmed that the
+new graph and all four responses were installed and the service had restarted
+after installation. The tuned sink was running and selected as default; all
+four DSP links actively fed the built-in four-channel speaker device. This
+verifies installation and routing, not the acoustic response.
+
+The owner then explicitly requested pushing the complete local `test` branch
+and publishing 0.2.4-alpha. That supersedes the original publication limit;
+see [the release record](release-0.2.4-alpha-2026-09-21.md).

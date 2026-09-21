@@ -1,6 +1,14 @@
 # Current work checkpoint
 
-**Speaker retune, issue #6 (2026-09-21):** on local `test`, vendored
+**Release 0.2.4-alpha (2026-09-21):** published from `test` as requested,
+including all previously local macOS/video work and the speaker retune.
+Annotated tag `v0.2.4-alpha` points at `ce25339`; release author and asset
+uploader are MarkPronkin. 516 tests pass in the tagged checkout; reproducible
+archive and scratch installation of the published release verified. GitHub
+branch checks and release verification passed at the tagged commit.
+`main` is unchanged. See [the release record](notes/release-0.2.4-alpha-2026-09-21.md).
+
+**Speaker retune, issue #6 (2026-09-21):** on `test`, vendored
 taprobane99/iMac5KLinux's `d82e423` audio tuning, with crossover/EQ in the
 new `-48k` FIRs. Preserved the previous config and WAVs; select them with
 `IMAC5K_EQ_TUNING=legacy ./scripts/imac-patcher --apply eq`. Installation
