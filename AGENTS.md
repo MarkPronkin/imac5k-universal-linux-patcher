@@ -26,7 +26,7 @@ preflight refuses a GRUB without the EFI-stub loader, identified by
 checked against Arch's packages: absent in 2.06.r499, present in r591 and 2.12+.
 On both backends the hook is now installed last, so a failed apply cannot leave
 it editing images that lack the parameters. The brightness table, the SMBus
-rule and the NVRAM save work unchanged on GRUB. 549 tests pass (33 new). The
+rule and the NVRAM save work unchanged on GRUB. 550 tests pass (34 new). The
 hook's modes were also run on a scratch copy of the real 7.2.5 kernel: 14 bytes
 edited, restored byte-identical. **Not booted on GRUB hardware.** No GRUB tool
 was run on this Omarchy machine, per the standing constraint. CachyOS
