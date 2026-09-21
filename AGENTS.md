@@ -1,5 +1,16 @@
 # Current work checkpoint
 
+**Speaker retune, issue #6 (2026-09-21):** on local `test`, vendored
+taprobane99/iMac5KLinux's `d82e423` audio tuning, with crossover/EQ in the
+new `-48k` FIRs. Preserved the previous config and WAVs; select them with
+`IMAC5K_EQ_TUNING=legacy ./scripts/imac-patcher --apply eq`. Installation
+handles all bundled WAVs, detects tuning updates, and keeps the stable sink
+name and detected speaker target despite upstream's name/routing changes.
+516 tests pass, including both graphs rendering four channels on an isolated
+PipeWire server. No live apply or listening validation. **Owner explicitly
+requested local commit only; do not push this work on that authorization.**
+Review and validation: [notes/speaker-retune-issue6-2026-09-21.md](notes/speaker-retune-issue6-2026-09-21.md).
+
 **macOS mode ported (2026-09-21):** on `test`, a new `macos` module brings
 ahmadtv/omarchy-imac18-3's `set_os` work here — the Intel HD 630 exposed
 headless as the default video GPU, and a backlight that actually dims, over

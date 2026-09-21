@@ -547,9 +547,8 @@ mod_audio_remove() {
 # ═══════════════════════ module: eq ════════════════════════════════════════
 #
 # Speaker tuning by taprobane99 (github.com/taprobane99/iMac5KLinux), measured
-# with a calibrated microphone: a PipeWire filter-chain that crosses the four
-# speaker channels over at 3.8 kHz, EQs each way, and convolves each with a
-# measured impulse response. Only the Audio/ part of that project is used --
+# with a calibrated microphone: a PipeWire filter-chain whose FIR responses
+# contain the four-channel crossover and EQ. Only the Audio/ part is used --
 # nothing of its kernel, display or GRUB work is touched here.
 #
 # The tuning is vendored under assets/imac-audio rather than downloaded at
@@ -559,6 +558,12 @@ mod_audio_remove() {
 # reaches users as a tuning that sounds different, or as a sink that does not
 # load at all. See assets/imac-audio/README.md for provenance and licence.
 EQ_ASSETS="${SCRIPT_DIR}/../assets/imac-audio"
+# The previous measured tuning remains available for listening comparisons.
+EQ_TUNING=${IMAC5K_EQ_TUNING:-current}
+EQ_SOURCE_CONF=iMacAudio.conf
+[[ $EQ_TUNING == legacy ]] && EQ_SOURCE_CONF=iMacAudio-legacy.conf
+EQ_TUNING_STATE="${LOGDIR}/eq-tuning"
+EQ_IRS_STATE="${LOGDIR}/eq-irs"
 # The graph runs in a PipeWire client of its own, not in the session daemon,
 # so that headphone switching can take the tuned sink away and put it back: a
 # module loaded by the daemon lives exactly as long as the daemon does. The
@@ -577,8 +582,16 @@ EQ_LEGACY_CONF="${HOME}/.config/pipewire/pipewire.conf.d/imac-audio.conf"
 # files behind. The paths inside the config are rewritten to match.
 EQ_UPSTREAM_IRS_DIR=/usr/share/imac-audio
 EQ_IRS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/imac-audio"
-EQ_IRS=("Filters L Aug 14-MP.wav" "Filters R Aug 14-MP.wav"
-        "Filters C2 Aug 16-MP.wav" "Filters LFE Aug 16-MP.wav")
+# Discover every bundled rate, including the preserved legacy responses.
+# Never glob the destination: it may also hold files belonging to the user.
+eq_list_irs() {
+    local f LC_ALL=C
+    for f in "$EQ_ASSETS"/*.wav; do
+        [[ -f $f ]] && printf '%s\0' "${f##*/}"
+    done
+    return 0
+}
+mapfile -d '' -t EQ_IRS < <(eq_list_irs)
 EQ_SINK=audio_effect.iMac-convolver
 # The chain's own output is a playback stream, so desktops list it beside real
 # applications: upstream calls it "iMac Speakers DSP Out" and it shows up while
@@ -854,7 +867,9 @@ eq_build_bankstown() (
 mod_eq_detect() {
     imac_eq_supported || { echo n/a; return; }
     command -v pactl >/dev/null || { echo n/a; return; }
-    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 wait=0 real=0 f card profile
+    local conf=0 irs=1 units=0 jack=0 output=0 pin=0 wait=0 real=0 tuning=0 f card profile
+    mapfile -d '' -t EQ_IRS < <(eq_list_irs)
+    ((${#EQ_IRS[@]})) || irs=0
     [[ -f $EQ_BASE_CONF && -f $EQ_CONF ]] && conf=1
     for f in "${EQ_IRS[@]}"; do [[ -f "${EQ_IRS_DIR}/${f}" ]] || irs=0; done
     eq_units_installed && units=1
@@ -874,13 +889,17 @@ mod_eq_detect() {
     # And one from before the sink presented itself as a real output has no
     # entry in the desktop's sound picker at all. Also repaired by re-applying.
     grep -qs -- '"node.virtual": "false"' "$EQ_CONF" && real=1
+    # Files and a running sink alone cannot distinguish an older DSP graph.
+    if [[ -s $EQ_TUNING_STATE && -s $EQ_ASSETS/$EQ_SOURCE_CONF ]]; then
+        [[ $(cat "$EQ_TUNING_STATE") == "$(eq_tuning_digest)" ]] && tuning=1
+    fi
     if [[ -n ${card:-} ]] && eq_headphones_present "$card"; then
         eq_sink_exists "$(eq_aux_sink "$card")" && output=1
     else
         eq_sink_exists "$EQ_SINK" \
             && [[ ${profile:-} == "$EQ_PROFILE_40" ]] && output=1
     fi
-    if   (( conf && irs && units && jack && output && pin && wait && real )); then echo applied
+    if   (( conf && irs && units && jack && output && pin && wait && real && tuning )); then echo applied
     elif (( conf || irs || units || jack || output )) || [[ -f $EQ_PROFILE_STATE || -f $EQ_VOLUME_STATE ]]; then echo partial
     else echo not-applied; fi
 }
@@ -925,14 +944,37 @@ eq_plugins() {
 # Checked before anything is installed, so a checkout missing the tuning says
 # so instead of leaving a half-installed graph that cannot load.
 eq_assets_present() {
-    local f
-    for f in iMacAudio.conf "${EQ_IRS[@]}"; do
+    local f count=0
+    case $EQ_TUNING in
+        current|legacy) ;;
+        *) warn "unknown IMAC5K_EQ_TUNING: $EQ_TUNING (use current or legacy)"; return 1 ;;
+    esac
+    mapfile -d '' -t EQ_IRS < <(eq_list_irs)
+    for f in "$EQ_SOURCE_CONF" "${EQ_IRS[@]}"; do
         [[ -s "${EQ_ASSETS}/${f}" ]] || {
             warn "the speaker tuning is missing from this checkout: ${EQ_ASSETS}/${f}"
             warn "re-install the tool, or fetch the release archive again."
             return 1
         }
     done
+    # Globbing alone would silently omit a missing response. Check all paths
+    # the selected graph actually references, including arrays of sample rates.
+    while IFS= read -r f; do
+        f=${f#\"${EQ_UPSTREAM_IRS_DIR}/}; f=${f%\"}
+        if [[ $f == */* || ! -s $EQ_ASSETS/$f ]]; then
+            warn "the speaker tuning is missing from this checkout: ${EQ_ASSETS}/${f}"
+            return 1
+        fi
+        count=$((count + 1))
+    done < <(grep -oE '"/usr/share/imac-audio/[^\"]+\.wav"' "$EQ_ASSETS/$EQ_SOURCE_CONF")
+    ((count > 0)) || { warn "the speaker tuning has no impulse-response paths"; return 1; }
+}
+
+eq_tuning_digest() {
+    # Include the responses: upstream can retune them without renaming files
+    # or changing the graph. Relative names keep this stable across installs.
+    (cd "$EQ_ASSETS" && LC_ALL=C sha256sum -- "$EQ_SOURCE_CONF" "${EQ_IRS[@]}") \
+        | sha256sum | cut -d ' ' -f 1
 }
 
 mod_eq_apply() {
@@ -965,21 +1007,28 @@ mod_eq_apply() {
     local src="$EQ_ASSETS" f
     for f in "${EQ_IRS[@]}"; do
         install -Dm644 "${src}/${f}" "${EQ_IRS_DIR}/${f}" || return 1
+        # Remember even files from older bundles for removal after an upgrade.
+        grep -Fxqs -- "$f" "$EQ_IRS_STATE" || printf '%s\n' "$f" >> "$EQ_IRS_STATE" || return 1
     done
-    install -Dm644 "${src}/iMacAudio.conf" "$EQ_CONF" || return 1
+    install -Dm644 "${src}/${EQ_SOURCE_CONF}" "$EQ_CONF" || return 1
     local ir_replacement=${EQ_IRS_DIR//\\/\\\\}
     ir_replacement=${ir_replacement//&/\\&}
     ir_replacement=${ir_replacement//|/\\|}
     sed -i "s|${EQ_UPSTREAM_IRS_DIR}/|${ir_replacement}/|g" "$EQ_CONF" || return 1
     grep -Fqs -- "${EQ_IRS_DIR}/" "$EQ_CONF" || {
         warn "the upstream config no longer points at ${EQ_UPSTREAM_IRS_DIR} -- check ${EQ_CONF}"; return 1; }
+    # Upstream now labels its measured model, including in the sink name.
+    # Keep our public sink identity: the jack switcher and saved routes use it.
+    sed -i 's|iMac 17,1|iMac|g' "$EQ_CONF" || return 1
+    grep -Fqs -- "\"node.name\": \"${EQ_SINK}\"" "$EQ_CONF" || {
+        warn "could not preserve the tuned speaker sink name"; return 1; }
     # Cosmetic, unlike the paths above, so a config that no longer carries the
     # name upstream used is worth saying out loud but not worth refusing over.
     sed -i "s|\"${EQ_UPSTREAM_DSP_NODE}\"|\"${EQ_DSP_NODE}\"|" "$EQ_CONF" || return 1
     grep -qs -- "$EQ_DSP_NODE" "$EQ_CONF" \
         || warn "could not rename the tuning's output node; it will be listed as an application"
-    # Pin the chain's output to the four-channel speaker device. Upstream sets
-    # no target, so WirePlumber treats that playback node like any other
+    # Pin the chain's output to the detected four-channel speaker device.
+    # Without a target, WirePlumber treats that playback node like any other
     # stream: it links to the default device and re-links every time the
     # default changes. Plug in a USB DAC and the measured crossover and EQ are
     # folded into its two channels, playing on the DAC. Functional, unlike the
@@ -996,13 +1045,17 @@ mod_eq_apply() {
     grep -qs -- '"node.virtual": "false"' "$EQ_CONF" || {
         warn "could not mark the tuned sink as a real output -- it would not appear in sound pickers"; return 1; }
     local target="alsa_output.${card#alsa_card.}.analog-surround-40"
-    sed -i "s|\"playback.props\": {|\"playback.props\": {\n                \"target.object\": \"${target}\",\n                \"node.dont-move\": \"true\",|" "$EQ_CONF" || return 1
+    # Replace upstream's fixed PCI target and permissive fallback, rather than
+    # inserting duplicate keys whose order could override the detected target.
+    sed -i '/"target.object":/d; /"node.dont-move":/d; /"node.dont-fallback":/d' "$EQ_CONF" || return 1
+    sed -i "s|\"playback.props\": {|\"playback.props\": {\n                \"target.object\": \"${target}\",\n                \"node.dont-move\": \"true\",\n                \"node.dont-fallback\": \"true\",|" "$EQ_CONF" || return 1
     grep -qs -- "\"target.object\": \"${target}\"" "$EQ_CONF" || {
         warn "could not pin the tuning to the 4.0 speaker device -- check ${EQ_CONF}"; return 1; }
     eq_write_base_conf || return 1
     eq_write_hide_rule "$card" || return 1
     eq_install_jack_helper || return 1
     eq_write_units "$card" || return 1
+    eq_tuning_digest > "$EQ_TUNING_STATE" || return 1
     # An install from before headphone switching loaded the same graph in the
     # daemon. Left behind it is a second copy of the chain that no service can
     # stop, so the tuned sink would never go away for the jack.
@@ -1184,6 +1237,16 @@ mod_eq_remove() {
     # put something else in is theirs.
     rmdir "$EQ_CONF_DIR" 2>/dev/null || true
     for f in "${EQ_IRS[@]}"; do rm -f -- "$EQ_IRS_DIR/$f" || result=1; done
+    if [[ -f $EQ_IRS_STATE ]]; then
+        while IFS= read -r f; do
+            # A damaged manifest must never turn removal into a path traversal.
+            [[ $f == *.wav && $f != */* ]] || { result=1; continue; }
+            rm -f -- "$EQ_IRS_DIR/$f" || result=1
+        done < "$EQ_IRS_STATE"
+    fi
+    if ((result == 0)); then
+        rm -f "$EQ_IRS_STATE" "$EQ_TUNING_STATE" || result=1
+    fi
     rmdir "$EQ_IRS_DIR" 2>/dev/null || true
     eq_restart_pipewire
     # After the restart, for the same reason as in apply.

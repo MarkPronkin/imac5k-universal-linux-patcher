@@ -128,6 +128,8 @@ class ReleaseTests(unittest.TestCase):
                        # archive without it installs a graph that cannot load.
                        "assets/imac-audio/iMacAudio.conf",
                        "assets/imac-audio/Filters L Aug 14-MP.wav",
+                       "assets/imac-audio/Filters L Aug 14-MP-48k.wav",
+                       "assets/imac-audio/iMacAudio-legacy.conf",
                        # MIT requires its notice to travel with the copies.
                        "assets/imac-audio/LICENSE",
                        "configs/monitors.lua", "patches/imac5k-lean-core-7.2.x.patch"):

@@ -171,16 +171,23 @@ does nothing but run the same cargo build. A distribution package or a copy
 you built yourself is found first and nothing is built. `--remove eq` deletes
 only a bundle this module built, never one that was already there.
 
-**No network access.** `iMacAudio.conf` and the four impulse-response WAVs are
-vendored in this repository under `assets/imac-audio/` and installed from the
+**No network access for tuning assets.** The current and legacy configs and
+all impulse-response WAVs are vendored in this repository under `assets/imac-audio/` and installed from the
 checkout into `~/.config/pipewire/imac-speaker-eq.conf.d/` and
 `~/.local/share/imac-audio/`. They were previously downloaded from
 https://github.com/taprobane99/iMac5KLinux at apply time, which tied every
 install to that project's `main` branch. See `assets/imac-audio/README.md` for
-provenance, checksums and licence.
-Three things are rewritten in the vendored graph: the impulse-response paths,
-the name of the chain's own output node, which desktops would otherwise list
-beside real applications, and `node.virtual`, which upstream ships as `true`.
+provenance, checksums and licence. The current graph embeds the crossover and
+EQ in its FIRs; the legacy graph retains the separate filter stages. Use
+`IMAC5K_EQ_TUNING=legacy imac-patcher --apply eq` for the previous tuning.
+The module records a digest of the selected config and bundled responses so
+an older installation reports `partial` until reapplied, even when its sink
+is still working.
+Apply rewrites the impulse-response paths, preserves the stable speaker sink
+name and label, renames the chain's own output node, and replaces upstream's
+fixed PCI target with the detected four-channel device. It sets
+`node.dont-move=true` and `node.dont-fallback=true` so the graph stays on those
+speakers. It also rewrites `node.virtual`, which upstream ships as `true`.
 That property makes pipewire-pulse withhold the sink's PulseAudio `HARDWARE`
 flag, and desktop pickers list only hardware sinks — so with the raw 4.0 device
 hidden, KDE's sound settings showed no output device at all while the speakers
@@ -189,7 +196,7 @@ cannot, since a sink no picker will show is invisible to everything except the
 ear. An install predating that reports `partial` so re-applying repairs it. The base config beside it, which makes it a
 standalone PipeWire client, is this project's own.
 Nothing is written as root, and nothing from that project other than those
-five files is used. A WirePlumber drop-in of this project's own,
+audio configs and responses is used. A WirePlumber drop-in of this project's own,
 `~/.config/wireplumber/wireplumber.conf.d/51-imac-hide-raw-speakers.conf`,
 hides the raw 4.0 device from sound pickers and names the jack output
 **Aux Audio Output**, for as long as the tuning is installed. The switching

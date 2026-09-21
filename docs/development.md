@@ -31,13 +31,14 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
 | `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, unidentified-image refusal, and matching lean stacks across installers |
 | `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
-| `test_eq.py` | Speaker routing and volume restoration |
+| `test_eq.py` | Speaker routing, volume restoration, tuning upgrades, all-rate asset installation and legacy selection |
 | `test_t2speakers.py` | T2 speaker identity, channel counts, live ports/mixer, ownership, apply rollback and removal recovery |
 | `test_t2speakers_audio.py` | Optional private PipeWire graph: reproduces silent rear channels and checks actual four-channel output from stereo, mono, and PulseAudio clients |
 | `test_suspend.py`, `test_tb_sleep_hook.py`, `test_wifi_sleep_hook.py` | Sleep target masks, the s2idle sleep drop-in and old boot-argument cleanup; the T2 rules (t2bce bound, no T2 unload hooks, no s2idle drop-in) against a fake PCI tree; the iMac18,3 USB controller fix (DKMS build, boot load, detection, removal, Secure Boot) against fake DKMS and sysfs; the Thunderbolt and Wi-Fi sleep hooks against a fake sysfs tree |
 | `test_xhci_fix.py` | The USB controller fix's DKMS package, boot-load file and release path agree with the patcher; its source skips XHC1's ACPI power methods instead of holding D0; the model gate and startup audit |
 | `test_audio_jack.py` | Headphone jack detection, which streams follow the jack, and the two switching transitions |
 | `test_eq.py::VendoredTuningTests` | That the vendored tuning is present, matches its recorded checksums, and still carries what apply rewrites |
+| `test_eq_audio.py` | Optional real PipeWire/LV2 test: current and legacy tuning render all four channels and link only to a private virtual speaker device |
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
 | `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
@@ -83,6 +84,17 @@ They skip when these tools or Unix sockets are unavailable. Require them with:
 IMAC5K_REQUIRE_T2_AUDIO_TESTS=1 python3 -m unittest discover -s tests -p 'test_t2speakers_audio.py' -v
 ```
 
+The speaker EQ integration test also needs the LSP and bankstown LV2 bundles.
+It installs the real tuning into a temporary home using stubbed system commands,
+then runs that graph on a private PipeWire server with no hardware monitors or
+connection to desktop audio. It checks routing and finite, non-silent samples
+on all four channels for both tuning versions. It does not measure the speakers'
+acoustic response. Require it with:
+
+```bash
+IMAC5K_REQUIRE_EQ_AUDIO_TESTS=1 python3 -m unittest discover -s tests -p 'test_eq_audio.py' -v
+```
+
 ## Code layout
 
 | Path | Responsibility |
@@ -100,12 +112,13 @@ IMAC5K_REQUIRE_T2_AUDIO_TESTS=1 python3 -m unittest discover -s tests -p 'test_t
 | `scripts/95-limine-esp-hygiene` | Omarchy/Limine ESP maintenance |
 | `install.sh`, `scripts/make-release.sh` | Download/install a release and build its reproducible archive |
 | `patches/`, `configs/` | Kernel patches and configuration templates |
-| `assets/imac-audio/` | The vendored speaker tuning: upstream's config and four impulse responses, byte-identical to the commit its README names, with upstream's MIT `LICENSE` |
+| `assets/imac-audio/` | The vendored speaker tuning: current and legacy configs and impulse responses, byte-identical to the commits its README names, with upstream's MIT `LICENSE` |
 
-Two files are carried verbatim from upstream and must stay byte-identical:
-`patches/cs8409-headset-capture.patch` and `assets/imac-audio/iMacAudio.conf`.
-`git diff --check` reports upstream's own trailing whitespace in both — do not
-"fix" it. For the tuning, `VendoredTuningTests` fails if you do.
+`patches/cs8409-headset-capture.patch` and both configs under
+`assets/imac-audio/` are carried verbatim from upstream and must stay
+byte-identical. `git diff --check` may report upstream's own trailing
+whitespace — do not "fix" it. For the tuning, `VendoredTuningTests` fails if
+you do.
 
 
 Platform overrides load after the base definitions; KDE overrides load last.

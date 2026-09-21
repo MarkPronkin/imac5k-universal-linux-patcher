@@ -47,8 +47,9 @@ AUX_SINK = ("61\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire"
 ASSET_CONF = '''"node.name": "audio_effect.iMac-convolver",
 "node.name": "effect_output.iMac-convolver",
 "node.virtual": "true",
-"filename": [ "/usr/share/imac-audio/Filters L Aug 14-MP.wav" ]
-"filename": [ "/usr/share/imac-audio/Filters LFE Aug 16-MP.wav" ]
+"filename": [ "/usr/share/imac-audio/Filters L Aug 14-MP-48k.wav" ]
+"filename": [ "/usr/share/imac-audio/Filters LFE Aug 16-MP-48k.wav" ]
+"filename": [ "/usr/share/imac-audio/Filters R Aug 14-MP-48k.wav", "/usr/share/imac-audio/Filters C2 Aug 16-MP-48k.wav" ]
             "playback.props": {
 '''
 # What apply pins the chain's output to, so a change of the default device --
@@ -57,8 +58,8 @@ SPEAKER_TARGET = "alsa_output.pci-0000_00_1f.3.analog-surround-40"
 PINNED_CONF = f'''"target.object": "{SPEAKER_TARGET}"
 "node.virtual": "false"
 '''
-IRS = ("Filters L Aug 14-MP.wav", "Filters R Aug 14-MP.wav",
-       "Filters C2 Aug 16-MP.wav", "Filters LFE Aug 16-MP.wav")
+IRS = ("Filters L Aug 14-MP-48k.wav", "Filters R Aug 14-MP-48k.wav",
+       "Filters C2 Aug 16-MP-48k.wav", "Filters LFE Aug 16-MP-48k.wav")
 
 
 
@@ -188,13 +189,14 @@ esac
 ''')
         path.chmod(0o755)
 
-    def run_eq(self, command):
+    def run_eq(self, command, tuning="current"):
         harness = f'''
 set -uo pipefail
 export PATH="{self.bin}:$PATH"
 source "{ROOT}/scripts/lib/platform.sh"
 product=iMac18,3
 SCRIPT_DIR="{ROOT}/scripts"
+IMAC5K_EQ_TUNING="{tuning}"
 HOME="{self.root}/home"; XDG_DATA_HOME="{self.root}/home/.local/share"
 CACHE="{self.root}/cache"; LOGDIR="{self.root}/state"
 mkdir -p "$HOME" "$CACHE" "$LOGDIR"
@@ -217,6 +219,7 @@ mkdir -p "$EQ_CONF_DIR" "$EQ_IRS_DIR"
 touch "$EQ_BASE_CONF"
 {write} "$EQ_CONF"
 for f in "${{EQ_IRS[@]}}"; do touch "${{EQ_IRS_DIR}}/${{f}}"; done
+eq_tuning_digest > "$EQ_TUNING_STATE"
 eq_write_units {CARD}
 {legacy}
 eq_install_jack_helper
@@ -365,9 +368,9 @@ mod_eq_apply
 echo "--- installed config ---"
 cat "$EQ_CONF"''')
         home = self.root / "home"
-        self.assertIn(f'"{home}/.local/share/imac-audio/Filters L Aug 14-MP.wav"', result.stdout)
+        self.assertIn(f'"{home}/.local/share/imac-audio/Filters L Aug 14-MP-48k.wav"', result.stdout)
         self.assertNotIn("/usr/share/imac-audio", result.stdout)
-        for name in ("Filters L Aug 14-MP.wav", "Filters LFE Aug 16-MP.wav"):
+        for name in ("Filters L Aug 14-MP-48k.wav", "Filters LFE Aug 16-MP-48k.wav"):
             self.assertTrue((home / ".local/share/imac-audio" / name).is_file())
 
     def test_the_raw_device_is_hidden_while_the_tuning_is_installed(self):
@@ -709,13 +712,127 @@ mod_eq_apply''')
         # convolvers point at files that are not there, and the sink would
         # simply never appear.
         self.stub_pactl(sinks=TUNED_SINK)
-        result = self.run_eq(self.stage_assets(missing=("Filters C2 Aug 16-MP.wav",)) + '''
+        result = self.run_eq(self.stage_assets(missing=("Filters C2 Aug 16-MP-48k.wav",)) + '''
 eq_restart_pipewire() { echo RESTARTED; }
 mod_eq_apply''')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing from this checkout", result.stdout)
         self.assertNotIn("RESTARTED", result.stdout)
         self.assertFalse((self.root / "home/.config").exists())
+
+    def test_new_bundle_keeps_sink_identity_and_replaces_the_fixed_target(self):
+        self.stub_pactl(sinks=TUNED_SINK)
+        # A different PCI address proves upstream's literal cannot win through
+        # a duplicate key. Exercise the real graph, not just the stand-in.
+        card = "alsa_card.pci-0000_02_00.0"
+        result = self.run_eq(f'''
+eq_plugins() {{ :; }}
+eq_card() {{ echo '{card} {FOUR_CHANNEL}'; }}
+eq_restart_pipewire() {{ :; }}
+eq_set_hardware_volume() {{ :; }}
+mod_eq_apply''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = (self.root / "home/.config/pipewire/imac-speaker-eq.conf.d/imac-audio.conf").read_text()
+        self.assertEqual(config.count('"target.object"'), 1)
+        self.assertIn('"target.object": "alsa_output.pci-0000_02_00.0.analog-surround-40"', config)
+        self.assertIn('"node.dont-fallback": "true"', config)
+        self.assertIn('"node.dont-move": "true"', config)
+        self.assertIn('"node.name": "audio_effect.iMac-convolver"', config)
+        self.assertIn('"node.name": "omarchy_speaker_tuning_imac5k_output"', config)
+        self.assertIn('"node.description": "iMac Speakers"', config)
+        self.assertNotIn("iMac 17,1", config)
+        self.assertNotIn("xo_hp1_l", config)
+        for path in (ROOT / "assets/imac-audio").glob("*.wav"):
+            self.assertEqual((self.root / "home/.local/share/imac-audio" / path.name).read_bytes(),
+                             path.read_bytes())
+
+    def test_future_sample_rates_are_installed_and_removed_without_a_filename_list(self):
+        self.stub_pactl(sinks=TUNED_SINK)
+        setup = self.stage_assets()
+        name = "Future filter 96k.wav"
+        (self.assets / name).write_text("future response")
+        result = self.run_eq(setup + '''
+eq_restart_pipewire() { :; }
+mod_eq_apply''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        installed = self.root / "home/.local/share/imac-audio"
+        self.assertEqual((installed / name).read_text(), "future response")
+        (installed / "user.wav").write_text("keep")
+        # Next release no longer bundles it; the ownership manifest still does.
+        (self.assets / name).unlink()
+        result = self.run_eq(setup + '''
+eq_restart_pipewire() { :; }
+mod_eq_remove''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((installed / name).exists())
+        self.assertEqual((installed / "user.wav").read_text(), "keep")
+        self.assertFalse((self.root / "state/eq-irs").exists())
+        self.assertFalse((self.root / "state/eq-tuning").exists())
+
+    def test_missing_second_rate_on_one_line_is_refused_before_install(self):
+        conf = ASSET_CONF.replace('"/usr/share/imac-audio/Filters L Aug 14-MP-48k.wav"',
+                                 '"/usr/share/imac-audio/Filters L Aug 14-MP-48k.wav", '
+                                 '"/usr/share/imac-audio/missing-96k.wav"')
+        result = self.run_eq(self.stage_assets(conf=conf) + "mod_eq_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing-96k.wav", result.stdout)
+        self.assertFalse((self.root / "home/.config").exists())
+
+    def test_empty_response_is_refused_before_install(self):
+        setup = self.stage_assets()
+        (self.assets / IRS[0]).write_bytes(b"")
+        result = self.run_eq(setup + "mod_eq_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "home/.config").exists())
+
+    def test_old_tuning_reports_partial_even_when_all_responses_are_present(self):
+        self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
+        for marker in ('rm -f "$EQ_TUNING_STATE"', 'echo old > "$EQ_TUNING_STATE"'):
+            with self.subTest(marker=marker):
+                result = self.run_eq(self.install_eq() + marker + "\nmod_eq_detect")
+                self.assertEqual(result.stdout.strip(), "partial")
+
+    def test_changed_response_with_the_same_name_requires_reapply(self):
+        self.stub_pactl(sinks=TUNED_SINK, active=FOUR_CHANNEL)
+        setup = self.stage_assets()
+        result = self.run_eq(setup + "eq_assets_present || exit 1\n" + self.install_eq() + f'''
+mod_eq_detect
+echo retuned > "$EQ_ASSETS/{IRS[0]}"
+mod_eq_detect''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["applied", "partial"])
+
+    def test_legacy_tuning_can_be_reapplied_with_the_same_routing_guards(self):
+        self.stub_pactl(sinks=TUNED_SINK)
+        result = self.run_eq('''
+eq_plugins() { :; }
+eq_restart_pipewire() { :; }
+mod_eq_apply && mod_eq_detect''', tuning="legacy")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(result.stdout.rstrip().endswith("applied"))
+        config = (self.root / "home/.config/pipewire/imac-speaker-eq.conf.d/imac-audio.conf").read_text()
+        self.assertIn("xo_hp1_l", config)
+        self.assertIn("Filters L Aug 14-MP.wav", config)
+        self.assertIn('"node.dont-fallback": "true"', config)
+        self.assertEqual(config.count('"target.object"'), 1)
+
+    def test_unknown_tuning_selection_is_refused_before_install(self):
+        result = self.run_eq('mod_eq_apply', tuning="typo")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown IMAC5K_EQ_TUNING", result.stdout)
+        self.assertFalse((self.root / "home/.config").exists())
+
+    def test_removal_refuses_paths_outside_the_response_directory(self):
+        self.stub_pactl(active=FOUR_CHANNEL)
+        result = self.run_eq('''
+mkdir -p "$EQ_IRS_DIR"
+echo keep > "$EQ_IRS_DIR/../outside.wav"
+echo '../outside.wav' > "$EQ_IRS_STATE"
+eq_restart_pipewire() { :; }
+mod_eq_remove''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.root / "home/.local/share/outside.wav").read_text(), "keep\n")
+        self.assertTrue((self.root / "state/eq-irs").exists())
 
 
     # ── bankstown, built rather than taken from the AUR ───────────────────
@@ -808,13 +925,13 @@ class VendoredTuningTests(unittest.TestCase):
     ASSETS = ROOT / "assets/imac-audio"
 
     def test_every_file_the_module_installs_is_present(self):
-        source = PATCHER.read_text()
-        names = re.search(r"EQ_IRS=\((.*?)\)", source, re.S).group(1)
-        expected = re.findall(r'"([^"]+)"', names)
-        self.assertEqual(len(expected), 4, expected)
-        for name in [*expected, "iMacAudio.conf"]:
-            with self.subTest(name=name):
-                self.assertTrue((self.ASSETS / name).is_file(), name)
+        for config in ("iMacAudio.conf", "iMacAudio-legacy.conf"):
+            paths = re.findall(r'"/usr/share/imac-audio/([^"\n]+\.wav)"',
+                               (self.ASSETS / config).read_text())
+            self.assertTrue(paths, config)
+            for name in paths:
+                with self.subTest(config=config, name=name):
+                    self.assertGreater((self.ASSETS / name).stat().st_size, 0)
 
     def test_the_files_match_the_checksums_recorded_beside_them(self):
         # They are byte-identical to the upstream commit the README names, so
@@ -824,7 +941,8 @@ class VendoredTuningTests(unittest.TestCase):
         recorded = dict(
             (name, digest) for digest, name in
             re.findall(r"^([0-9a-f]{64})  (.+)$", readme, re.M))
-        self.assertEqual(len(recorded), 5, recorded)
+        expected = {p.name for p in self.ASSETS.iterdir() if p.suffix in (".conf", ".wav")}
+        self.assertEqual(set(recorded), expected)
         for name, digest in recorded.items():
             with self.subTest(name=name):
                 actual = hashlib.sha256((self.ASSETS / name).read_bytes()).hexdigest()
@@ -837,8 +955,8 @@ class VendoredTuningTests(unittest.TestCase):
         # these, a rewrite silently stops applying.
         config = (self.ASSETS / "iMacAudio.conf").read_text()
         self.assertIn("/usr/share/imac-audio/", config)
-        self.assertIn('"effect_output.iMac-convolver"', config)
-        self.assertIn('"audio_effect.iMac-convolver"', config)
+        self.assertIn('"effect_output.iMac 17,1-convolver"', config)
+        self.assertIn('"audio_effect.iMac 17,1-convolver"', config)
         self.assertIn('"playback.props": {', config)
         # The sink presents itself as a real output only because apply flips
         # this; upstream ships it "true", which hides it from sound pickers.
