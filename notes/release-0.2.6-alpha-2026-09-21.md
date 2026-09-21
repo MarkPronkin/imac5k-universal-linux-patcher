@@ -86,3 +86,22 @@ Upgrading the tool alone applies neither.
 - GitHub [branch check 35557886645](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/35557886645)
   passed at the released commit. The documentation-only commit that follows
   records this on `test`; the release tag stays at `e7d6171`.
+
+## Turned back into a draft
+
+At 03:46 UTC the owner reported that the new release appeared on `main` and
+should not, and it was made a draft again (`gh release edit v0.2.6-alpha
+--draft=true`). GitHub releases belong to the repository, not to a branch;
+`--target test` only says where the tag was cut. So a published release shows
+on the repository page, which displays `main`. Worse, `main`'s README installer
+and every installed `imac-patcher upgrade` take the newest release,
+prereleases included, and had started to deliver 0.2.6-alpha to `main`
+users.
+
+As a draft it is invisible to everyone else. The public asset download returns
+404, and the newest release anyone else sees is `v0.2.2-alpha` (target
+`main`) again. It keeps its notes, both verified assets, the prerelease flag
+and the `v0.2.6-alpha` tag on `test`. `gh release edit v0.2.6-alpha
+--draft=false` publishes it again, and that reaches `main` users at once, so
+do it only when they should get it. Until then it can be installed from a
+checkout of the tag, or its assets downloaded by an account with access.

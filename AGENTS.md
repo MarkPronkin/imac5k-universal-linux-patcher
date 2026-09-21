@@ -1,10 +1,13 @@
 # Current work checkpoint
 
-**Release 0.2.6-alpha (2026-09-21):** published from `test` at 03:33 UTC as
-a prerelease, as the owner asked. Only `test` and the new tag were pushed;
-`main` is unchanged. The tag points at `e7d6171`. Release verification
-35557925238 and branch check 35557886645 passed, and a scratch install
-reports `0.2.6-alpha`. `v0.2.3-alpha` and
+**Release 0.2.6-alpha (2026-09-21):** built, published from `test` at 03:33
+UTC and verified, then **turned back into a draft** at the owner's request.
+GitHub releases are repository-wide, so it showed on the `main` page, and
+`main`'s installer and `imac-patcher upgrade` (newest release, prereleases
+included) began delivering it. Keep it a draft until `main` users should get
+it. Only `test` and the tag (`e7d6171`) were pushed; `main` is unchanged.
+Release verification 35557925238 and branch check 35557886645 passed while it
+was published. `v0.2.3-alpha` and
 `v0.2.4-alpha` were deleted on GitHub (tags at 02:43 UTC); their local tags
 must not be pushed. Never push with `--tags` or `--follow-tags`. There is no
 0.2.5-alpha. The notes therefore cover everything since `v0.2.2-alpha`. See
