@@ -278,22 +278,28 @@ web process at 41% of a core, and it kept both render nodes open, all
 unchanged for 45 seconds. Every frame is still being decoded on the iGPU and
 none of them reach the screen.
 
-**And it is not about video either.** Epiphany's window goes black the
-moment it enters fullscreen with nothing playing at all, so this is
-WebKitGTK fullscreen on this machine, not the iGPU, not the cross-GPU
-handoff and not the decoder. `WEBKIT_GST_DMABUF_SINK_DISABLED=1` changes
-nothing, as expected once the cause is known. An earlier version of this
-section blamed the Radeon importing Intel buffers in fullscreen; that was
-wrong, and the empty-window test is what disproved it.
+**Use the Flatpak build.** Arch's `epiphany` 50.6-1 goes black the moment it
+enters fullscreen — with nothing playing at all, which is what rules out the
+iGPU, the cross-GPU handoff and the decoder in one step.
+`WEBKIT_GST_DMABUF_SINK_DISABLED=1` changes nothing, as expected once the
+cause is known. (An earlier version of this section blamed the Radeon
+failing to import Intel buffers on the fullscreen path. That was a guess
+resting on the assumption that the iGPU was involved, and an empty window
+disproved it.)
 
-What is untested: whether other WebKitGTK browsers do the same here, and
-whether the 5120x2880 stitched panel is involved — a fullscreen surface at
-that size is unusual, and this display is unusual in more than one way.
-Chromium and Firefox fullscreen are the obvious controls.
+Flathub's `org.gnome.Epiphany` 51.0 — the same application, its own
+WebKitGTK inside the Flatpak — has no such problem, and everything works
+there: a web process holding `renderD128` and `renderD129` at once, the
+Intel GT at 25% busy, correct picture, **fullscreen included**. Whether the
+version or the bundled WebKit is what differs has not been pinned down.
 
-So the useful summary for VP9: **windowed playback in a WebKit browser gets
-hardware decode on the iGPU and is correct.** Fullscreen in Epiphany is
-broken here for its own unrelated reasons.
+Its runtime ships `libgstva.so` of its own, so the host's `gst-plugin-va` is
+not needed for the browser — only for host GStreamer applications.
+
+```bash
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install flathub org.gnome.Epiphany
+```
 
 Never set `LIBVA_DRIVER_NAME` globally: libva applies it to every display and
 `iHD` everywhere would break VA-API on the Radeon. It already maps i915 → iHD
