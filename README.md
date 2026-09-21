@@ -54,11 +54,12 @@ imac-patcher --remove eq        # undo one module
 | `partial` | Some changes are present, but a required file, running driver, or setting is missing; a reboot or re-apply may be needed |
 | `n/a` | The module is unavailable for the detected hardware, desktop, or platform; the command skips it |
 
-The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `boot`, `macos`, and `5k`.
+The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `t2suspend`, `boot`, `macos`, and `5k`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
-tier. Use `safe` by itself. It can include **`suspend`, which enables suspend
-but blocks hibernate**; select individual modules to skip it. Suspend moves to
-the `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
+tier. Use `safe` by itself. It can include **`suspend` (the iMac18,3's sleep
+fixes) or `t2suspend` (T2 models), which enable suspend but block
+hibernate**; select individual modules to skip them. Either moves to the
+`boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
 hibernation setup is needed. `--apply all` applies every module not yet
 applied, boot tier included — including the long `5k` kernel-module build,
 which runs last.
@@ -97,20 +98,20 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the eight hardware/system modules, plus what each machine can decode and encode in hardware. The suspend module **enables suspend and blocks hibernate**.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the nine hardware/system modules, plus what each machine can decode and encode in hardware. Sleep is two modules, each for its own models: `suspend` holds the iMac18,3's fixes and `t2suspend` follows t2linux on T2 models; both **enable suspend and block hibernate**. The 2014-2015 models sleep with the stock kernel and need neither.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | Video codecs |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | Video codecs |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** (Limine); ⚪ GRUB untested | ✅ **Measured**, [both GPUs](#video-codecs) |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ⚪ Untested: Vega only, no iGPU to add to it |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | `suspend`: ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** (Limine); ⚪ GRUB untested | ✅ **Measured**, [both GPUs](#video-codecs) |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ⚪ Untested: Vega only, no iGPU to add to it |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ➖ N/A: untested; the iMac18,3's fixes are not offered | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. Select either sleep module only with a 5K module built from release 0.1.91-alpha or newer: the stitch-layer sleep fix is in its kernel patches.
 
 ### Video codecs
 
@@ -135,7 +136,7 @@ prints the live lists for whatever machine it is run on.
 
 Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
 |---|---|---|---|---|---|---|---|
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout | ⚪ Untested: GRUB 2.12+ with mkinitcpio; Omarchy/Limine also supported |
 | **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB | ⚪ Untested: GRUB 2.12+ + mkinitcpio |
@@ -159,7 +160,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🔊 **Speakers / mic** | CS8409 codec: kernel finds no speaker output at all. Silent machine. | ✅ Hardware-gated DKMS driver |
 | 🎚️ **Speaker tone** | Codec does zero DSP and the woofers and tweeters are driven as one stereo pair; macOS does all of it in software. | ✅ Measured 4.0 crossover, EQ and convolution |
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
-| 😴 **Suspend** | Hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, Apple's USB-controller firmware reset the machine on every second sleep, and deep S3 resets the machine. | ⚠️ Suspend works in s2idle (verified on iMac18,3, still experimental); deep S3 and hibernate blocked — see below |
+| 😴 **Suspend** | On the iMac18,3, hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, Apple's USB-controller firmware reset the machine on every second sleep, and deep S3 resets the machine. The 2014-2015 models sleep with the stock kernel. | ⚠️ Suspend works in s2idle (verified on iMac18,3, still experimental); deep S3 and hibernate blocked. T2 models get their own module (untested) — see below |
 | 🔆 **Brightness** | The firmware hands Linux a backlight that accepts writes and dims nothing, because it only drives the panel for macOS. | ✅ Dims in macOS mode, over the panel's full range (verified on iMac18,3) |
 | 🎞️ **Video encode/decode** | The Intel HD 630 next to the Radeon is hidden by the firmware, so its Quick Sync engine is unreachable and Polaris does all video. | ✅ Quick Sync headless as the default video GPU in macOS mode (verified on iMac18,3) |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
@@ -311,14 +312,34 @@ Read [docs/macos-mode.md](docs/macos-mode.md) before applying it: what gets inst
 
 ## 😴 Suspend — read this before you try it
 
-**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in five separate ways, each now fixed or worked around:
+Sleep is two modules, and each model is offered only its own; `--status` lists
+the one that applies:
+
+- **`iMac15,1` and `iMac17,1` (2014-2015)** sleep with the stock kernel and
+  need neither module; `suspend` shows as n/a.
+- **`iMac18,3` (2017)** needs the fixes in `suspend`, [below](#imac183-suspend).
+- **T2 models (`iMacPro1,1`, `iMac20,1`, `iMac20,2`)** get
+  [`t2suspend`](#t2-models-t2suspend), which follows t2linux.
+- **`iMac19,1` (2019)** is untested, and the iMac18,3's fixes are not offered
+  there.
+
+Earlier releases applied the iMac18,3's sleep fixes to every model. Where that
+left something behind on another non-T2 model — the sleep hooks, the
+s2idle drop-in, the USB controller fix, the old `idle=poll` setting, or the
+mask on all four sleep targets from the releases that blocked sleep outright —
+`suspend` shows as partial, and `imac-patcher --remove suspend` (or applying
+it) takes that back out and unmasks the four sleep targets. It does not touch
+an Omarchy hibernation setup there.
+
+### iMac18,3: `suspend`
+
+**Hibernate still hard-hangs this machine; recovery is a hard power-cycle.** Suspend failed in five separate ways, each now fixed or worked around. The first is fixed in the kernel, by the 5K module's patches; the `suspend` module carries the other four:
 
 - **The stitch-layer driver.** A commit marking the lit panel `mode_changed` (such as the HDR metadata change right after a resume) hit a `BUG_ON`, and the resume commit itself tripped over a stale cached tile stream. Both are fixed in the 5K stack since release 0.1.91-alpha (`patches/5k-logical-modeset-guard.patch`, `5k-resume-drop-cached-peer.patch`, `5k-resume-arm-link-health.patch`).
 - **The Thunderbolt controller.** Its suspend step freezes the kernel in both sleep modes. The module installs a systemd sleep hook, `/usr/lib/systemd/system-sleep/imac-tb-sleep-hook`, that detaches the controller just before sleep and reattaches it on wake.
-- **The Wi-Fi card.** Before every sleep, the BCM43602's driver (`brcmfmac`) tells the card's firmware it is about to power down and waits two seconds for an answer. The only Linux firmware for this chip, from 2015, usually never answers, and the kernel then abandons the whole suspend ("Some devices failed to suspend") and the machine comes straight back. The module installs a second sleep hook, `/usr/lib/systemd/system-sleep/imac-wifi-sleep-hook`, that detaches the card just before sleep and reattaches it on wake; Wi-Fi reconnects a few seconds later. Other Broadcom Wi-Fi chips, such as the iMac Pro's, are left alone.
-- **The USB controller's firmware (iMac18,3).** Once the machine could sleep, the first sleep of every boot worked and the second always reset it within seconds. The cause is Apple's ACPI power-down method for the Intel USB 3 controller (`\_SB.PCI0.XHC1._PS3`): it allows the chipset to power-gate the controller and then keeps accessing it, which the first sleep survives and the second does not. On the iMac18,3 the module builds a small kernel module through DKMS, `imac5k-xhci-d0`, loads it at once and has systemd load it at every boot (`/etc/modules-load.d/imac5k-xhci-d0.conf`). It stops Linux from running that firmware method while the controller still enters its low-power state, so a USB keyboard still wakes the machine. DKMS rebuilds it for new kernels whose headers are installed. Other models are left alone: whether their firmware has the same fault is unknown.
+- **The Wi-Fi card.** Before every sleep, the BCM43602's driver (`brcmfmac`) tells the card's firmware it is about to power down and waits two seconds for an answer. The only Linux firmware for this chip, from 2015, usually never answers, and the kernel then abandons the whole suspend ("Some devices failed to suspend") and the machine comes straight back. The module installs a second sleep hook, `/usr/lib/systemd/system-sleep/imac-wifi-sleep-hook`, that detaches the card just before sleep and reattaches it on wake; Wi-Fi reconnects a few seconds later. Other Broadcom Wi-Fi chips are left alone.
+- **The USB controller's firmware (iMac18,3).** Once the machine could sleep, the first sleep of every boot worked and the second always reset it within seconds. The cause is Apple's ACPI power-down method for the Intel USB 3 controller (`\_SB.PCI0.XHC1._PS3`): it allows the chipset to power-gate the controller and then keeps accessing it, which the first sleep survives and the second does not. The module builds a small kernel module through DKMS, `imac5k-xhci-d0`, loads it at once and has systemd load it at every boot (`/etc/modules-load.d/imac5k-xhci-d0.conf`). It stops Linux from running that firmware method while the controller still enters its low-power state, so a USB keyboard still wakes the machine. DKMS rebuilds it for new kernels whose headers are installed.
 - **Deep sleep (S3).** With the controller detached the machine does enter S3, but waking from it resets the machine. The module therefore has systemd suspend to idle (s2idle) instead: a drop-in, `/etc/systemd/sleep.conf.d/imac5k-s2idle.conf`, sets `MemorySleepMode=s2idle`, which systemd writes to `/sys/power/mem_sleep` before every suspend. It needs systemd 256 or newer (the module refuses older versions), leaves the boot configuration alone and takes effect at once.
-- **T2 models (`iMacPro1,1`, `iMac20,1`, `iMac20,2`).** The module follows [t2linux](https://wiki.t2linux.org/guides/postinstall/): the `t2bce` driver stack in current `linux-t2` kernels suspends and resumes the T2 itself, while the older `apple-bce` driver cannot, and unloading either around sleep can leave internal devices dead after wake. So on these models the module refuses unless `t2bce_core` drives the T2 bridge (PCI `106b:1801`), and while any sleep hook or systemd unit — such as an older T2 suspend service — unloads the T2 driver; it names those files for you to remove. It does not install the s2idle drop-in there (and removes one left over): the S3 reset was measured on the iMac18,3's firmware, and linux-t2's T2 resume work, including its fix for slow CPU bring-up after deep sleep (tested on a 27-inch T2 iMac), targets the kernel's default mode. The Thunderbolt and Wi-Fi hooks and the hibernate masks stay as on other models; the Wi-Fi hook leaves the T2 models' BCM4364 alone. None of this is hardware-tested yet.
 
 The suspend module also **unmasks `suspend.target` and keeps the hibernate family masked**:
 
@@ -329,9 +350,17 @@ sudo systemctl mask hibernate.target hybrid-sleep.target suspend-then-hibernate.
 
 **On iMac18,3 under Omarchy, repeated s2idle sleeps now resume and wake from the USB keyboard** with both hooks and the USB controller fix, loaded at boot: consecutive sleeps in one boot, including an 11-hour overnight second sleep, all came back. Releases up to 0.2.0-alpha never actually slept there: the Wi-Fi driver refused every suspend, and once it no longer did, the second sleep of each boot reset the machine. Deep S3 still resets even with the fix, so the drop-in above stays. CachyOS and Fedora are untested. Treat suspend as experimental: keep the 5K module from 0.1.91-alpha or newer, and know that a hang still means a power-cycle. On the test machine, coming back took several extra seconds while the SATA link recovered. Only suspends that go through systemd — `systemctl suspend`, the desktop's sleep action, idle timers — run the hooks and switch to s2idle; writing to `/sys/power/state` by hand bypasses them and hangs. Hibernate (`systemctl hibernate`, hybrid sleep, suspend-then-hibernate) stays masked: every one of those paths ends in hibernate, which hangs before suspend even begins, cause still unlocated.
 
-An earlier release tried `idle=poll`; it hung the same way. Applying or removing the module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
+An earlier release tried `idle=poll`; it hung the same way. Applying or removing either sleep module also deletes that leftover — the `/etc/limine-entry-tool.d/imac5k-no-cstates.conf` drop-in on Omarchy (rebuilding the boot image), the grubby kernel argument on Fedora.
 
-If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing the module returns all four sleep targets to stock, deletes both hooks and the s2idle drop-in, and unloads and removes the USB controller fix, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+If Omarchy's hibernation is set up (`omarchy-hibernation-setup`'s swapfile, resume hook and `resume=` cmdline), applying the module also offers to remove it with Omarchy's own `omarchy-hibernation-remove` — zram already covers ordinary swapping. The module then also deletes the `resume=` drop-in Omarchy's tool leaves behind and rebuilds the boot image. Removing `suspend` returns all four sleep targets to stock, deletes both hooks and the s2idle drop-in, and unloads and removes the USB controller fix, but does not restore hibernation; `omarchy-hibernation-setup` rebuilds it.
+
+### T2 models: `t2suspend`
+
+On `iMacPro1,1`, `iMac20,1` and `iMac20,2` the `t2suspend` module follows [t2linux](https://wiki.t2linux.org/guides/postinstall/): the `t2bce` driver stack in current `linux-t2` kernels suspends and resumes the T2 itself, while the older `apple-bce` driver cannot, and unloading either around sleep can leave internal devices dead after wake. So the module refuses unless `t2bce_core` drives the T2 bridge (PCI `106b:1801`), and while any sleep hook or systemd unit — such as an older T2 suspend service — unloads the T2 driver; it names those files for you to remove.
+
+It keeps the kernel's sleep mode instead of installing the s2idle drop-in: the S3 reset was measured on the iMac18,3's firmware, and linux-t2's T2 resume work, including its fix for slow CPU bring-up after deep sleep (tested on a 27-inch T2 iMac), targets the kernel's default mode. Of the iMac18,3's fixes only the Thunderbolt hook comes along, as a precaution: nobody has tested whether a T2 model needs it. The Wi-Fi hook matches no T2 model's card and the USB controller fix is specific to the iMac18,3's firmware, so applying `t2suspend` removes the Wi-Fi hook and s2idle drop-in that earlier releases installed there.
+
+The sleep policy is the same as `suspend`'s: `suspend.target` unmasked, the hibernate family masked (untried on these models), the old `idle=poll` setting removed, and on Omarchy the offer to remove the hibernation setup. `imac-patcher --remove t2suspend` returns all four sleep targets to stock and deletes the hook. **None of this is hardware-tested yet.**
 
 ---
 

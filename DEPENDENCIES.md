@@ -252,19 +252,20 @@ says the same at the point it asks for the reboot, and the saved selection in
 `~/.local/state/imac-patcher/kde-color.json` records the panel identity it was
 taken from so `--remove` never restores one panel's setting onto another.
 
-## Suspend module (safe tier; boot tier while old `idle=poll` or Omarchy hibernation config remains)
+## Sleep modules (safe tier; boot tier while old `idle=poll` or Omarchy hibernation config remains)
 
-- systemd 256 or newer (`systemctl`) — sleep target masks, the Thunderbolt
-  and Wi-Fi sleep hooks in `/usr/lib/systemd/system-sleep/`, and
+Each model is offered one: `suspend` on the iMac18,3, `t2suspend` on T2
+models (iMacPro1,1, iMac20,1, iMac20,2). The 2014-2015 models sleep with the
+stock kernel and the iMac19,1 is untested; neither module installs anything
+there, and removing what an earlier release left needs only `systemctl` (plus
+the boot tools below for an `idle=poll` leftover, and `dkms` for a USB
+controller fix).
+
+- `suspend`: systemd 256 or newer (`systemctl`) — sleep target masks, the
+  Thunderbolt and Wi-Fi sleep hooks in `/usr/lib/systemd/system-sleep/`, and
   `MemorySleepMode=` in the `/etc/systemd/sleep.conf.d/` drop-in; the module
-  refuses older systemd (T2 models get no drop-in and need no particular
-  version)
-- T2 models (iMacPro1,1, iMac20,1, iMac20,2): a `linux-t2` kernel whose
-  `t2bce_core` driver is bound to the T2 bridge (PCI `106b:1801`); the module
-  refuses with `apple-bce` or no driver, and while a sleep hook or unit in
-  `/etc/systemd/system`, `/{etc,usr/lib}/systemd/system-sleep` or
-  `/{etc,usr/lib}/elogind/system-sleep` unloads the T2 driver
-- iMac18,3 only, the USB controller fix (`imac5k-xhci-d0`): dkms, gcc, make,
+  refuses older systemd
+- `suspend`, the USB controller fix (`imac5k-xhci-d0`): dkms, gcc, make,
   kmod (`modinfo`, `depmod`, `modprobe`) and headers for the installed kernels
   (Arch: `<kernel package>-headers`, built for every kernel that has them;
   Fedora: `kernel-devel-$(uname -r)`, `elfutils-libelf-devel`, and `mokutil`
@@ -272,6 +273,12 @@ taken from so `--remove` never restores one panel's setting onto another.
   and `lld`. systemd loads it at boot from
   `/etc/modules-load.d/imac5k-xhci-d0.conf`; DKMS keeps its source under
   `/usr/src/imac5k-xhci-d0-1`
+- `t2suspend`: `systemctl` (sleep target masks and the Thunderbolt sleep hook;
+  no drop-in, so any systemd version), and a `linux-t2` kernel whose
+  `t2bce_core` driver is bound to the T2 bridge (PCI `106b:1801`); the module
+  refuses with `apple-bce` or no driver, and while a sleep hook or unit in
+  `/etc/systemd/system`, `/{etc,usr/lib}/systemd/system-sleep` or
+  `/{etc,usr/lib}/elogind/system-sleep` unloads the T2 driver
 - Omarchy: the Limine/mkinitcpio stack from the boot module, used only when
   cleaning up a leftover `idle=poll` drop-in or Omarchy's hibernation setup
   (`limine-mkinitcpio`, `objcopy` for verification)

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Installed by imac-patcher (`--apply suspend`) to
-# /usr/lib/systemd/system-sleep/; removed by `--remove suspend`.
+# Installed by imac-patcher to /usr/lib/systemd/system-sleep/ — by
+# `--apply suspend` on the iMac18,3, where the hang below was measured, and by
+# `--apply t2suspend` on T2 models as a precaution — and removed by `--remove`
+# of the same module.
 #
 # The Thunderbolt NHI (Alpine Ridge, 0000:07:00.0 on the iMac18,3) hangs the
 # kernel in the noirq phase of every system sleep. Measured 2026-09-10: with

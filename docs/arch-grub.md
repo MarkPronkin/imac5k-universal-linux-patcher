@@ -55,16 +55,18 @@ The preflight offers missing build tools and the correct headers package.
 After a kernel update, reboot into the installed kernel before applying or
 promoting a module. The patched module needs to be rebuilt for each new kernel.
 
-The suspend module allows suspend and keeps hibernate blocked. It installs the
-Thunderbolt and Wi-Fi sleep hooks and a systemd drop-in that makes suspend use
-s2idle (deep S3 resets on this hardware), and removes the retired `idle=poll`
-parameter through GRUB if present. On the iMac18,3 it also builds the
+Both sleep modules allow suspend and keep hibernate blocked, and remove the
+retired `idle=poll` parameter through GRUB if present. On the iMac18,3,
+`suspend` installs the Thunderbolt and Wi-Fi sleep hooks and a systemd drop-in
+that makes suspend use s2idle (deep S3 resets on this hardware), and builds the
 `imac5k-xhci-d0` USB controller fix through DKMS for every installed kernel with
 headers (with Clang on a Clang-built kernel such as CachyOS's) and loads it at
 boot; without it every second sleep resets the machine. On T2 models (iMac Pro,
-2020 iMacs) it instead requires `linux-t2`'s `t2bce` driver, refuses while
-anything unloads the T2 driver around sleep, and installs no s2idle drop-in. Read the suspend section of the
-[README](../README.md) before applying it.
+2020 iMacs), `t2suspend` requires `linux-t2`'s `t2bce` driver, refuses while
+anything unloads the T2 driver around sleep, installs only the Thunderbolt hook
+and keeps the kernel's sleep mode. The 2014-2015 models sleep with the stock
+kernel and need neither. Read the suspend section of the
+[README](../README.md) before applying either.
 
 ## macOS mode: the iGPU and brightness
 

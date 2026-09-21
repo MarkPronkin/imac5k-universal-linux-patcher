@@ -53,6 +53,14 @@ preflight
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual("patcher will refuse" in result.stdout, model in OTHERS)
 
+    def test_only_the_imac18_3_gets_its_sleep_fixes(self):
+        # The 2014-2015 models sleep with the stock kernel, T2 models have
+        # t2suspend, and the iMac19,1 is untested.
+        for model in MODELS + OTHERS:
+            with self.subTest(model=model):
+                result = self.run_shell(model, "imac_suspend_supported")
+                self.assertEqual(result.returncode == 0, model == "iMac18,3", result.stderr)
+
     def test_only_the_t2_models_get_the_t2_suspend_rules(self):
         t2 = ("iMac20,1", "iMac20,2", "iMacPro1,1")
         for model in MODELS + OTHERS:
@@ -97,25 +105,28 @@ preflight
                 self.assertTrue(result.stdout.startswith("n/a\n"), result.stdout)
                 self.assertIn("T2", result.stdout)
 
-    def test_status_lists_only_the_speaker_fix_for_this_model(self):
+    def test_status_lists_only_the_speaker_and_sleep_fixes_for_this_model(self):
         """The two speaker fixes are complements: the Pro sees t2speakers but
-        no EQ, every other model sees EQ but no t2speakers. Detection still
-        reports n/a underneath, so --apply/--remove keep skipping cleanly."""
+        no EQ, every other model sees EQ but no t2speakers. So are the two
+        sleep modules: T2 models see t2suspend, every other model suspend
+        (n/a where no sleep fix is needed). Detection still reports n/a
+        underneath, so --apply/--remove keep skipping cleanly."""
         from test_patcher_menu import driver
         stubs = ""
         for mod, title in (("audio", "Audio driver"), ("eq", "Speaker tuning"),
                            ("t2speakers", "T2 speakers"), ("color", "Colour"),
-                           ("suspend", "Suspend"), ("boot", "Boot"),
-                           ("macos", "macOS mode"), ("5k", "Display")):
+                           ("suspend", "iMac18,3 sleep"), ("t2suspend", "T2 sleep"),
+                           ("boot", "Boot"), ("macos", "macOS mode"), ("5k", "Display")):
             stubs += (f'mod_{mod}_detect() {{ echo not-applied; }}\n'
                       f'mod_{mod}_title() {{ echo "{title}"; }}\n'
                       f'mod_{mod}_tier() {{ echo safe; }}\n')
-        for model, shown, hidden in (("iMacPro1,1", "T2 speakers", "Speaker tuning"),
-                                     ("iMac18,3", "Speaker tuning", "T2 speakers"),
-                                     ("iMac17,1", "Speaker tuning", "T2 speakers")):
+        for model, shown, hidden in (("iMacPro1,1", ("T2 speakers", "T2 sleep"), ("Speaker tuning", "iMac18,3 sleep")),
+                                     ("iMac20,1", ("Speaker tuning", "T2 sleep"), ("T2 speakers", "iMac18,3 sleep")),
+                                     ("iMac18,3", ("Speaker tuning", "iMac18,3 sleep"), ("T2 speakers", "T2 sleep")),
+                                     ("iMac17,1", ("Speaker tuning", "iMac18,3 sleep"), ("T2 speakers", "T2 sleep"))):
             with self.subTest(model=model):
                 result = self.run_shell(model, f'''
-MODULES=(audio eq t2speakers color suspend boot macos 5k)
+MODULES=(audio eq t2speakers color suspend t2suspend boot macos 5k)
 KREL=test
 hdr() {{ :; }}
 say() {{ printf '%s\\n' "$*"; }}
@@ -124,8 +135,10 @@ startup_deps_note() { :; }
 eq_prereq_note() { :; }
 ''' + stubs + "\nshow_status")
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(shown, result.stdout)
-                self.assertNotIn(hidden, result.stdout)
+                for title in shown:
+                    self.assertIn(title, result.stdout)
+                for title in hidden:
+                    self.assertNotIn(title, result.stdout)
                 # Everything else is still listed on every model.
                 self.assertIn("Audio driver", result.stdout)
 

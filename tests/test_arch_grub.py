@@ -14,14 +14,9 @@ class ArchGrubTests(unittest.TestCase):
     mkconfig_calls = fixture.GrubLibTests.mkconfig_calls
 
     def run_backend(self, code):
-        base = "\n".join(shell_function(PATCHER, name) for name in (
-            "mod_suspend_tier", "mod_suspend_detect", "mod_suspend_apply", "mod_suspend_remove",
-            "hibernation_setup_present", "suspend_remove_hibernation",
-            "suspend_systemd_ok", "suspend_uses_s2idle", "suspend_sleep_mode_ok",
-            "suspend_install_sleep_files", "suspend_remove_sleep_files",
-            "mod_5k_apply", "mod_5k_remove"))
-        start = PATCHER.index("# ── suspend: the iMac18,3 USB controller fix (DKMS) ──")
-        base += "\n" + PATCHER[start:PATCHER.index("\nmod_suspend_apply() {", start)]
+        start = PATCHER.index("# ═══════════════════════ module: suspend ")
+        base = PATCHER[start:PATCHER.index("# ═══════════════════════ module: boot ", start)]
+        base += "\n".join(shell_function(PATCHER, name) for name in ("mod_5k_apply", "mod_5k_remove"))
         return fixture.GrubLibTests.run_grub(self, base + f'''
 SCRIPT_DIR="{ROOT / 'scripts'}"
 NO_CSTATES_PARAM=idle=poll
@@ -32,11 +27,15 @@ WIFI_SLEEP_HOOK="{self.tmp.name}/imac-wifi-sleep-hook"
 SLEEP_CONF_DROPIN="{self.tmp.name}/sleep.conf.d/imac5k-s2idle.conf"
 HIBERNATE_HOOK_CONF="{self.tmp.name}/omarchy_resume.conf"
 HIBERNATE_DROPIN="{self.tmp.name}/resume.conf"
-# The USB controller fix is iMac18,3-only; this backend runs as another model
-# with no trace of it, and never reaches the host's DKMS or /sys.
+# The iMac18,3 the suspend module is for, but without its USB controller fix,
+# whose DKMS build test_suspend covers: this backend never reaches the host's
+# DKMS or /sys.
+imac_suspend_supported() {{ return 0; }}
 imac_xhci_fix_supported() {{ return 1; }}
-# Not a T2 model either, so the T2 rules never look at the host's PCI bus.
+# Not a T2 model unless a test says so, and the T2 rules never look at the
+# host's PCI bus.
 imac_has_t2() {{ return 1; }}
+t2suspend_problems() {{ :; }}
 dkms() {{ :; }}
 XHCI_FIX_LOAD_CONF="{self.tmp.name}/modules-load.d/imac5k-xhci-d0.conf"
 XHCI_FIX_SYSFS="{self.tmp.name}/sys-module/imac5k_xhci_d0"
@@ -81,6 +80,18 @@ source "$SCRIPT_DIR/lib/arch-grub.sh"
         self.assertEqual(lines[:2], ["safe", "partial"])
         self.assertEqual(lines[-1], "applied")
         self.assertEqual(self.mkconfig_calls(), "")
+
+    def test_t2_sleep_cleans_the_stale_parameter_through_grub_too(self):
+        self.default.write_text("GRUB_CMDLINE_LINUX_DEFAULT='quiet idle=poll'\n")
+        result = self.run_backend("imac_has_t2() { return 0; }\n"
+                                  "mod_t2suspend_tier; mod_t2suspend_detect; mod_t2suspend_apply; mod_t2suspend_detect")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:2], ["boot", "partial"])
+        self.assertEqual(lines[-1], "applied")
+        self.assertNotIn("idle=poll", self.default.read_text())
+        self.assertIn("grub-mkconfig", self.mkconfig_calls())
+        self.assertNotIn("mkinitcpio", self.mkconfig_calls())
 
     def test_verification_checks_exact_tokens_and_rejects_missing_entry(self):
         for args, status in (("quiet ''", 0), ("qui ''", 1), ("'' qui", 0), ("'' quiet", 1)):

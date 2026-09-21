@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installed by imac-patcher (`--apply suspend`) to
+# Installed by imac-patcher (`--apply suspend`, the iMac18,3's sleep fixes) to
 # /usr/lib/systemd/system-sleep/; removed by `--remove suspend`.
 #
 # The BCM43602 Wi-Fi (PCI 14e4:43ba, brcmfmac; 0000:03:00.0 on the iMac18,3)

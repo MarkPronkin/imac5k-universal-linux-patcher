@@ -214,7 +214,7 @@ the initramfs.
 
 ```bash
 ./scripts/imac-patcher --apply audio
-./scripts/imac-patcher --apply eq color suspend
+./scripts/imac-patcher --apply eq color suspend   # t2suspend on a T2 model
 ```
 
 **Audio** verifies the iMac model, CS8409 codec and Linux 6.17+ kernel, then
@@ -255,20 +255,23 @@ The saved selection records the panel identity it came from; `--remove color`
 discards a save that belongs to a panel KDE no longer configures rather than
 writing it onto the current one.
 
-**Sleep** follows the Omarchy module: `suspend.target` unmasked, the hibernate
-family masked, the Thunderbolt and Wi-Fi sleep hooks installed, and a systemd
-drop-in that makes suspend use s2idle (deep S3 resets; needs systemd 256 or
-newer). On the iMac18,3 it also builds the `imac5k-xhci-d0` USB controller fix
-with DKMS for the running kernel, which stops the firmware from resetting the
-machine on every second sleep, and loads it at boot. On T2 models (iMac Pro,
-2020 iMacs) it requires `linux-t2`'s `t2bce` driver, refuses while anything
-unloads the T2 driver around sleep, and installs no s2idle drop-in. Under Secure Boot the DKMS
-signing key must be enrolled first, as for audio (`mokutil --import
-/var/lib/dkms/mok.pub`, reboot, confirm); the module refuses to continue until it
-is. If the retired `idle=poll` variant left the argument on the current kernel's
-GRUB entry, applying or removing the module strips it with grubby.
-`--remove suspend` lifts the masks and removes the hooks, the drop-in and the
-USB controller fix.
+**Sleep** follows the Omarchy modules, one per kind of model. On the iMac18,3,
+`suspend` unmasks `suspend.target`, masks the hibernate family, installs the
+Thunderbolt and Wi-Fi sleep hooks and a systemd drop-in that makes suspend use
+s2idle (deep S3 resets; needs systemd 256 or newer), and builds the
+`imac5k-xhci-d0` USB controller fix with DKMS for the running kernel, which
+stops the firmware from resetting the machine on every second sleep, and loads
+it at boot. Under Secure Boot the DKMS signing key must be enrolled first, as
+for audio (`mokutil --import /var/lib/dkms/mok.pub`, reboot, confirm); the
+module refuses to continue until it is. On T2 models (iMac Pro, 2020 iMacs),
+`t2suspend` sets the same targets, requires `linux-t2`'s `t2bce` driver,
+refuses while anything unloads the T2 driver around sleep, installs only the
+Thunderbolt hook and keeps the kernel's sleep mode. The 2014-2015 models sleep
+with the stock kernel and need neither. If the retired `idle=poll` variant left
+the argument on the current kernel's GRUB entry, applying or removing either
+module strips it with grubby. `--remove suspend` lifts the masks and removes
+the hooks, the drop-in and the USB controller fix; `--remove t2suspend` lifts
+the masks and removes the hook.
 
 ---
 
@@ -292,7 +295,7 @@ USB controller fix.
 The design goal was to add Fedora without forking or rewriting the Omarchy
 implementation. The patcher is a set of `mod_<id>_<verb>` shell functions
 (`detect`, `apply`, `remove`, …) over the module list
-`audio eq color suspend boot 5k`. The Fedora backend **redefines only the
+`audio eq t2speakers color suspend t2suspend boot macos 5k`. The Fedora backend **redefines only the
 functions that differ**, and it is sourced *after* the originals, so anything it
 does not mention keeps the Omarchy behaviour verbatim.
 
@@ -300,7 +303,8 @@ does not mention keeps the Omarchy behaviour verbatim.
 scripts/imac-patcher
   ├─ source lib/platform.sh          detection helpers, always
   ├─ …original Omarchy mod_* definitions…
-  ├─ source lib/fedora.sh   if Fedora   → overrides audio, suspend, boot, 5k
+  ├─ source lib/fedora.sh   if Fedora   → overrides audio, boot, 5k, and the
+  │                                      sleep modules' boot-config helpers
   └─ source lib/kde.sh      if KDE      → overrides color
 ```
 

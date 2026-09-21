@@ -35,9 +35,14 @@ imac_audio_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 # Apple's XHC1._PS3 resets the iMac18,3 on the PCH USB controller's second D3
 # entry. Other models' firmware has not been examined; they keep stock xHCI PM.
 imac_xhci_fix_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+# The suspend module's sleep fixes were each found and verified on the
+# iMac18,3. The 2014-2015 models (iMac15,1, iMac17,1) sleep with the stock
+# kernel, T2 models have their own module (t2suspend, below), and the
+# iMac19,1 is untested, so none of them is offered the iMac18,3's fixes.
+imac_suspend_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 # Models with an Apple T2 (iMac Pro, 2020 iMacs). Their internal devices sit
 # behind the T2's BCE, which linux-t2's t2bce driver stack suspends and
-# resumes itself; the suspend module follows t2linux's rules on these.
+# resumes itself; the t2suspend module follows t2linux's rules on these.
 imac_has_t2() {
     case ${product:-$(imac_product_name)} in
         iMacPro1,1|iMac20,1|iMac20,2) return 0 ;;

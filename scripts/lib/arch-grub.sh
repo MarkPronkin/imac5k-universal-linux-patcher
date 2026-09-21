@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Arch-family GRUB backend: sourced after the base (Omarchy/Limine) module
-# definitions when the system is Arch-like and boots GRUB. The 5K, suspend and
-# macOS modules keep their base logic; only the pieces that touch the boot
-# configuration are re-pointed at /etc/default/grub + grub-mkconfig.
+# definitions when the system is Arch-like and boots GRUB. The 5K, macOS and
+# both sleep modules (suspend, t2suspend) keep their base logic; only the
+# pieces that touch the boot configuration are re-pointed at
+# /etc/default/grub + grub-mkconfig.
 source "${SCRIPT_DIR}/lib/grub.sh"
 GRUB_SUDO=sudo
 

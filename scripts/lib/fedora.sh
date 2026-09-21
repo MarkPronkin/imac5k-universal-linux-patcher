@@ -20,44 +20,23 @@ fedora_deps() {
 mod_boot_detect() { echo n/a; }
 mod_boot_apply() { warn "Limine boot repair does not apply to Fedora GRUB."; return 1; }
 mod_boot_remove() { mod_boot_apply; }
-# Same policy as the Omarchy suspend module — suspend allowed through the
-# Thunderbolt and Wi-Fi sleep hooks and the s2idle drop-in, the hibernate
-# family masked — plus migration for the retired idle=poll variant: grubby
-# strips the argument from the current kernel's BLS entry.
-mod_suspend_tier() {
-    # Boot tier only while the retired argument is on the GRUB entry.
-    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && echo boot || echo safe
+# Both sleep modules (suspend on the iMac18,3, t2suspend on T2 models) keep
+# the Omarchy logic. What differs is re-pointed here: image-based Fedora is
+# refused, there is no Omarchy hibernation setup, and the retired idle=poll
+# variant is migrated by grubby, which strips the argument from the current
+# kernel's BLS entry. Boot tier only while that argument is on the entry.
+suspend_backend_ok() { fedora_mutable; }
+hibernation_setup_present() { return 1; }
+suspend_no_cstates_present() {
+    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM"
 }
-mod_suspend_desc()  { echo "Suspend had two hard-hangs: a stitch-layer driver bug (fixed in the shipped 5K stack — rebuild the 5K module first if it predates release 0.1.91-alpha) and the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode. Installs a sleep hook that unbinds the NHI before sleep and rebinds it after resume, and a second one that does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). On the iMac18,3 it also builds a small DKMS module for this kernel, loaded at every boot, that stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; with Secure Boot the DKMS key must be enrolled. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. On T2 models (iMac Pro, 2020 iMacs) it follows t2linux: it requires linux-t2's t2bce driver, which suspends and resumes the T2 itself, refuses while an old hook or service unloads the T2 driver around sleep, and leaves the sleep mode to the kernel instead of forcing s2idle. Also removes the retired idle=poll argument from this kernel's GRUB entry if present."; }
-mod_suspend_detect() {
-    local masked=0
-    for t in "${HIBERNATE_TARGETS[@]}"; do
-        [[ "$(systemctl is-enabled "$t" 2>/dev/null)" == masked ]] && (( masked++ ))
-    done
-    local suspend_blocked=0
-    [[ "$(systemctl is-enabled suspend.target 2>/dev/null)" == masked ]] && suspend_blocked=1
-    local stale=0
-    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" && stale=1
-    local hook=0
-    [[ -x $TB_SLEEP_HOOK ]] && hook=1
-    local wifi=0
-    [[ -x $WIFI_SLEEP_HOOK ]] && wifi=1
-    local s2idle=0 mode=0 t2=0
-    grep -qs '^MemorySleepMode=s2idle' "$SLEEP_CONF_DROPIN" && s2idle=1
-    suspend_sleep_mode_ok && mode=1
-    [[ -z $(suspend_t2_problems) ]] && t2=1
-    local xhci=0 xhci_any=0
-    suspend_xhci_fix_ok && xhci=1
-    xhci_fix_present && xhci_any=1
-    if (( masked == ${#HIBERNATE_TARGETS[@]} && ! suspend_blocked && ! stale && hook && wifi && mode && t2 && xhci )); then echo applied
-    elif (( masked || suspend_blocked || stale || hook || wifi || s2idle || xhci_any )); then echo partial
-    else echo not-applied; fi
-}
-fedora_suspend_drop_no_cstates() {
-    grubby --info "/boot/vmlinuz-${KREL}" 2>/dev/null | grep -q "$NO_CSTATES_PARAM" || return 0
+suspend_drop_no_cstates() {
+    suspend_no_cstates_present || return 0
     sudo grubby --update-kernel "/boot/vmlinuz-${KREL}" --remove-args "$NO_CSTATES_PARAM" || return 1
     say "removed stale ${NO_CSTATES_PARAM} from the GRUB entry"
 }
+mod_suspend_desc()  { echo "The iMac18,3's sleep fixes. Suspend there failed five ways: the stitch-layer driver bug is fixed in the kernel by the 5K module (rebuild it first if it predates release 0.1.91-alpha), and this module covers the other four. A sleep hook unbinds the Thunderbolt NHI, whose noirq suspend wedges the kernel in both deep and s2idle mode, before sleep and rebinds it after resume, and a second one does the same for the BCM43602 Wi-Fi, whose driver refuses most suspends (Wi-Fi reconnects after wake). A small DKMS module for this kernel, loaded at every boot, stops Apple's USB-controller power method (XHC1._PS3) from resetting the machine on every second sleep; with Secure Boot the DKMS key must be enrolled. Deep S3 still resets (firmware), so a systemd drop-in (MemorySleepMode=s2idle, systemd 256 or newer) makes every suspend use s2idle — treat it as experimental. Unmasks suspend.target. Hibernate still hard-hangs, so hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present. The 2014-2015 models sleep without any of this and T2 models have t2suspend; on the other models it only takes back what an earlier release installed."; }
+mod_t2suspend_desc() { echo "Sleep on T2 models (iMac Pro, 2020 iMacs), following t2linux. Requires linux-t2's t2bce driver, which suspends and resumes the T2 itself, and refuses while an old hook or service unloads the T2 driver around sleep, naming the files. Keeps the kernel's sleep mode instead of forcing s2idle. Installs the Thunderbolt sleep hook as a precaution — it unbinds the NHI before sleep and rebinds it after resume — and removes the iMac18,3's Wi-Fi hook and s2idle drop-in where an earlier release installed them. Unmasks suspend.target; hibernate, hybrid-sleep and suspend-then-hibernate stay masked. Also removes the retired idle=poll argument from this kernel's GRUB entry if present. Not tested on T2 hardware."; }
 # The USB controller fix, as for audio: built for the running kernel after an
 # explicit kernel-devel preflight, and loadable under Secure Boot only once
 # the DKMS signing key is enrolled.
@@ -72,25 +51,6 @@ xhci_fix_signing_ok() {
     sudo mokutil --test-key /var/lib/dkms/mok.pub && return 0
     warn "Enroll the DKMS key: sudo mokutil --import /var/lib/dkms/mok.pub, reboot and confirm enrollment, then re-run suspend installation."
     return 1
-}
-mod_suspend_apply() {
-    fedora_mutable || return 1
-    suspend_t2_ok || return 1
-    suspend_systemd_ok || return 1
-    # Before suspend is unmasked: without the fix the second sleep resets.
-    suspend_install_xhci_fix || return 1
-    sudo systemctl unmask suspend.target || return 1
-    sudo systemctl mask "${HIBERNATE_TARGETS[@]}" || return 1
-    suspend_install_sleep_files || return 1
-    fedora_suspend_drop_no_cstates
-}
-mod_suspend_remove() {
-    fedora_mutable || return 1
-    sudo systemctl unmask suspend.target "${HIBERNATE_TARGETS[@]}" || return 1
-    suspend_remove_sleep_files || return 1
-    suspend_remove_xhci_fix || return 1
-    fedora_suspend_drop_no_cstates || return 1
-    say "sleep targets back to stock (suspend and hibernate unmasked, sleep hooks, s2idle drop-in and USB controller fix removed)"
 }
 audio_target_kernels() {
     # Fedora's explicit kernel-devel preflight targets the running kernel.

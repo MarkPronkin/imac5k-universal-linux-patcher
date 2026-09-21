@@ -1,5 +1,30 @@
 # Current work checkpoint
 
+**Sleep split into two modules (2026-09-21):** committed on `test` and
+pushed to `origin/test`. The
+owner: the pre-2017 5K iMacs sleep out of the box, so the sleep fixes that are
+not part of the kernel become a separate iMac18,3 sleep patch, and the T2 sleep
+fixes a separate patch too. `suspend` ("iMac18,3 sleep fixes") is gated by the
+new `imac_suspend_supported` (iMac18,3 only) and is unchanged there: both
+hooks, the XHC1 DKMS fix, the s2idle drop-in, the hibernate masks. This machine
+still reports it applied. The new `t2suspend` ("T2 sleep fixes", iMacPro1,1,
+iMac20,1, iMac20,2) keeps the t2linux rules and, as a precaution, the
+Thunderbolt hook that 0.2.3 installed there. It removes the Wi-Fi hook and
+s2idle drop-in where an earlier release left them, and sets the same masks.
+The stitch-layer fix stays in the 5K kernel patches. On iMac15,1, iMac17,1
+and the untested iMac19,1, `suspend` is n/a. An earlier release's leftovers
+there (hooks, drop-in, XHC1 fix, `idle=poll`, the all-four mask of 0.1.9 and
+older) show as partial. Applying or removing then takes them out without
+touching Omarchy's hibernation. `--status` lists each model's own sleep module
+only. `lib/fedora.sh` now re-points helpers (`suspend_backend_ok`,
+`hibernation_setup_present`, `suspend_no_cstates_present`,
+`suspend_drop_no_cstates`) instead of whole functions, so both modules share
+the base logic. 543 tests pass, and mutations of each new rule are caught. The
+iMac17,1 and iMac Pro views were also checked by running `--status` in bwrap
+with a faked DMI name. Open: the iMac19,1 gets neither module; widen
+`imac_suspend_supported` if it should get the iMac18,3's fixes. Nothing is
+tested on T2 hardware.
+
 **Release 0.2.6-alpha (2026-09-21):** built, published from `test` at 03:33
 UTC and verified, then **turned back into a draft** at the owner's request.
 GitHub releases are repository-wide, so it showed on the `main` page, and
