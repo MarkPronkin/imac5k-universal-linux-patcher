@@ -1,5 +1,34 @@
 # Current work checkpoint
 
+**Release 0.2.6-alpha (2026-09-21):** from `test`, as the owner asked, with
+only `test` and the new tag pushed; `main` is unchanged. `v0.2.3-alpha` and
+`v0.2.4-alpha` were deleted on GitHub (tags at 02:43 UTC); their local tags
+must not be pushed. Never push with `--tags` or `--follow-tags`. There is no
+0.2.5-alpha. The notes therefore cover everything since `v0.2.2-alpha`. See
+[the release record](notes/release-0.2.6-alpha-2026-09-21.md).
+
+**macOS mode on Arch-family GRUB (2026-09-21):** committed on `test` as
+`4ed973e`. The
+owner asked for GRUB support for the iGPU patch, "also brightness": the whole
+`macos` module now applies on Arch-family GRUB with mkinitcpio. GRUB 2.12+
+starts the kernel with LoadImage/StartImage, and that reaches
+`efi_pe_entry()` → `apple_set_os()` (checked in the GRUB 2.14 and kernel
+sources). So `scripts/imac-setos` also edits `/boot/vmlinuz-*` when mkinitcpio
+passes it as the kernel image; it never edits the packaged image or a symlink.
+The parameters go in `GRUB_CMDLINE_LINUX`, because recovery entries boot the
+same image. Removal first restores every edited `/boot` kernel (`--restore`),
+and `grub_require_layout` accepts an edited copy (`--same-kernel`). The
+preflight refuses a GRUB without the EFI-stub loader, identified by
+`loader/efi/linux.c` inside `/boot/grub/x86_64-efi/linux.mod`. That marker was
+checked against Arch's packages: absent in 2.06.r499, present in r591 and 2.12+.
+On both backends the hook is now installed last, so a failed apply cannot leave
+it editing images that lack the parameters. The brightness table, the SMBus
+rule and the NVRAM save work unchanged on GRUB. 549 tests pass (33 new). The
+hook's modes were also run on a scratch copy of the real 7.2.5 kernel: 14 bytes
+edited, restored byte-identical. **Not booted on GRUB hardware.** No GRUB tool
+was run on this Omarchy machine, per the standing constraint. CachyOS
+validation is next.
+
 **Release 0.2.4-alpha (2026-09-21):** published from `test` as requested,
 including all previously local macOS/video work and the speaker retune.
 Annotated tag `v0.2.4-alpha` points at `ce25339`; release author and asset
