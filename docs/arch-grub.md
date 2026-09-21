@@ -22,6 +22,8 @@ A distro name alone does not establish support: an EndeavourOS or CachyOS
 installation using dracut, systemd-boot or only UKIs needs a different boot
 backend. The patcher does not convert those installations. Boot repair
 (`boot`) remains specific to Omarchy/Limine and reports **n/a** on GRUB.
+macOS mode (`macos`) is available on this backend; see
+[below](#macos-mode-the-igpu-and-brightness).
 
 Detection prefers Fedora’s backend first, then `/etc/default/limine`, then
 Arch-family `/etc/default/grub`. If both bootloader configs exist, Limine wins.
@@ -63,6 +65,38 @@ boot; without it every second sleep resets the machine. On T2 models (iMac Pro,
 2020 iMacs) it instead requires `linux-t2`'s `t2bce` driver, refuses while
 anything unloads the T2 driver around sleep, and installs no s2idle drop-in. Read the suspend section of the
 [README](../README.md) before applying it.
+
+## macOS mode: the iGPU and brightness
+
+On the iMac18,3, `imac-patcher --apply macos` works on this backend too. The
+Intel HD 630 is exposed for video, and the brightness keys dim the panel, over
+its full range where the ACPI table can be rebuilt. It installs what it does
+on Omarchy (see [macOS mode](macos-mode.md#on-arch-family-grub)), with three
+differences:
+
+- The mkinitcpio hook edits `/boot/vmlinuz-<pkgbase>`, the image GRUB loads,
+  each time mkinitcpio runs, kernel updates included. The packaged kernel is
+  never touched.
+- The four kernel parameters go in `GRUB_CMDLINE_LINUX` rather than
+  `GRUB_CMDLINE_LINUX_DEFAULT`, so recovery entries, which boot the same edited
+  image, get them too.
+- `imac-patcher --remove macos` restores every edited `/boot/vmlinuz-*`
+  before it removes anything else, because rebuilding the initramfs never
+  re-copies the kernel.
+
+It needs **GRUB 2.12 or newer as installed on the ESP**: older builds start
+Linux without its EFI stub, and the stub is what makes the firmware call. The
+preflight reads `/boot/grub/x86_64-efi/linux.mod`, the loader `grub-install`
+copied there, and refuses an older one. Upgrading the `grub` package does not
+update it; run your `grub-install` command again. As for 5K, the kernel in
+`/boot` must be the running one. A kernel carrying only this edit still
+counts as the running one for the 5K preflight and the test-entry helpers
+below.
+
+If the desktop does not come back, press `e` at the GRUB menu, append
+`module_blacklist=i915` to the line that starts with `linux`, and boot with
+ctrl-x. This path has offline test coverage only and has not been booted on
+hardware yet.
 
 ## Test entries
 

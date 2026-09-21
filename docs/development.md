@@ -42,6 +42,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
 | `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
+| `test_macos.py` | macOS mode's model and boot-path gates; the set_os hook on UKIs and on GRUB's `/boot` kernel, and its restore mode; apply, detect and remove on Limine and, end to end with the real hook and GRUB libraries, on GRUB; the brightness table's checks; the NVRAM writer; the headless VBT |
 | `test_release.py` | Reproducible archives, checksum validation, launchers, upgrades, version pruning and uninstall |
 | `test_review_regressions.py` | Atomic Limine config edits, pinned image verification, failed decompression/rebuilds, colour restoration, and upgrade copy failure |
 

@@ -10,6 +10,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -101,16 +102,32 @@ warn() {{ printf '%s\\n' "$*"; }}
                 self.assertIn("verified only on iMac18,3", result.stdout)
                 self.assertIn("unchecked", result.stdout)
 
-    def test_the_grub_and_fedora_backends_are_refused(self):
-        """The edit lands inside the UKI limine-mkinitcpio builds; no other
-        backend here builds one."""
-        for backend in ("imac_is_fedora() { return 0; }",
-                        "imac_is_arch_grub() { return 0; }",
-                        "imac_has_limine() { return 1; }"):
+    def test_fedora_and_other_boot_paths_are_refused(self):
+        """The edit lands in an image mkinitcpio builds for Limine or GRUB.
+        Fedora signs its kernels and builds dracut images; an Arch system
+        with neither bootloader config has nothing the hook could edit."""
+        for backend in ("imac_is_fedora() { return 0; }\nimac_has_limine() { return 0; }",
+                        "imac_has_limine() { return 1; }\nimac_is_arch_grub() { return 1; }"):
             with self.subTest(backend=backend):
                 result = self.run_shell("iMac18,3", backend + "\n" + module_section() + "mod_macos_preflight")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Omarchy/Limine boot path", result.stdout)
+                self.assertIn("Omarchy/Limine or Arch-family GRUB boot path", result.stdout)
+
+    def test_arch_family_grub_passes_the_boot_path_gate(self):
+        """GRUB gets as far as its own tools and layout checks."""
+        # Every other boot tool present, whatever the host has installed.
+        result = self.run_shell("iMac18,3", "imac_has_limine() { return 1; }\n"
+                                "imac_is_fedora() { return 1; }\n"
+                                "imac_is_arch_grub() { return 0; }\n"
+                                "mkinitcpio() { :; }; udevadm() { :; }; systemctl() { :; }\n"
+                                "command() { [[ ${1:-} == -v && ${2:-} == grub-mkconfig ]] && return 1;"
+                                " builtin command \"$@\"; }\n"
+                                "imac_pkg_installer() { return 1; }\n"
+                                + module_section() + "mod_macos_preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("boot path", result.stdout)
+        self.assertIn("missing tools: grub-mkconfig", result.stdout)
+        self.assertNotIn("limine-mkinitcpio", result.stdout)
 
 
 class ModuleTests(unittest.TestCase):
@@ -440,8 +457,342 @@ verify_cmdline() {{ echo "VERIFY ${{1:-}} ${{2:-}}" >> "{self.calls}"; }}
         self.assertEqual(default.read_text(), 'KERNEL_CMDLINE[default]+="root=/dev/x"\n')
 
 
+def grub_cfg(linux, default):
+    """grub.cfg as the grub-mkconfig stand-in below writes it: a normal entry
+    from both variables and a recovery entry from GRUB_CMDLINE_LINUX alone."""
+    return ("menuentry 'Arch Linux' {\n"
+            f"\tlinux\t/vmlinuz-linux root=UUID=abc rw {linux} {default}\n"
+            "\tinitrd\t/initramfs-linux.img\n}\n"
+            "menuentry 'Arch Linux (recovery)' {\n"
+            f"\tlinux\t/vmlinuz-linux root=UUID=abc rw single {linux}\n"
+            "\tinitrd\t/initramfs-linux.img\n}\n")
+
+
+class GrubModuleTests(unittest.TestCase):
+    """The module on the Arch-family GRUB backend, end to end. The real hook
+    edits a fake /boot kernel whenever the mkinitcpio stand-in runs post hooks
+    the way mkinitcpio does, and a grub-mkconfig stand-in regenerates grub.cfg
+    from /etc/default/grub. The GRUB libraries are the real ones."""
+
+    KREL = "7.2.5-test"
+    OPTS = re.search(r'^MACOS_OPTS="([^"]+)"', module_section(), re.M)[1]
+    EDITED = model_table(STOCK_MODELS[:-1] + [b"iMac18,3"])
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.home = self.root / "home"
+        (self.home / ".config/hypr").mkdir(parents=True)
+        # SCRIPT_DIR: the real hook and libraries, stand-ins for the rest.
+        self.bin = self.root / "repo-scripts"
+        self.bin.mkdir()
+        shutil.copy2(SETOS, self.bin / "imac-setos")
+        (self.bin / "lib").symlink_to(ROOT / "scripts/lib")
+        (self.bin / "imac-backlight-nvram").write_text("#!/bin/sh\nexit 0\n")
+        (self.bin / "imac-backlight-nvram").chmod(0o755)
+        (self.bin / "make-bcl-table.py").write_text(
+            "import sys, pathlib\n"
+            "pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)\n"
+            "pathlib.Path(sys.argv[1]).write_bytes(b'AML')\n")
+        (self.root / "acpi_override_hook").write_text("hook")
+        self.dmi = self.root / "product_name"
+        self.dmi.write_text("iMac18,3\n")
+        # The packaged kernel, and the copy of it the preset put in /boot.
+        self.stock = b"MZ stub " + model_table(STOCK_MODELS) + b" compressed payload"
+        self.packaged = self.root / "modules" / self.KREL / "vmlinuz"
+        self.packaged.parent.mkdir(parents=True)
+        self.packaged.write_bytes(self.stock)
+        self.boot = self.root / "boot"
+        (self.boot / "grub/x86_64-efi").mkdir(parents=True)
+        self.kernel = self.boot / "vmlinuz-linux"
+        self.kernel.write_bytes(self.stock)
+        (self.boot / "initramfs-linux.img").write_bytes(b"initramfs")
+        # What grub-install copies from a 2.12-or-later build.
+        self.loader = self.boot / "grub/x86_64-efi/linux.mod"
+        self.loader.write_bytes(b"\0loader/i386/linux.c\0loader/efi/linux.c\0loader/linux.c\0")
+        (self.root / "presets").mkdir()
+        (self.root / "presets/linux.preset").touch()
+        (self.root / "efi").mkdir()
+        self.default = self.root / "etc/default/grub"
+        self.default.parent.mkdir(parents=True)
+        self.default.write_text('GRUB_DEFAULT=0\n'
+                                'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"\n'
+                                'GRUB_CMDLINE_LINUX=""\n')
+        self.cfg = self.boot / "grub/grub.cfg"
+        self.cfg.write_text(grub_cfg("", "loglevel=3 quiet"))
+        self.hook = self.root / "etc/initcpio/post/imac-setos"
+        self.calls = self.root / "calls"
+
+    def run_module(self, code, *, iasl=True, igpu=False, **env):
+        if igpu:
+            (self.root / "sys").mkdir(exist_ok=True)
+            (self.root / "sys/igpu").write_text("")
+        paths = {
+            "MACOS_HOOK": self.hook,
+            "MACOS_MKI": self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf",
+            "MACOS_DROPIN": self.root / "etc/limine-entry-tool.d/imac5k-macos.conf",
+            "MACOS_VBT_DIR": self.root / "usr/lib/firmware/imac18-3",
+            "MACOS_VBT": self.root / "usr/lib/firmware/imac18-3/headless-vbt.bin",
+            "MACOS_AML": self.root / "etc/initcpio/acpi_override/imac-bcl100.aml",
+            "MACOS_NVRAM_BIN": self.root / "usr/local/bin/imac-backlight-nvram",
+            "MACOS_NVRAM_UNIT": self.root / "etc/systemd/system/imac-backlight-nvram.service",
+            "MACOS_HYPR": self.home / ".config/hypr/imac-gpu.lua",
+            "MACOS_HYPR_MAIN": self.home / ".config/hypr/hyprland.lua",
+            "MACOS_IGPU": self.root / "sys/igpu",
+            "UDEV_DIR": self.root / "etc/udev/rules.d",
+        }
+        overrides = "\n".join(f'{k}="{v}"' for k, v in paths.items())
+        overrides += f'\nMACOS_ACPI_INSTALL_HOOKS=("{self.root}/acpi_override_hook")\n'
+        script = f'''
+set -uo pipefail
+export HOME="{self.home}"
+product=iMac18,3
+KREL={self.KREL}
+SCRIPT_DIR="{self.bin}"
+REPO_DIR="{ROOT}"
+MACOS_CFG="{ROOT}/configs/macos"
+LIMINE_DROPIN_DIR="{self.root}/etc/limine-entry-tool.d"
+LIMINE_DEFAULT="{self.root}/etc/default/limine"
+UKI_PATH="{self.root}/no-such-uki.efi"
+GRUB_DEFAULT_FILE="{self.default}"
+GRUB_CFG="{self.cfg}"
+GRUB_CUSTOM="{self.root}/40_custom"
+GRUB_BOOT_DIR="{self.boot}"
+GRUB_MODULES_DIR="{self.root}/modules"
+GRUB_PRESET_DIR="{self.root}/presets"
+GRUB_EFI_DIR="{self.root}/efi"
+CALLS="{self.calls}"
+say()  {{ printf '%s\\n' "$*"; }}
+warn() {{ printf '%s\\n' "$*" >&2; }}   # stderr, as in the patcher
+confirm() {{ return 0; }}
+sudo() {{ "$@"; }}
+udevadm() {{ echo "UDEVADM $*" >> "$CALLS"; }}
+systemctl() {{
+    echo "SYSTEMCTL $*" >> "$CALLS"
+    if [[ $1 == is-enabled ]]; then
+        if [[ -f $MACOS_NVRAM_UNIT ]]; then echo enabled; else echo disabled; fi
+    fi
+    return 0
+}}
+pacman() {{ return 0; }}
+imac_pkg_installer() {{ return 1; }}
+imac_macos_mode_supported() {{ [[ $product == iMac18,3 ]]; }}
+imac_has_limine() {{ return 1; }}
+imac_is_fedora() {{ return 1; }}
+imac_is_arch_grub() {{ return 0; }}
+imac_kernel_pkgbase() {{ echo linux; }}
+imac_tool_package() {{ printf '%s\\n' "$1"; }}
+limine-mkinitcpio() {{ echo WRONG_BACKEND >&2; return 99; }}
+# mkinitcpio -P for one stock Arch preset: ALL_kver is the /boot copy, and
+# every post hook is called with it, then the image it built.
+mkinitcpio() {{
+    echo "mkinitcpio $*" >> "$CALLS"
+    [[ $1 == -P ]] || return 99
+    local hook
+    for hook in "{self.hook.parent}"/*; do
+        [[ -x $hook ]] || continue
+        IMAC_BOOT_DIR="$GRUB_BOOT_DIR" IMAC_DMI_PRODUCT="{self.dmi}" \\
+            "$hook" "$GRUB_BOOT_DIR/vmlinuz-linux" "$GRUB_BOOT_DIR/initramfs-linux.img" || return 1
+    done
+}}
+grub-mkconfig() {{
+    echo "grub-mkconfig $*" >> "$CALLS"
+    [[ ${{FAIL_GRUB:-0}} == 0 ]] || return 1
+    local linux default
+    linux=$(bash -c '. "$1"; printf %s "$GRUB_CMDLINE_LINUX"' _ "$GRUB_DEFAULT_FILE") || return 1
+    default=$(bash -c '. "$1"; printf %s "$GRUB_CMDLINE_LINUX_DEFAULT"' _ "$GRUB_DEFAULT_FILE") || return 1
+    # A drop-in in /etc/default/grub.d reassigning the variable.
+    [[ ${{DROPIN_RESETS_LINUX:-0}} == 0 ]] || linux="cryptdevice=UUID=abc:root"
+    # The layout grub_cfg() writes.
+    printf "menuentry 'Arch Linux' {{\\n\\tlinux\\t/vmlinuz-linux root=UUID=abc rw %s %s\\n\\tinitrd\\t/initramfs-linux.img\\n}}\\n" \\
+        "$linux" "$default" > "$2"
+    printf "menuentry 'Arch Linux (recovery)' {{\\n\\tlinux\\t/vmlinuz-linux root=UUID=abc rw single %s\\n\\tinitrd\\t/initramfs-linux.img\\n}}\\n" \\
+        "$linux" >> "$2"
+}}
+'''
+        if iasl:
+            script += "iasl() { :; }\n"
+        else:
+            script += ("command() { [[ ${1:-} == -v && ${2:-} == iasl ]] && return 1;"
+                       " builtin command \"$@\"; }\n")
+        script += module_section() + overrides + 'source "$SCRIPT_DIR/lib/arch-grub.sh"\n' + code
+        for rule in ('"/etc/udev/rules.d/${rule}"', '"/etc/udev/rules.d/${MACOS_RULES[0]}"',
+                     '"/etc/udev/rules.d/${MACOS_RULES[1]}"'):
+            script = script.replace(rule, rule.replace("/etc/udev/rules.d", "${UDEV_DIR}"))
+        return subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                              timeout=60, env={**os.environ, **env})
+
+    def assert_untouched(self):
+        self.assertEqual(self.kernel.read_bytes(), self.stock)
+        self.assertNotIn("i915", self.default.read_text())
+        self.assertFalse(self.hook.exists())
+
+    # ── apply ──────────────────────────────────────────────────────────────
+    def test_apply_edits_the_kernel_grub_loads_and_nothing_a_package_owns(self):
+        result = self.run_module("mod_macos_apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("WRONG_BACKEND", result.stderr)
+        self.assertEqual(self.kernel.read_bytes().count(self.EDITED), 1)
+        self.assertEqual(self.packaged.read_bytes(), self.stock)
+        self.assertIn(f"{self.kernel} carries the set_os model list entry", result.stdout)
+        self.assertTrue(os.access(self.hook, os.X_OK))
+        # Nothing of the Limine layout appears on GRUB.
+        self.assertFalse((self.root / "etc/limine-entry-tool.d").exists())
+
+    def test_the_parameters_reach_every_entry_recovery_included(self):
+        """Every entry boots the same edited image, and a recovery entry is
+        built from GRUB_CMDLINE_LINUX alone: an i915 without its VBT there
+        would bring up the phantom eDP port this module exists to prevent."""
+        result = self.run_module("mod_macos_apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = self.default.read_text()
+        self.assertIn(f'GRUB_CMDLINE_LINUX="{self.OPTS}"', text)
+        self.assertIn('GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"', text)
+        recovery = self.cfg.read_text().split("(recovery)")[1]
+        for option in self.OPTS.split():
+            self.assertIn(option, recovery)
+        self.assertIn("GRUB cmdline verified", result.stdout)
+
+    def test_the_explanation_names_grub_and_the_kernel_image(self):
+        result = self.run_module("mod_macos_apply")
+        self.assertIn(f"the kernel image GRUB loads,\n    {self.kernel}", result.stdout)
+        self.assertIn(f"to GRUB_CMDLINE_LINUX in {self.default}", result.stdout)
+        self.assertIn("at the GRUB menu press 'e'", result.stdout)
+        self.assertNotIn("Limine", result.stdout)
+
+    def test_applying_twice_edits_and_adds_everything_once(self):
+        result = self.run_module("mod_macos_apply >/dev/null && mod_macos_apply >/dev/null")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.kernel.read_bytes().count(self.EDITED), 1)
+        self.assertEqual(self.default.read_text().count("i915.disable_display=1"), 1)
+
+    def test_parameters_that_could_not_be_written_leave_no_hook_behind(self):
+        """Once the hook is in, any mkinitcpio run edits the kernel, a kernel
+        update's included; it must not be there without the parameters."""
+        result = self.run_module("mod_macos_apply", FAIL_GRUB="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_untouched()
+
+    def test_parameters_lost_on_the_way_to_grub_cfg_leave_no_hook_behind(self):
+        """/etc/default/grub.d drop-ins are read after /etc/default/grub; one
+        that reassigns GRUB_CMDLINE_LINUX drops them from every entry."""
+        result = self.run_module("mod_macos_apply", DROPIN_RESETS_LINUX="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GRUB cmdline missing", result.stdout + result.stderr)
+        self.assertFalse(self.hook.exists())
+        self.assertEqual(self.kernel.read_bytes(), self.stock)
+        self.assertNotIn("mkinitcpio", self.calls.read_text())
+
+    # ── what is refused before anything changes ────────────────────────────
+    def test_a_grub_that_starts_linux_without_its_efi_stub_is_refused(self):
+        """Before 2.12, GRUB jumps past the stub, so set_os would never run."""
+        self.loader.write_bytes(b"\0loader/i386/linux.c\0loader/linux.c\0")
+        result = self.run_module("mod_macos_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("predates 2.12", result.stdout + result.stderr)
+        self.assertIn("preflight failed", result.stdout + result.stderr)
+        self.assert_untouched()
+        self.assertFalse(self.calls.exists())
+
+    def test_grub_without_its_x86_64_efi_modules_is_refused(self):
+        self.loader.unlink()
+        result = self.run_module("mod_macos_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not installed for x86_64-efi", result.stdout + result.stderr)
+        self.assert_untouched()
+
+    def test_a_boot_that_did_not_come_through_uefi_is_refused(self):
+        (self.root / "efi").rmdir()
+        result = self.run_module("mod_macos_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not start through UEFI", result.stdout + result.stderr)
+        self.assert_untouched()
+
+    def test_a_pending_kernel_update_is_refused(self):
+        self.kernel.write_bytes(self.stock + b" a newer build")
+        result = self.run_module("mod_macos_apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reboot into the installed kernel", result.stdout + result.stderr)
+        self.assertNotIn("i915", self.default.read_text())
+        self.assertFalse(self.hook.exists())
+
+    def test_the_edited_kernel_still_counts_as_the_running_one(self):
+        """5K, imac-alt-entry and imac-test-entry all refuse a /boot kernel
+        that is not the running kernel; the edit must not read as one."""
+        result = self.run_module("mod_macos_apply >/dev/null && grub_require_layout && echo LAYOUT-OK")
+        self.assertIn("LAYOUT-OK", result.stdout, result.stdout + result.stderr)
+
+    # ── detection ──────────────────────────────────────────────────────────
+    def test_detection_reads_the_grub_parameters_without_sudo(self):
+        probe = ('mod_macos_apply >/dev/null; '
+                 'sudo() { echo "SUDO $*" >> "$CALLS.detect"; return 1; }; mod_macos_detect')
+        pending = self.run_module(probe)
+        self.assertEqual(pending.stdout.strip(), "partial", pending.stdout)
+        booted = self.run_module(probe, igpu=True)
+        self.assertEqual(booted.stdout.strip(), "applied", booted.stdout)
+        self.assertFalse(Path(str(self.calls) + ".detect").exists())
+
+    def test_a_missing_parameter_is_not_a_complete_install(self):
+        result = self.run_module(
+            "mod_macos_apply >/dev/null; grub_cmdline_remove i915.disable_display=1 >/dev/null; "
+            "macos_cmdline_present && echo present || echo missing")
+        self.assertEqual(result.stdout.strip(), "missing", result.stdout)
+
+    def test_nothing_installed_on_grub_is_offered_not_na(self):
+        result = self.run_module("mod_macos_detect")
+        self.assertEqual(result.stdout.strip(), "not-applied", result.stdout + result.stderr)
+
+    # ── removal ────────────────────────────────────────────────────────────
+    def test_remove_restores_the_packaged_kernel_and_the_command_line(self):
+        original = self.default.read_text()
+        result = self.run_module("mod_macos_apply >/dev/null && mod_macos_remove")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.kernel.read_bytes(), self.stock)
+        self.assertEqual(self.default.read_text(), original)
+        self.assertNotIn("i915", self.cfg.read_text())
+        self.assertFalse(self.hook.exists())
+        self.assertIn("GRUB cmdline verified", result.stdout)
+        self.assertIn("reboot to return to the plain boot", result.stdout)
+
+    def test_remove_restores_every_kernel_the_hook_edited(self):
+        """A second installed kernel was edited when its own preset ran."""
+        lts = self.boot / "vmlinuz-linux-lts"
+        lts.write_bytes(b"lts " + self.EDITED + b" lts payload")
+        result = self.run_module("mod_macos_apply >/dev/null && mod_macos_remove")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(lts.read_bytes(), b"lts " + model_table(STOCK_MODELS) + b" lts payload")
+
+    def test_a_failed_restore_leaves_the_install_whole(self):
+        """Never an edited kernel without the parameters and files it needs."""
+        result = self.run_module("mod_macos_apply >/dev/null; "
+                                 "macos_restore_images() { return 1; }; mod_macos_remove")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(self.EDITED, self.kernel.read_bytes())
+        self.assertTrue(self.hook.exists())
+        self.assertIn(self.OPTS, self.default.read_text())
+        self.assertTrue((self.root / "usr/lib/firmware/imac18-3/headless-vbt.bin").exists())
+
+    # ── the brightness half ────────────────────────────────────────────────
+    def test_the_full_range_table_is_added_later_through_grub_too(self):
+        first = self.run_module("mod_macos_apply >/dev/null", iasl=False)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        mki = self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf"
+        self.assertNotIn("acpi_override", mki.read_text())
+        self.calls.unlink()
+        widened = self.run_module("macos_widen_brightness")
+        self.assertEqual(widened.returncode, 0, widened.stdout + widened.stderr)
+        self.assertIn("levels 4..100", widened.stdout)
+        self.assertIn("HOOKS+=(acpi_override)", mki.read_text())
+        calls = self.calls.read_text()
+        self.assertIn("mkinitcpio -P", calls)
+        self.assertIn("grub-mkconfig", calls)
+        self.assertEqual(self.kernel.read_bytes().count(self.EDITED), 1)
+
+
 class SetOsHookTests(unittest.TestCase):
-    """The 14-byte edit the mkinitcpio post hook makes to each UKI."""
+    """The 14-byte edit the mkinitcpio post hook makes to each UKI, or to the
+    kernel image GRUB loads."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -456,10 +807,15 @@ class SetOsHookTests(unittest.TestCase):
                                                else model_table(STOCK_MODELS)) + b"tail bytes")
         return path
 
-    def run_hook(self, *images, product=None):
-        env = dict(os.environ, IMAC_DMI_PRODUCT=str(product if product else self.dmi))
-        return subprocess.run([str(SETOS), "7.2.5-test", *[str(i) for i in images]],
+    def run_hook(self, *images, product=None, kernel="7.2.5-test"):
+        env = dict(os.environ, IMAC_DMI_PRODUCT=str(product if product else self.dmi),
+                   IMAC_BOOT_DIR=str(self.root / "boot"))
+        return subprocess.run([str(SETOS), str(kernel), *[str(i) for i in images]],
                               text=True, capture_output=True, timeout=30, env=env)
+
+    def run_mode(self, *args):
+        return subprocess.run([str(SETOS), *[str(a) for a in args]],
+                              text=True, capture_output=True, timeout=30)
 
     def test_the_last_slot_becomes_this_imac(self):
         uki = self.image()
@@ -508,6 +864,101 @@ class SetOsHookTests(unittest.TestCase):
         result = self.run_hook(initramfs)
         self.assertEqual(result.stdout, "")
         self.assertEqual(initramfs.read_bytes(), before)
+
+    # ── GRUB: the kernel image itself ──────────────────────────────────────
+    def boot_kernel(self, name="vmlinuz-linux", table=None):
+        (self.root / "boot").mkdir(exist_ok=True)
+        return self.image(table=table, name=f"boot/{name}")
+
+    def test_the_kernel_grub_loads_from_boot_is_patched(self):
+        """The Arch preset hands mkinitcpio /boot/vmlinuz-<pkgbase>, the copy
+        GRUB loads; with no UKI, that copy is the image to edit."""
+        kernel = self.boot_kernel()
+        initramfs = self.image(name="boot/initramfs-linux.img")
+        before = initramfs.read_bytes()
+        result = self.run_hook(initramfs, kernel=kernel)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("iMac18,3 added", result.stdout)
+        self.assertIn(model_table(STOCK_MODELS[:-1] + [b"iMac18,3"]), kernel.read_bytes())
+        self.assertEqual(initramfs.read_bytes(), before)
+
+    def test_the_packaged_kernel_is_never_patched(self):
+        """limine-mkinitcpio names the kernel by version, so the hook is handed
+        /usr/lib/modules/<version>/vmlinuz, which the package owns."""
+        packaged = self.root / "usr/lib/modules/7.2.5-test/vmlinuz"
+        packaged.parent.mkdir(parents=True)
+        packaged.write_bytes(model_table(STOCK_MODELS))
+        uki = self.image()
+        result = self.run_hook(uki, kernel=packaged)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(packaged.read_bytes(), model_table(STOCK_MODELS))
+        self.assertIn(model_table(STOCK_MODELS[:-1] + [b"iMac18,3"]), uki.read_bytes())
+
+    def test_a_boot_kernel_that_is_a_symlink_is_left_alone(self):
+        """Following it would edit whatever it points at, such as the
+        packaged image."""
+        packaged = self.image(name="packaged-vmlinuz")
+        before = packaged.read_bytes()
+        (self.root / "boot").mkdir()
+        link = self.root / "boot/vmlinuz-linux"
+        link.symlink_to(packaged)
+        result = self.run_hook(kernel=link)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(packaged.read_bytes(), before)
+
+    def test_another_mac_leaves_the_grub_kernel_alone(self):
+        other = self.root / "other_product"
+        other.write_text("MacBookPro16,4\n")
+        kernel = self.boot_kernel()
+        before = kernel.read_bytes()
+        self.run_hook(kernel=kernel, product=other)
+        self.assertEqual(kernel.read_bytes(), before)
+
+    # ── the modes the patcher uses on GRUB ─────────────────────────────────
+    def test_restore_takes_the_edit_back_out_byte_for_byte(self):
+        """Rebuilding the initramfs never re-copies a GRUB kernel, so removal
+        undoes the edit itself."""
+        kernel = self.boot_kernel()
+        stock = kernel.read_bytes()
+        self.run_hook(kernel=kernel)
+        self.assertNotEqual(kernel.read_bytes(), stock)
+        result = self.run_mode("--restore", kernel)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("back to stock", result.stdout)
+        self.assertEqual(kernel.read_bytes(), stock)
+
+    def test_restore_leaves_a_stock_or_unknown_image_alone(self):
+        stock = self.boot_kernel()
+        other = self.boot_kernel("vmlinuz-other", table=model_table([b"MacBookPro99,9"] * 8))
+        before = (stock.read_bytes(), other.read_bytes())
+        result = self.run_mode("--restore", stock, other)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual((stock.read_bytes(), other.read_bytes()), before)
+
+    def test_restore_fails_for_an_image_it_could_not_read_but_restores_the_rest(self):
+        edited = self.boot_kernel(table=model_table(STOCK_MODELS[:-1] + [b"iMac18,3"]))
+        result = self.run_mode("--restore", self.root / "boot/vmlinuz-gone", edited)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("WARNING", result.stdout)
+        self.assertIn(model_table(STOCK_MODELS), edited.read_bytes())
+
+    def test_same_kernel_accepts_the_package_and_its_edited_copy_only(self):
+        """What a stale-kernel check needs: the edited /boot copy is still the
+        running kernel, a different kernel is not."""
+        packaged = self.image(name="packaged")
+        kernel = self.boot_kernel()
+        self.assertEqual(self.run_mode("--same-kernel", packaged, kernel).returncode, 0)
+        self.run_hook(kernel=kernel)
+        self.assertEqual(self.run_mode("--same-kernel", packaged, kernel).returncode, 0)
+        newer = self.boot_kernel("vmlinuz-newer")
+        newer.write_bytes(newer.read_bytes() + b"a newer build")
+        self.assertEqual(self.run_mode("--same-kernel", packaged, newer).returncode, 1)
+        other_slot = self.boot_kernel("vmlinuz-other-slot",
+                                      table=model_table([b"iMac18,3"] + STOCK_MODELS[1:]))
+        self.assertEqual(self.run_mode("--same-kernel", packaged, other_slot).returncode, 1)
+        self.assertEqual(self.run_mode("--same-kernel", packaged, self.root / "missing").returncode, 1)
 
     def test_an_unreadable_image_warns_instead_of_raising(self):
         missing = self.root / "gone.efi"

@@ -32,6 +32,11 @@ What the first boot showed here:
 **Two s2idle cycles in one boot passed with macOS mode enabled** — see
 [Suspend](#suspend-which-was-the-open-question) below for the validation limits.
 
+**Arch-family GRUB** (Arch, CachyOS, EndeavourOS with mkinitcpio) gets the same
+module, iGPU and brightness alike, through the kernel image GRUB loads
+instead of a UKI — see [On Arch-family GRUB](#on-arch-family-grub). That path
+is covered by offline tests but **has not been booted on hardware yet**.
+
 ## How the firmware is told
 
 The x86 EFI stub already makes the call. `apple_set_os()` in
@@ -69,6 +74,55 @@ not land.
 The upstream fix is to add `"iMac18,3"` to that list; the hook goes away once a
 kernel carries it.
 
+### On Arch-family GRUB
+
+GRUB loads a plain kernel image, not a UKI, so the edit goes into that image:
+`/boot/vmlinuz-<pkgbase>`, the copy GRUB's menu entries name. It only counts if
+GRUB starts that image through its EFI stub, and GRUB 2.12 and later do: on
+x86_64 EFI they hand the kernel to the firmware's LoadImage/StartImage, whose
+entry point, `efi_pe_entry()`, runs the same `efi_stub_entry()` →
+`setup_quirks()` → `apple_set_os()` path a UKI takes. ("Transition to EFI
+Linux kernel stub loader for x86 architecture" in GRUB 2.12's release notes;
+Arch ships 2.14, with no patch to the loader.) Earlier builds boot Linux with
+the legacy x86 protocol, jump past the stub, and set_os never runs.
+
+What counts is the GRUB that `grub-install` last put on the machine, not the
+installed package: upgrading the package does not reinstall it. The preflight
+therefore reads `/boot/grub/x86_64-efi/linux.mod`, the loader module
+`grub-install` copies there. A build with the EFI-stub loader names its source
+file, `loader/efi/linux.c`, inside the module. Checked against Arch's own
+packages: `2.06.r499` and older lack it, `2.06.r591` and every 2.12+ build
+carry it. The module is refused on an older GRUB, with a pointer to
+`grub-install`, and when the machine did not start through UEFI at all. GRUB
+still takes the legacy path when an old shim without its loader protocol
+started it; these iMacs have no Secure Boot for a shim to be needed.
+
+The hook keeps the edit through kernel updates the same way. The Arch preset
+sets `ALL_kver="/boot/vmlinuz-<pkgbase>"`, so mkinitcpio passes that copy to
+post hooks as the kernel image, and pacman's mkinitcpio hook re-copies it from
+the package's `/usr/lib/modules/<version>/vmlinuz` before every build of a new
+kernel. The hook edits only a regular file under `/boot` whose name starts with
+`vmlinuz-`. The packaged image, which is what `limine-mkinitcpio` hands it,
+and anything reached through a symlink are left alone. Nothing pins a hash, so
+no bootloader configuration has to follow the edit.
+
+Two things differ from Limine, both handled by the module:
+
+- **The parameters go in `GRUB_CMDLINE_LINUX`.** Recovery entries are built
+  from that variable alone, without `GRUB_CMDLINE_LINUX_DEFAULT`, and they boot
+  the same edited image. An i915 started without its VBT there would create the
+  phantom eDP port described below.
+- **Removal has to undo the edit.** A UKI is rebuilt from the packaged kernel,
+  but rebuilding the initramfs never re-copies a GRUB kernel.
+  `imac-patcher --remove macos` therefore puts `MacBookPro16,4` back in every
+  `/boot/vmlinuz-*` that carries the edit before it removes anything else. If
+  that fails, the install is left whole rather than an edited kernel without
+  its parameters.
+
+A `/boot` kernel that differs from the package by exactly this edit still
+counts as the running kernel for every check that compares the two. Those are
+the 5K preflight and the GRUB `imac-alt-entry` and `imac-test-entry` helpers.
+
 ## What gets installed
 
 | File | Installed as | Why |
@@ -81,14 +135,24 @@ kernel carries it.
 | `scripts/make-bcl-table.py` | builds `/etc/initcpio/acpi_override/imac-bcl100.aml` | The brightness table, extended from 80% to the full range |
 | `scripts/imac-backlight-nvram` + `configs/macos/imac-backlight-nvram.service` | `/usr/local/bin/`, `/etc/systemd/system/` | Saves the level to Apple NVRAM at shutdown |
 | `configs/macos/imac-gpu.lua` | `~/.config/hypr/` plus a `require` in `hyprland.lua` | Keeps Hyprland on the Radeon |
-| — | `/etc/limine-entry-tool.d/imac5k-macos.conf` | The four kernel parameters |
+| — | `/etc/limine-entry-tool.d/imac5k-macos.conf` on Limine, `GRUB_CMDLINE_LINUX` in `/etc/default/grub` on GRUB | The four kernel parameters |
 
 The kernel parameters are
 `snd_hda_core.gpu_bind=0 i915.disable_display=1
-i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801`,
-written as a drop-in that **appends** with `+=`. Omarchy's
+i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801`.
+On Limine they are written as a drop-in that **appends** with `+=`. Omarchy's
 `/etc/default/limine` appends too, and the entry tool reads both; editing that
-file's line in place matches nothing there.
+file's line in place matches nothing there. On GRUB they are added to
+`GRUB_CMDLINE_LINUX` in one edit, the file is backed up first, and `grub.cfg`
+is regenerated. Other arguments, quoting and comments are kept, as for the 5K
+parameter.
+
+Everything else is the same on both. The Hyprland pin is installed wherever an
+Omarchy-style `~/.config/hypr/hyprland.lua` exists. KDE Plasma gets none, and
+by KWin's source needs none: KWin skips any DRM device that libdrm's
+`drmIsKMS()` rejects, which takes at least one connector, and the headless VBT
+leaves the HD 630 with none. That is read from the source, not yet seen on
+hardware.
 
 `scripts/imac-igpu-check` is a read-only status report — run it after the first
 reboot. `sudo` adds i915 parameters, DMC and runtime-PM detail.
@@ -122,6 +186,9 @@ Two separate things, and the module can deliver the first without the second.
 
 **Working brightness** comes from set_os alone. Omarchy's `omarchy-hw-display`
 already picks `acpi_video0`, so the brightness keys and the OSD need no change.
+Neither should KDE Plasma's: PowerDevil takes a `firmware`-type backlight
+before any other, and `acpi_video0` is one. That is read from PowerDevil's
+source and not yet confirmed on hardware.
 
 **The full range** needs the firmware's ACPI table rewritten. Apple's `_BCL`
 (named `ABCL` in the PEG0GFX0 SSDT) stops at level 80 while its own setter
@@ -129,7 +196,10 @@ already picks `acpi_video0`, so the brightness keys and the OSD need no change.
 Linux's 100% is 52400 — 80% of what macOS drives. `scripts/make-bcl-table.py`
 reads the machine's own table, rewrites only ABCL to levels 4..100, bumps the
 OEM revision and compiles it for mkinitcpio's `acpi_override` hook. Apple's
-table never leaves the machine.
+table never leaves the machine. That hook puts the table in the uncompressed
+early archive at the front of the initramfs, which the kernel searches however
+the initramfs arrived. It works from GRUB's `initrd` line, microcode image
+first included, exactly as from inside a UKI.
 
 Nothing on the kernel command line can switch an initramfs ACPI override back
 off, which makes a bad table the one failure in macOS mode with no boot-time
@@ -328,16 +398,27 @@ it back.
 
 - **The desktop does not come back.** At the Limine menu press `e` on the entry
   and append `module_blacklist=i915` to the command line. That boots with the
-  iGPU ignored and everything else in place.
+  iGPU ignored and everything else in place. On GRUB, press `e` on the entry,
+  append it to the line that starts with `linux`, and boot with ctrl-x.
 - **From a TTY (ctrl-alt-F2) or over SSH:** `imac-patcher --remove macos`
   undoes all of it and rebuilds the boot image.
 - **The machine does not reach userspace at all** — the only way an ACPI table
   can fail, and the reason for the checks above. Boot the installer USB,
   `chroot` in, delete `/etc/mkinitcpio.conf.d/zz-imac-igpu.conf` and
-  `/etc/initcpio/acpi_override/imac-bcl100.aml`, and run `limine-mkinitcpio`.
+  `/etc/initcpio/acpi_override/imac-bcl100.aml`, and run `limine-mkinitcpio`
+  (`mkinitcpio -P` on GRUB).
 
 Removing the module takes back every file, clears the drop-in, rebuilds the
-UKI without the hook and verifies the parameters are gone.
+UKI without the hook and verifies the parameters are gone. On GRUB it first
+restores every edited `/boot/vmlinuz-*`, then removes the parameters from
+`GRUB_CMDLINE_LINUX`, rebuilds the initramfs and checks the regenerated entry.
+
+**GRUB snapshot entries** (grub-btrfs, with `/boot` inside the snapshotted
+subvolume, as on CachyOS) boot the kernel and initramfs saved in the snapshot,
+but with the command line from the current `/etc/default/grub`. After
+`--remove macos`, a snapshot taken while macOS mode was on therefore starts an
+edited kernel without its parameters. Boot such a snapshot with
+`module_blacklist=i915` added as above.
 
 ## Not supported
 
@@ -347,8 +428,13 @@ UKI without the hook and verifies the parameters are gone.
   Skylake, Coffee Lake, Comet Lake), but the VBT here is built for Kaby Lake,
   the udev rules key on this machine's PCI addresses, and the ACPI table shape
   is checked against this firmware. Each needs its own verification first.
-- **Fedora and Arch/GRUB.** The edit lands inside a UKI that
-  `limine-mkinitcpio` builds; neither backend here builds one. Fedora would
-  also need dracut's own ACPI-override mechanism, and its signed kernel image
-  cannot be byte-patched without breaking Secure Boot. (Apple's firmware on
-  these iMacs has no Secure Boot, so that part is not an issue on Omarchy.)
+- **Fedora.** Its kernel image is a signed file from the kernel package,
+  installed by `kernel-install` rather than a mkinitcpio preset, and dracut has
+  its own ACPI-override mechanism. (Apple's firmware on these iMacs has no
+  Secure Boot, so the signature would only matter elsewhere.)
+- **Arch layouts other than GRUB or Limine with mkinitcpio** — systemd-boot,
+  dracut, UKI-only setups. The same boundaries as the rest of the
+  [Arch/GRUB backend](arch-grub.md).
+- **GRUB older than 2.12**, as installed on the ESP, and GRUB started by a shim
+  without its loader protocol: both boot Linux past its EFI stub. The preflight
+  catches the first.

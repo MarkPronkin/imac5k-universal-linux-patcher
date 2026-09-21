@@ -133,7 +133,7 @@ Module IDs: audio eq t2speakers color suspend boot macos 5k
   suspend allows suspend and blocks hibernate; suspend is experimental.
   t2speakers enables all four iMac Pro speakers; it is n/a on other models.
   macos exposes the Intel iGPU and the working backlight on iMac18,3 with
-  Omarchy/Limine; it is untested here and n/a everywhere else.
+  Omarchy/Limine or Arch-family GRUB (GRUB untested); n/a everywhere else.
 
 --force may appear anywhere. It bypasses only the Retina 5K model gate;
 individual module compatibility checks still apply. Run as your desktop user.
@@ -1789,9 +1789,14 @@ mod_boot_remove() {
 # mkinitcpio runs post hooks on it, and only then does limine-entry-tool pin
 # its BLAKE2B hash in limine.conf. Nothing may touch a UKI after that point.
 #
+# Arch-family GRUB loads the kernel image itself, so there the hook edits
+# /boot/vmlinuz-<pkgbase>, which the mkinitcpio preset copies from the package
+# before every build. lib/arch-grub.sh re-points the boot-specific helpers
+# below, from macos_boot_image to macos_verify_cmdline.
+#
 # Ported from ahmadtv/omarchy-imac18-3 (igpu/), where every stage was verified
-# on an iMac18,3. Not hardware-tested here yet, and never tested together with
-# a working suspend — upstream masks sleep. See docs/macos-mode.md.
+# on an iMac18,3, and verified here on an iMac18,3 under Omarchy, suspend
+# included. The GRUB path is untested on hardware. See docs/macos-mode.md.
 MACOS_CFG="${REPO_DIR}/configs/macos"
 MACOS_HOOK=/etc/initcpio/post/imac-setos
 MACOS_MKI=/etc/mkinitcpio.conf.d/zz-imac-igpu.conf
@@ -1835,9 +1840,51 @@ macos_acpi_hook_available() {
     done
     return 1
 }
+# The two boot paths the edit can land on: Omarchy's Limine UKIs and the
+# kernel image Arch-family GRUB loads. Fedora's kernels are signed images from
+# the kernel package, and its dracut initramfs has no acpi_override hook.
+macos_backend_supported() { { imac_has_limine && ! imac_is_fedora; } || imac_is_arch_grub; }
+
+# ── boot-specific helpers (Limine; lib/arch-grub.sh re-points them) ──────
+# The image the firmware starts the kernel's EFI stub from, which the hook
+# must have edited.
+macos_boot_image() { printf '%s\n' "$UKI_PATH"; }
 # Apply-time check only. The UKI lives on the ESP, which is root-only, and
 # detection must never ask for a password.
-macos_uki_lists_model() { sudo grep -qa 'iMac18,3' "$UKI_PATH" 2>/dev/null; }
+macos_image_lists_model() {
+    local image
+    image=$(macos_boot_image) && [[ -n $image ]] || return 1
+    sudo grep -qa 'iMac18,3' "$image" 2>/dev/null
+}
+# Nothing to undo in an image: every UKI is rebuilt from the packaged kernel,
+# and without the hook it stays stock.
+macos_restore_images() { return 0; }
+macos_cmdline_present() { boot_config_has "$MACOS_OPTS_MARK"; }
+macos_add_cmdline() {
+    sudo mkdir -p "$LIMINE_DROPIN_DIR" || return 1
+    printf '%s\n%s\n%s\n' \
+        '# Written by imac-patcher (macOS mode: Intel video and brightness).' \
+        '# Delete this file to drop the parameters, or run: imac-patcher --remove macos' \
+        "KERNEL_CMDLINE[default]+=\" ${MACOS_OPTS}\"" \
+        | sudo tee "$MACOS_DROPIN" >/dev/null || return 1
+    say "wrote ${MACOS_DROPIN}"
+}
+macos_remove_cmdline() {
+    sudo rm -f "$MACOS_DROPIN" || return 1
+    # Older layouts appended the parameters straight into /etc/default/limine.
+    if grep -qs -- "$MACOS_OPTS_MARK" "$LIMINE_DEFAULT"; then
+        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-unmacos-$(date +%s)" || return 1
+        sudo sed -i "s| ${MACOS_OPTS}||" "$LIMINE_DEFAULT" || return 1
+    fi
+}
+macos_verify_cmdline() {   # present|absent
+    if [[ $1 == present ]]; then verify_cmdline "$MACOS_OPTS_MARK"
+    else verify_cmdline "" "$MACOS_OPTS_MARK"; fi
+}
+# The apply explanation's three boot-specific phrases.
+macos_image_note()  { echo "every UKI it builds"; }
+macos_params_note() { echo "in ${MACOS_DROPIN}"; }
+macos_menu_note()   { echo "Limine"; }
 
 # Status is read without sudo, so the last component is the running boot
 # rather than the image on the ESP: the firmware exposes 00:02.0 only after
@@ -1850,12 +1897,12 @@ mod_macos_detect() {
     [[ -f $MACOS_VBT ]] && ((have++))
     [[ -f "/etc/udev/rules.d/${MACOS_RULES[0]}" && -f "/etc/udev/rules.d/${MACOS_RULES[1]}" ]] && ((have++))
     macos_initramfs_conf_ok && ((have++))
-    boot_config_has "$MACOS_OPTS_MARK" && ((have++))
+    macos_cmdline_present && ((have++))
     [[ "$(systemctl is-enabled "$MACOS_NVRAM_SERVICE" 2>/dev/null)" == enabled ]] && ((have++))
     [[ -e $MACOS_IGPU ]] && ((have++))
     # Keep an installed module removable even where it could not be applied
     # today; only a machine with nothing installed reports n/a.
-    if ((have == 0)) && { ! imac_macos_mode_supported || ! imac_has_limine; }; then
+    if ((have == 0)) && { ! imac_macos_mode_supported || ! macos_backend_supported; }; then
         echo n/a; return
     fi
     if   ((have == total)); then echo applied
@@ -1909,12 +1956,13 @@ mod_macos_preflight() {
         fi
         return 1
     fi
-    if imac_is_fedora || imac_is_arch_grub || ! imac_has_limine; then
-        warn "macOS mode needs the Omarchy/Limine boot path: the model list is edited inside the UKI that limine-mkinitcpio builds."
+    if ! macos_backend_supported; then
+        warn "macOS mode needs the Omarchy/Limine or Arch-family GRUB boot path: the model list is edited in the boot image mkinitcpio builds."
         return 1
     fi
-    local t missing=() pkgs=() installer=()
-    for t in limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl; do
+    local t missing=() pkgs=() installer=() tools=(mkinitcpio python3 udevadm systemctl)
+    if imac_is_arch_grub; then tools+=(grub-mkconfig); else tools+=(limine-mkinitcpio objcopy); fi
+    for t in "${tools[@]}"; do
         command -v "$t" >/dev/null || missing+=("$t")
     done
     if ((${#missing[@]})); then
@@ -1931,6 +1979,12 @@ mod_macos_preflight() {
         done
     else
         say "boot tools present"
+    fi
+    # On GRUB the hook edits the kernel image in the preset's /boot layout,
+    # and the edit only counts if GRUB starts that image's EFI stub. Checked
+    # before anything changes, like a /etc/default/grub the edits cannot parse.
+    if imac_is_arch_grub; then
+        grub_read_cmdlines && grub_require_layout && grub_boots_efi_stub || return 1
     fi
     # Both optional, and each loses a different half of the feature: without
     # iasl the brightness range stays at the firmware's 80 levels, without the
@@ -1954,11 +2008,11 @@ mod_macos_apply() {
     cat <<EOF
 
 What this changes, and how to undo it:
-  * a mkinitcpio hook rewrites 14 bytes in every UKI it builds, so the
+  * a mkinitcpio hook rewrites 14 bytes in $(macos_image_note), so the
     kernel's EFI stub tells the firmware macOS is starting
   * i915 loads first and headless: the Intel HD 630 becomes the default GPU
     for video; the Radeon keeps the display, the desktop and all 3D
-  * these kernel parameters are added in ${MACOS_DROPIN}:
+  * these kernel parameters are added $(macos_params_note):
       ${MACOS_OPTS}
   * where the ACPI table can be rebuilt, brightness covers the panel's full
     range, and the level is saved to Apple NVRAM at shutdown so the panel
@@ -1967,14 +2021,13 @@ What this changes, and how to undo it:
 Undo:  $0 --remove macos
 
 If the desktop does not come back:
-  * at the Limine menu press 'e' on the entry and append
-    module_blacklist=i915 to the command line — that boots with the iGPU
-    ignored and everything else in place
+  * at the $(macos_menu_note) menu press 'e' on the entry and append
+    module_blacklist=i915 to the kernel command line — that boots with the
+    iGPU ignored and everything else in place
   * from a TTY (ctrl-alt-F2) or over SSH:  $0 --remove macos
 EOF
     confirm "Boot in macOS mode from now on?" || return 1
 
-    sudo install -Dm755 "${SCRIPT_DIR}/imac-setos" "$MACOS_HOOK" || return 1
     sudo install -Dm644 "${MACOS_CFG}/headless-vbt.bin" "$MACOS_VBT" || return 1
     local rule
     for rule in "${MACOS_RULES[@]}"; do
@@ -2007,13 +2060,7 @@ EOF
         sudo rm -f "$MACOS_AML" || return 1
     fi
 
-    sudo mkdir -p "$LIMINE_DROPIN_DIR" || return 1
-    printf '%s\n%s\n%s\n' \
-        '# Written by imac-patcher (macOS mode: Intel video and brightness).' \
-        '# Delete this file to drop the parameters, or run: imac-patcher --remove macos' \
-        "KERNEL_CMDLINE[default]+=\" ${MACOS_OPTS}\"" \
-        | sudo tee "$MACOS_DROPIN" >/dev/null || return 1
-    say "wrote ${MACOS_DROPIN}"
+    macos_add_cmdline || return 1
 
     sudo install -Dm755 "${SCRIPT_DIR}/imac-backlight-nvram" "$MACOS_NVRAM_BIN" || return 1
     sudo install -Dm644 "${MACOS_CFG}/imac-backlight-nvram.service" "$MACOS_NVRAM_UNIT" || return 1
@@ -2022,14 +2069,21 @@ EOF
 
     macos_install_hypr_pin || return 1
 
+    # The hook goes in last. From here on every image mkinitcpio builds is
+    # edited, including one a kernel update builds, and an edited image must
+    # never boot without the parameters and files installed above.
+    sudo install -Dm755 "${SCRIPT_DIR}/imac-setos" "$MACOS_HOOK" || return 1
     sync_boot_files || return 1
-    macos_uki_lists_model || {
-        warn "the rebuilt UKI does not list iMac18,3 — read the imac-setos lines in the output above."
-        warn "The kernel's model list has probably moved; nothing here changes the boot until that is fixed."
+    local image
+    image=$(macos_boot_image)
+    macos_image_lists_model || {
+        warn "the rebuilt boot image ${image} does not list iMac18,3 — read the imac-setos lines in the output above."
+        warn "A warning there means the kernel's model list has moved; no line for it means mkinitcpio never passed the hook this image."
+        warn "Either way the firmware keeps the iGPU hidden until that is fixed."
         return 1
     }
-    say "UKI carries the set_os model list entry"
-    verify_cmdline "$MACOS_OPTS_MARK" || return 1
+    say "${image} carries the set_os model list entry"
+    macos_verify_cmdline present || return 1
     ((acpi)) && say "brightness table rebuilt: levels 4..100 instead of 1..80"
     say "reboot to start in macOS mode, then check it with: ${SCRIPT_DIR}/imac-igpu-check"
     return 0
@@ -2037,7 +2091,11 @@ EOF
 
 mod_macos_remove() {
     local rule
-    sudo rm -f "$MACOS_HOOK" "$MACOS_MKI" "$MACOS_AML" "$MACOS_VBT" "$MACOS_DROPIN" || return 1
+    # The boot images lose the edit first. If that fails, the install is still
+    # whole, instead of an edited kernel left without the parameters and the
+    # VBT it needs.
+    macos_restore_images || return 1
+    sudo rm -f "$MACOS_HOOK" "$MACOS_MKI" "$MACOS_AML" "$MACOS_VBT" || return 1
     sudo rmdir "$MACOS_VBT_DIR" 2>/dev/null
     for rule in "${MACOS_RULES[@]}"; do
         sudo rm -f "/etc/udev/rules.d/${rule}" || return 1
@@ -2048,12 +2106,8 @@ mod_macos_remove() {
     sudo rm -f "$MACOS_NVRAM_BIN" "$MACOS_NVRAM_UNIT" || return 1
     sudo systemctl daemon-reload || return 1
     macos_remove_hypr_pin || return 1
-    # Older layouts appended the parameters straight into /etc/default/limine.
-    if grep -qs -- "$MACOS_OPTS_MARK" "$LIMINE_DEFAULT"; then
-        sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-unmacos-$(date +%s)" || return 1
-        sudo sed -i "s| ${MACOS_OPTS}||" "$LIMINE_DEFAULT" || return 1
-    fi
-    sync_boot_files && verify_cmdline "" "$MACOS_OPTS_MARK" || return 1
+    macos_remove_cmdline || return 1
+    sync_boot_files && macos_verify_cmdline absent || return 1
     say "reboot to return to the plain boot: the iGPU is hidden again and brightness goes back to the firmware's range"
 }
 
@@ -2503,11 +2557,14 @@ startup_deps_note() {
             macos)
                 imac_macos_mode_supported || continue
                 ((fedora)) && continue
-                ((archgrub)) && continue
-                [[ -f $LIMINE_DEFAULT ]] || continue
                 # iasl is deliberately absent: without it the module still
                 # applies, with the firmware's own brightness range.
-                tools=(limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl) ;;
+                if ((archgrub)); then
+                    tools=(mkinitcpio grub-mkconfig python3 udevadm systemctl)
+                else
+                    [[ -f $LIMINE_DEFAULT ]] || continue
+                    tools=(limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl)
+                fi ;;
             5k)
                 [[ ${MODULE_STATES[$id]} == n/a ]] && continue
                 tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod python3)

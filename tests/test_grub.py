@@ -328,6 +328,77 @@ grub_build_image /tmp/test.img /tmp/private-root
         self.assertEqual(self.custom.stat().st_mode & 0o777, 0o644)
         self.assertEqual(self.custom.read_text(), CUSTOM_HEADER)
 
+    def test_several_parameters_take_one_edit_and_one_regeneration(self):
+        result = self.run_grub("grub_cmdline_add amdgpu.tiled_stitch=1 quiet idle=poll idle=poll")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet amdgpu.tiled_stitch=1 idle=poll"',
+                      self.default.read_text())
+        self.assertEqual(self.mkconfig_calls().count("grub-mkconfig"), 1)
+        self.assertEqual(len(list(self.default.parent.glob("default-grub.backup-*"))), 1)
+        self.calls.unlink()
+        result = self.run_grub("grub_cmdline_remove idle=poll amdgpu.tiled_stitch=1 absent=1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"', self.default.read_text())
+        self.assertEqual(self.mkconfig_calls().count("grub-mkconfig"), 1)
+
+    def test_one_invalid_parameter_refuses_the_whole_edit(self):
+        original = self.default.read_text()
+        result = self.run_grub("grub_cmdline_add amdgpu.tiled_stitch=1 'bad value'")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.default.read_text(), original)
+        self.assertEqual(self.mkconfig_calls(), "")
+
+    def test_linux_additions_reach_the_variable_every_entry_reads(self):
+        """Recovery entries are built from GRUB_CMDLINE_LINUX alone."""
+        self.default.write_text(
+            "GRUB_CMDLINE_LINUX_DEFAULT='loglevel=3 quiet'\n"
+            "GRUB_CMDLINE_LINUX='cryptdevice=UUID=abc:root' # keep\n")
+        result = self.run_grub("grub_cmdline_add_linux i915.disable_display=1 snd_hda_core.gpu_bind=0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = self.default.read_text()
+        self.assertIn("GRUB_CMDLINE_LINUX='cryptdevice=UUID=abc:root i915.disable_display=1 "
+                      "snd_hda_core.gpu_bind=0' # keep", text)
+        self.assertIn("GRUB_CMDLINE_LINUX_DEFAULT='loglevel=3 quiet'", text)
+        # Present in either variable counts as present.
+        self.calls.unlink()
+        result = self.run_grub("grub_cmdline_add_linux quiet")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mkconfig_calls(), "")
+        self.assertEqual(self.default.read_text(), text)
+
+    def test_a_missing_linux_line_is_created(self):
+        self.default.write_text('GRUB_CMDLINE_LINUX_DEFAULT="quiet"\n')
+        result = self.run_grub("grub_cmdline_add_linux i915.disable_display=1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.default.read_text(),
+                         'GRUB_CMDLINE_LINUX_DEFAULT="quiet"\nGRUB_CMDLINE_LINUX="i915.disable_display=1"\n')
+
+    def test_the_efi_stub_loader_is_recognised_in_the_installed_module(self):
+        """GRUB 2.12+ starts Linux through its EFI stub; what grub-install
+        last copied beside grub.cfg decides, not the package version."""
+        efi = self.cfg.parent / "sys-efi"
+        efi.mkdir()
+        module = self.cfg.parent / "x86_64-efi/linux.mod"
+        module.parent.mkdir()
+        cases = (
+            (b"\0loader/i386/linux.c\0loader/efi/linux.c\0", True, ""),
+            (b"\0loader/i386/linux.c\0loader/linux.c\0", False, "predates 2.12"),
+            (None, False, "not installed for x86_64-efi"),
+        )
+        for content, ok, message in cases:
+            with self.subTest(content=content):
+                if content is None:
+                    module.unlink(missing_ok=True)
+                else:
+                    module.write_bytes(content)
+                result = self.run_grub(f'GRUB_EFI_DIR="{efi}"; grub_boots_efi_stub')
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+                self.assertIn(message, result.stderr)
+        module.write_bytes(cases[0][0])
+        result = self.run_grub(f'GRUB_EFI_DIR="{efi}/absent"; grub_boots_efi_stub')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not start through UEFI", result.stderr)
+
     def test_custom_pkgbase_punctuation_is_literal_in_initramfs_replacement(self):
         self.cfg.write_text(GRUB_CFG.replace("/vmlinuz-linux", "/vmlinuz-linux-custom+test")
                             .replace("/initramfs-linux", "/initramfs-linux-custom+test"))

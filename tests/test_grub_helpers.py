@@ -158,6 +158,25 @@ module_desc() { cat "$1"; }
         self.assertIn("reboot into the installed kernel", result.stderr)
         self.assertFalse((self.root / "calls").exists())
 
+    def test_a_boot_kernel_carrying_only_the_macos_edit_is_the_running_kernel(self):
+        """macOS mode edits one set_os model slot in the /boot copy; staging
+        must still recognise it, and still refuse any other difference."""
+        slots = [b"MacBookPro11,3", b"MacBookPro11,5", b"MacBookPro13,3", b"MacBookPro14,3",
+                 b"MacBookPro15,1", b"MacBookPro15,3", b"MacBookPro16,1"]
+        stock = b"".join(m.ljust(15, b"\0") for m in slots + [b"MacBookPro16,4"])
+        edited = b"".join(m.ljust(15, b"\0") for m in slots + [b"iMac18,3"])
+        (self.modules / KREL / "vmlinuz").write_bytes(b"kernel " + stock)
+        boot_kernel = self.boot / "vmlinuz-linux-cachyos"
+        boot_kernel.write_bytes(b"kernel " + edited)
+        result = self.run_helper("imac-test-entry", 'grub_stage "$GOOD_INPUT"',
+                                 SCRIPT_DIR=str(ROOT / "scripts"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.image.read_text(), "known-good-module")
+        boot_kernel.write_bytes(b"newer " + edited)
+        result = self.run_helper("imac-test-entry", "grub_promote", SCRIPT_DIR=str(ROOT / "scripts"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reboot into the installed kernel", result.stderr)
+
     def test_missing_mkinitcpio_preset_refuses_dracut_layout(self):
         (self.presets / "linux-cachyos.preset").unlink()
         result = self.run_helper("imac-test-entry", 'grub_stage "$GOOD_INPUT"')

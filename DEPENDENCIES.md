@@ -287,13 +287,14 @@ taken from so `--remove` never restores one panel's setting onto another.
 - limine-mkinitcpio or mkinitcpio — rebuilds the initramfs/UKI
 - N/A on Fedora and Arch-family GRUB; detection returns n/a there
 
-## macOS mode module (boot tier, iMac18,3 + Omarchy only)
+## macOS mode module (boot tier, iMac18,3; Omarchy/Limine or Arch-family GRUB)
 
 | Tool | Arch package | Fedora package |
 |---|---|---|
-| limine-mkinitcpio | limine-mkinitcpio-hook | — |
+| limine-mkinitcpio (Limine) | limine-mkinitcpio-hook | — |
+| objcopy (Limine) | binutils | — |
+| grub-mkconfig (GRUB) | grub | — |
 | mkinitcpio | mkinitcpio | — |
-| objcopy | binutils | — |
 | python3 | python | — |
 | udevadm, systemctl | systemd | — |
 | iasl (optional) | acpica | — |
@@ -311,9 +312,12 @@ The module also needs mkinitcpio's `acpi_override` install hook
 (`/usr/lib/initcpio/install/acpi_override`, shipped with mkinitcpio) for the
 full-range brightness table; without it the firmware's range is kept.
 
-N/A on every model but iMac18,3, and on Fedora and Arch-family GRUB: the edit
-this module makes lands inside the UKI `limine-mkinitcpio` builds. See
-docs/macos-mode.md.
+On GRUB the installed boot loader matters, not the package: it must be GRUB
+2.12 or newer, installed for `x86_64-efi`, because older builds start Linux
+without its EFI stub. The preflight checks `/boot/grub/x86_64-efi/linux.mod`;
+after upgrading from an older GRUB, run your `grub-install` command again.
+
+N/A on every model but iMac18,3, and on Fedora. See docs/macos-mode.md.
 
 ## scripts/verify.sh (optional probes)
 

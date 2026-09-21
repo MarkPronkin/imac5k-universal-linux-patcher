@@ -23,7 +23,7 @@ grub_read_cmdlines() {
     local assignment='^([[:space:]]*(export[[:space:]]+)?(GRUB_CMDLINE_LINUX(_DEFAULT)?)=)(.*)$'
     local quoted="^([\"'])(.*)\\1([[:space:]]*(#.*)?)$"
     GRUB_LINES=(); GRUB_KEYS=(); GRUB_PREFIXES=(); GRUB_VALUES=(); GRUB_QUOTES=(); GRUB_SUFFIXES=()
-    GRUB_LINUX=; GRUB_LINUX_DEFAULT=; GRUB_DEFAULT_INDEX=-1
+    GRUB_LINUX=; GRUB_LINUX_DEFAULT=; GRUB_DEFAULT_INDEX=-1; GRUB_LINUX_INDEX=-1
     contents=$($GRUB_SUDO cat "$GRUB_DEFAULT_FILE") || { warn "cannot read $GRUB_DEFAULT_FILE"; return 1; }
     while IFS= read -r line || [[ -n $line ]]; do
         GRUB_LINES[i]=$line
@@ -48,7 +48,7 @@ grub_read_cmdlines() {
             if [[ $key == GRUB_CMDLINE_LINUX_DEFAULT ]]; then
                 GRUB_LINUX_DEFAULT=$value; GRUB_DEFAULT_INDEX=$i
             else
-                GRUB_LINUX=$value
+                GRUB_LINUX=$value; GRUB_LINUX_INDEX=$i
             fi
         fi
         i=$((i + 1))
@@ -112,25 +112,39 @@ grub_commit_file() {   # source, destination
     return 1
 }
 
-grub_cmdline_edit() {   # add/remove, one literal kernel parameter
-    local action=$1 param=$2 i value quote tmp words=() keep=()
-    [[ $param =~ ^[a-zA-Z0-9_.=:/@,+!-]+$ ]] || { warn "invalid kernel parameter: $param"; return 1; }
+# Literal kernel parameters, several at once, in one edit and one
+# regeneration. An addition goes to the named variable; a removal takes the
+# parameter out of every assignment.
+grub_cmdline_edit() {   # add/remove, GRUB_CMDLINE_LINUX[_DEFAULT], parameters...
+    local action=$1 key=$2 param i value quote tmp words=() keep=() changed=()
+    shift 2
+    for param in "$@"; do
+        [[ $param =~ ^[a-zA-Z0-9_.=:/@,+!-]+$ ]] || { warn "invalid kernel parameter: $param"; return 1; }
+    done
     grub_read_cmdlines || return 1
-    if [[ $action == add ]]; then
-        grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" "$param" && return 0
-        if (( GRUB_DEFAULT_INDEX < 0 )); then
-            GRUB_LINES+=("GRUB_CMDLINE_LINUX_DEFAULT=\"$param\"")
+    for param in "$@"; do
+        grub_has_token "${changed[*]}" "$param" && continue
+        if grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" "$param"; then
+            [[ $action == remove ]] && changed+=("$param")
         else
-            i=$GRUB_DEFAULT_INDEX
+            [[ $action == add ]] && changed+=("$param")
+        fi
+    done
+    ((${#changed[@]})) || return 0
+    if [[ $action == add ]]; then
+        i=$GRUB_DEFAULT_INDEX
+        [[ $key == GRUB_CMDLINE_LINUX ]] && i=$GRUB_LINUX_INDEX
+        if (( i < 0 )); then
+            GRUB_LINES+=("$key=\"${changed[*]}\"")
+        else
             value=${GRUB_VALUES[i]}
             quote=${GRUB_QUOTES[i]:-\"}
-            GRUB_LINES[i]="${GRUB_PREFIXES[i]}${quote}${value:+$value }${param}${quote}${GRUB_SUFFIXES[i]}"
+            GRUB_LINES[i]="${GRUB_PREFIXES[i]}${quote}${value:+$value }${changed[*]}${quote}${GRUB_SUFFIXES[i]}"
         fi
     else
-        grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" "$param" || return 0
         for i in "${!GRUB_KEYS[@]}"; do
             keep=(); read -r -a words <<< "${GRUB_VALUES[i]}"
-            for value in "${words[@]}"; do [[ $value == "$param" ]] || keep+=("$value"); done
+            for value in "${words[@]}"; do grub_has_token "${changed[*]}" "$value" || keep+=("$value"); done
             quote=${GRUB_QUOTES[i]:-\"}
             GRUB_LINES[i]="${GRUB_PREFIXES[i]}${quote}${keep[*]}${quote}${GRUB_SUFFIXES[i]}"
         done
@@ -141,10 +155,13 @@ grub_cmdline_edit() {   # add/remove, one literal kernel parameter
     grub_commit_file "$tmp" "$GRUB_DEFAULT_FILE" || result=$?
     rm -f "$tmp"
     ((result == 0)) || return "$result"
-    say "$action $param in $GRUB_DEFAULT_FILE"
+    say "$action ${changed[*]} in $GRUB_DEFAULT_FILE"
 }
-grub_cmdline_add() { grub_cmdline_edit add "$1"; }
-grub_cmdline_remove() { grub_cmdline_edit remove "$1"; }
+grub_cmdline_add() { grub_cmdline_edit add GRUB_CMDLINE_LINUX_DEFAULT "$@"; }
+# For parameters every generated entry needs: recovery entries are built from
+# GRUB_CMDLINE_LINUX alone, without GRUB_CMDLINE_LINUX_DEFAULT.
+grub_cmdline_add_linux() { grub_cmdline_edit add GRUB_CMDLINE_LINUX "$@"; }
+grub_cmdline_remove() { grub_cmdline_edit remove '' "$@"; }
 
 grub_entry_begin() { printf '# >>> imac-patcher test entry: %s >>>\n' "$1"; }
 grub_entry_end()   { printf '# <<< imac-patcher test entry: %s <<<\n' "$1"; }
@@ -324,11 +341,35 @@ grub_require_layout() {
     }
     expected=$($GRUB_SUDO sha256sum "$installed") || return 1
     actual=$($GRUB_SUDO sha256sum "$kernel") || return 1
-    [[ ${expected%% *} == "${actual%% *}" ]] || {
+    [[ ${expected%% *} == "${actual%% *}" ]] || grub_setos_copy "$installed" "$kernel" || {
         warn "$kernel differs from the running kernel $KREL; reboot into the installed kernel before patching"
         return 1
     }
     grub_kernel_entry >/dev/null || { warn "no normal GRUB entry for $pkgbase"; return 1; }
+}
+
+# macOS mode's mkinitcpio hook rewrites one set_os model slot in the /boot
+# copy of each kernel. A copy that differs from the package by exactly that
+# edit is still the running kernel.
+grub_setos_copy() {   # packaged kernel, /boot kernel
+    [[ -f ${SCRIPT_DIR:-}/imac-setos ]] && command -v python3 >/dev/null || return 1
+    $GRUB_SUDO python3 "$SCRIPT_DIR/imac-setos" --same-kernel "$1" "$2"
+}
+
+# GRUB 2.12 and later start an x86_64 kernel through its EFI stub
+# (LoadImage/StartImage), where the stub's own calls to the firmware run;
+# older builds jump past the stub. What counts is the loader grub-install
+# last put beside grub.cfg, not the installed package, and a build carrying
+# the EFI-stub loader names that source file inside the module.
+GRUB_EFI_DIR=${GRUB_EFI_DIR:-/sys/firmware/efi}
+grub_boots_efi_stub() {
+    local module=${GRUB_CFG%/*}/x86_64-efi/linux.mod
+    [[ -d $GRUB_EFI_DIR ]] || { warn "this system did not start through UEFI, so no EFI stub runs"; return 1; }
+    $GRUB_SUDO test -f "$module" || { warn "$module is missing: GRUB is not installed for x86_64-efi"; return 1; }
+    $GRUB_SUDO grep -qa 'loader/efi/linux.c' "$module" && return 0
+    warn "the installed GRUB predates 2.12 and starts Linux without its EFI stub"
+    warn "run your grub-install --target=x86_64-efi command again to update it, then retry"
+    return 1
 }
 
 # Normalize a supplied module before any live module/default image is changed.

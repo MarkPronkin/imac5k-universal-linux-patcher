@@ -5,8 +5,15 @@ Installed as /etc/initcpio/post/imac-setos by `imac-patcher --apply macos`,
 and removed by `--remove macos`. mkinitcpio runs it after every
 image it builds -- kernel updates included -- as
     imac-setos KERNEL IMAGE... [UKI]
-and it patches each .efi (the UKI) in place, before limine-entry-tool copies
-the UKI to the ESP and pins its hash.
+and it patches, in place, whatever the firmware will start the kernel's EFI
+stub from:
+
+  * each .efi (the UKI), before limine-entry-tool copies it to the ESP and
+    pins its hash, and
+  * KERNEL itself when it is /boot/vmlinuz-*: GRUB loads the kernel image
+    directly, and the Arch preset installs it there, as a copy of the
+    packaged /usr/lib/modules/<version>/vmlinuz, before every build. The
+    packaged file is never touched, and neither is a symlink.
 
 Why: the x86 EFI stub (drivers/firmware/efi/libstub/x86-stub.c) tells Apple
 firmware "macOS is booting" via the set_os protocol, but only for the models
@@ -31,57 +38,138 @@ image afterwards and says so if the edit did not land.
 Order matters and holds: mkinitcpio runs post hooks on the image it just
 built, and limine-mkinitcpio only then hands it to limine-entry-tool, which
 pins its BLAKE2B hash in limine.conf. Nothing may edit a UKI after that point
--- the config sets hash_mismatch_panic.
+-- the config sets hash_mismatch_panic. GRUB pins nothing.
+
+Two more modes serve the patcher on GRUB, where rebuilding the initramfs
+never re-copies the kernel and so cannot take the edit back out:
+    imac-setos --restore IMAGE...
+puts MacBookPro16,4 back in every image carrying the edit and fails if one
+still carries it, and
+    imac-setos --same-kernel PACKAGED BOOTED
+succeeds when BOOTED is PACKAGED, or PACKAGED with this edit -- the same
+running kernel to every check that compares the two.
 """
 import os
 import sys
 
-# The model this hook is for, and where to read the machine's own. Both are
-# overridable so the edit can be exercised offline, as platform.sh does with
-# IMAC_DRM_DIR; nothing but the tests ever sets them.
+# The model this hook is for, where to read the machine's own, and the
+# directory GRUB loads kernels from. All three are overridable so the edit can
+# be exercised offline, as platform.sh does with IMAC_DRM_DIR; nothing but the
+# tests ever sets them.
 DMI_PRODUCT = os.environ.get("IMAC_DMI_PRODUCT", "/sys/class/dmi/id/product_name")
+BOOT_DIR = os.environ.get("IMAC_BOOT_DIR", "/boot")
 SLOT = 15
 MODELS = [b"MacBookPro11,3", b"MacBookPro11,5", b"MacBookPro13,3",
           b"MacBookPro14,3", b"MacBookPro15,1", b"MacBookPro15,3",
           b"MacBookPro16,1", b"MacBookPro16,4"]
 OURS = b"iMac18,3"
+# Where the rewritten (last) slot sits inside the list.
+LAST = (len(MODELS) - 1) * SLOT
 
 
 def table(models):
     return b"".join(m.ljust(SLOT, b"\0") for m in models)
 
 
-def patch(path):
-    with open(path, "rb") as f:
-        data = bytearray(f.read())
-    if data.count(table(MODELS[:-1] + [OURS])) == 1:
-        return f"{path}: already lists iMac18,3"
-    stock = table(MODELS)
-    if data.count(stock) != 1:
-        return (f"WARNING {path}: set_os model list not found as expected; "
-                f"left stock (Intel GPU stays hidden). Update MODELS in {sys.argv[0]}")
-    at = data.find(stock) + 7 * SLOT
-    data[at:at + SLOT] = OURS.ljust(SLOT, b"\0")
+STOCK = table(MODELS)
+EDITED = table(MODELS[:-1] + [OURS])
+
+
+def edited(data):
+    """data with the edit made, or None where the list is not there as expected."""
+    if data.count(STOCK) != 1:
+        return None
+    at = data.find(STOCK) + LAST
+    return data[:at] + OURS.ljust(SLOT, b"\0") + data[at + SLOT:]
+
+
+def write_slot(path, at, value):
     with open(path, "r+b") as f:
         f.seek(at)
-        f.write(data[at:at + SLOT])
+        f.write(value)
+        # A kernel under /boot is the image the next boot starts.
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def patch(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    if data.count(EDITED) == 1:
+        return f"{path}: already lists iMac18,3"
+    if data.count(STOCK) != 1:
+        return (f"WARNING {path}: set_os model list not found as expected; "
+                f"left stock (Intel GPU stays hidden). Update MODELS in {sys.argv[0]}")
+    write_slot(path, data.find(STOCK) + LAST, OURS.ljust(SLOT, b"\0"))
     return f"{path}: iMac18,3 added to the set_os list"
 
 
+def restore(path):
+    """Undo patch(). True when the image no longer carries the edit."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        found = data.count(EDITED)
+        if found == 0:
+            return True
+        if found > 1:
+            print(f"  imac-setos: WARNING {path}: the edited list appears {found} times; left as is")
+            return False
+        write_slot(path, data.find(EDITED) + LAST, MODELS[-1].ljust(SLOT, b"\0"))
+    except OSError as e:
+        print(f"  imac-setos: WARNING {path}: {e}")
+        return False
+    print(f"  imac-setos: {path}: set_os list back to stock")
+    return True
+
+
+def same_kernel(packaged, booted):
+    try:
+        with open(packaged, "rb") as f:
+            stock = f.read()
+        with open(booted, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    return data == stock or data == edited(stock)
+
+
+def is_boot_kernel(path):
+    """The kernel image GRUB loads, and nothing a package owns."""
+    return (os.path.dirname(os.path.normpath(path)) == os.path.normpath(BOOT_DIR)
+            and os.path.basename(path).startswith("vmlinuz-")
+            and not os.path.islink(path))
+
+
+def targets(argv):
+    images = [path for path in argv[2:] if path.endswith(".efi")]
+    if len(argv) > 1 and is_boot_kernel(argv[1]):
+        images.insert(0, argv[1])
+    return images
+
+
 def main():
+    if sys.argv[1:2] == ["--restore"]:
+        results = [restore(path) for path in sys.argv[2:]]
+        return 0 if all(results) else 1
+    if sys.argv[1:2] == ["--same-kernel"]:
+        if len(sys.argv) != 4:
+            print("usage: imac-setos --same-kernel PACKAGED BOOTED", file=sys.stderr)
+            return 2
+        return 0 if same_kernel(sys.argv[2], sys.argv[3]) else 1
     try:
         with open(DMI_PRODUCT) as f:
             if f.read().strip() != "iMac18,3":
-                return
+                return 0
     except OSError:
-        return
-    for path in sys.argv[2:]:
-        if path.endswith(".efi"):
-            try:
-                print(f"  imac-setos: {patch(path)}")
-            except OSError as e:
-                print(f"  imac-setos: WARNING {path}: {e}")
+        return 0
+    for path in targets(sys.argv):
+        try:
+            print(f"  imac-setos: {patch(path)}")
+        except OSError as e:
+            print(f"  imac-setos: WARNING {path}: {e}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

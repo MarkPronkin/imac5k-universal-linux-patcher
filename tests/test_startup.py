@@ -276,6 +276,19 @@ esac''')
                 self.assertIn("n/a", boot)
                 self.assertNotIn("command not found", result.stderr)
 
+    def test_macos_mode_is_offered_on_arch_family_grub_with_grub_tools(self):
+        result = self.launch("--status", distro="cachyos", grub=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Offered, not n/a. The sandbox sees the host's /etc, so a machine
+        # with macOS mode applied reads partial here rather than not applied.
+        row = next(line for line in result.stdout.splitlines() if "macOS mode" in line)
+        self.assertNotIn("n/a", row)
+        line = next(line for line in result.stdout.splitlines() if "macos missing dependencies:" in line)
+        for command in ("mkinitcpio", "grub-mkconfig", "python3"):
+            self.assertIn(command, line)
+        self.assertNotIn("limine", line)
+        self.assertNotIn("objcopy", line)
+
     def test_limine_takes_precedence_over_a_stale_grub_config(self):
         result = self.launch("--status", distro="cachyos", grub=True, limine=True)
         self.assertEqual(result.returncode, 0, result.stderr)
