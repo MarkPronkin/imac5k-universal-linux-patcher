@@ -97,20 +97,39 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the eight hardware/system modules. The suspend module **enables suspend and blocks hibernate**.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the eight hardware/system modules, plus what each machine can decode and encode in hardware. The suspend module **enables suspend and blocks hibernate**.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
-|---|---|---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend**; Limine only |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Suspend (`suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | Video codecs |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend**; Limine only | ✅ **Measured**, [both GPUs](#video-codecs) |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ⚪ Untested: Vega only, no iGPU to add to it |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 
 The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 and Omarchy/Limine only. Select the suspend module only with a 5K module built from release 0.1.91-alpha or newer.
+
+### Video codecs
+
+Only `iMac18,3` has been measured, and only its own two chips; every other
+model pairs a different Radeon with a different hidden iGPU. Read from
+`vainfo` on both render nodes, with `macos` applied:
+
+| | Radeon Pro 580X (always) | Intel HD 630 (with `macos`) |
+|---|---|---|
+| **Decode** | H.264, HEVC Main + Main10, VC-1, MPEG-2, JPEG | the same, **plus VP9 Profile 0 and 2, and VP8** |
+| **Encode** | H.264, HEVC Main | H.264 (plus a low-power path), HEVC Main **+ Main10**, VP8, MPEG-2, JPEG |
+| **Neither** | AV1 | AV1 |
+
+So macOS mode adds VP9 and VP8 decode, HEVC 10-bit encode, and a faster
+H.264 encoder; Kaby Lake tops out near 4096x2304, so 5K captures must be
+scaled before encoding on either chip. Which application reaches which chip
+is a separate question — see [macOS mode](#-macos-mode--the-hidden-intel-gpu-and-a-working-brightness-slider)
+and [docs/macos-mode.md](docs/macos-mode.md). `scripts/imac-igpu-check`
+prints the live lists for whatever machine it is run on.
 
 ### 🐧 Distributions
 
