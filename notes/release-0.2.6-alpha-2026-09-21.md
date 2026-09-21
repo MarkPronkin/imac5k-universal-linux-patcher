@@ -54,3 +54,35 @@ has never been a 0.2.5-alpha. The latest release on GitHub before this one is
 Upgrade the tool, then apply what is wanted: `imac-patcher --apply eq` for
 the new tuning, `imac-patcher --apply macos` and a reboot for macOS mode.
 Upgrading the tool alone applies neither.
+
+## Publication
+
+- Published [v0.2.6-alpha](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/releases/tag/v0.2.6-alpha)
+  at 03:33:40 UTC, 2026-09-21, as a prerelease targeting `test`. Its notes
+  cover every change since `v0.2.2-alpha` and say that the GRUB path has not
+  been booted on hardware.
+- The annotated tag points at `e7d61710b93bc8ea56d47a6b439e762211e19ebe`.
+  `test` (fast-forward from `892eef9`) and the tag were pushed atomically with
+  explicit refspecs. `main` stayed at `c1086d2`, and the local `v0.2.3-alpha`
+  and `v0.2.4-alpha` tags were not pushed.
+- GitHub confirms `MarkPronkin` as release author and uploader of both assets.
+- Archive: 346354 bytes, 98 entries. SHA-256:
+  `716d624ef5bf149a53734d1176b3aa05da228ab0a8c931404e117f7534a74854`.
+- Two builds from the tag in fresh clones were byte-identical, including the
+  single-release `SHA256SUMS`. The published files were downloaded and compared
+  byte-for-byte with the build. In the archive, VERSION is `0.2.6-alpha` and
+  COMMIT the tagged commit. All runtime files are there, the GRUB work
+  included, and no tests, notes or workflow files.
+- Fresh tagged checkout: `IMAC5K_REQUIRE_STARTUP_TESTS=1
+  IMAC5K_REQUIRE_T2_AUDIO_TESTS=1 IMAC5K_REQUIRE_EQ_AUDIO_TESTS=1
+  ./scripts/check.sh` passed **550 tests, no skips**.
+- The published release installed into scratch data and bin directories, with
+  `checksum verified`. `--version` reports `0.2.6-alpha`, and COMMIT matches
+  the tag. No host installation or live module was changed.
+- GitHub [release verification 35557925238](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/35557925238)
+  passed every step: tag and prerelease metadata, offline checks, required
+  isolated startup checks, and a rebuild compared byte-for-byte with both
+  published assets. The rebuild's SHA-256 matches the one above.
+- GitHub [branch check 35557886645](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/35557886645)
+  passed at the released commit. The documentation-only commit that follows
+  records this on `test`; the release tag stays at `e7d6171`.
