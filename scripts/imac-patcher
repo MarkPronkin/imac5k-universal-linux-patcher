@@ -1819,7 +1819,7 @@ MACOS_IGPU=/sys/bus/pci/devices/0000:00:02.0
 
 mod_macos_title() { echo "macOS mode: iGPU & brightness"; }
 mod_macos_tier()  { echo boot; }
-mod_macos_desc()  { echo "Makes the kernel tell Apple's firmware that macOS is starting, as it already does for some MacBook Pros. That exposes the Intel HD 630 the firmware otherwise hides, which then encodes and decodes video for every app that takes the first GPU (H.264 about 3.7x faster than the Radeon, plus VP9 and HEVC 10-bit), and it makes the brightness slider actually dim the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. The Radeon keeps the display and all 3D. One mkinitcpio hook keeps the edit through kernel updates, so the boot menu is unchanged. Ported from ahmadtv/omarchy-imac18-3 and not yet tested on this machine, least of all together with suspend."; }
+mod_macos_desc()  { echo "Makes the kernel tell Apple's firmware that macOS is starting, as it already does for some MacBook Pros. That exposes the Intel HD 630 the firmware otherwise hides, which then encodes and decodes video for every app that takes the first GPU (H.264 about 3.7x faster than the Radeon, plus VP9 and HEVC 10-bit), and it makes the brightness slider actually dim the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. The Radeon keeps the display and all 3D. One mkinitcpio hook keeps the edit through kernel updates, so the boot menu is unchanged. Ported from ahmadtv/omarchy-imac18-3 and verified on an iMac18,3 under Omarchy, including two s2idle cycles in one boot."; }
 
 # The drop-in asks for the acpi_override hook only when the brightness table
 # was actually built: a hook with no .aml fails every later initramfs build.

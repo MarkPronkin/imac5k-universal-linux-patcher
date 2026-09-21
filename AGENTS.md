@@ -7,8 +7,11 @@ new `-48k` FIRs. Preserved the previous config and WAVs; select them with
 handles all bundled WAVs, detects tuning updates, and keeps the stable sink
 name and detected speaker target despite upstream's name/routing changes.
 516 tests pass, including both graphs rendering four channels on an isolated
-PipeWire server. No live apply or listening validation. **Owner explicitly
-requested local commit only; do not push this work on that authorization.**
+PipeWire server. Subsequently verified live: the current graph and all four
+FIRs match the bundle, the running service started after installation, and all
+four DSP channels actively link to the built-in speakers. Acoustic/listening
+validation remains pending. The original local-only instruction was superseded
+by the owner's explicit request to push `test` and publish `v0.2.4-alpha`.
 Review and validation: [notes/speaker-retune-issue6-2026-09-21.md](notes/speaker-retune-issue6-2026-09-21.md).
 
 **macOS mode ported (2026-09-21):** on `test`, a new `macos` module brings

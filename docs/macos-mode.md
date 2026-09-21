@@ -29,8 +29,8 @@ What the first boot showed here:
 | Power | the iGPU runtime-suspends to D3hot, rc6 residency climbing |
 | NVRAM | `backlight-level` written at shutdown, so the panel lights at the saved level from power-on |
 
-**What has not been tested is sleep** — see
-[Suspend](#suspend-is-the-open-question) below.
+**Two s2idle cycles in one boot passed with macOS mode enabled** — see
+[Suspend](#suspend-which-was-the-open-question) below for the validation limits.
 
 ## How the firmware is told
 
