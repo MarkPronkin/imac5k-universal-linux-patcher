@@ -1,0 +1,243 @@
+diff --git a/src/helpers/CMType.hpp b/src/helpers/CMType.hpp
+--- a/src/helpers/CMType.hpp
++++ b/src/helpers/CMType.hpp
+@@ -15,6 +15,7 @@
+         CM_DCIP3,    // movie theatre with greenish white point
+         CM_DP3,      // applle P3 variant with blueish white point
+         CM_ADOBE,    // adobe colorspace
++        CM_EDR,      // experimental Display P3 / gamma 2.2, HDR rendered within an SDR panel
+     };
+ 
+     std::optional<eCMType> fromString(const std::string cmType);
+diff --git a/src/helpers/CMType.cpp b/src/helpers/CMType.cpp
+--- a/src/helpers/CMType.cpp
++++ b/src/helpers/CMType.cpp
+@@ -5,7 +5,7 @@
+ 
+ static std::unordered_map<std::string, NCMType::eCMType> const table = {{"auto", NCMType::CM_AUTO},   {"srgb", NCMType::CM_SRGB}, {"wide", NCMType::CM_WIDE},
+                                                                         {"edid", NCMType::CM_EDID},   {"hdr", NCMType::CM_HDR},   {"hdredid", NCMType::CM_HDR_EDID},
+-                                                                        {"dcip3", NCMType::CM_DCIP3}, {"dp3", NCMType::CM_DP3},   {"adobe", NCMType::CM_ADOBE}};
++                                                                        {"dcip3", NCMType::CM_DCIP3}, {"dp3", NCMType::CM_DP3},   {"adobe", NCMType::CM_ADOBE}, {"edr", NCMType::CM_EDR}};
+ 
+ std::optional<NCMType::eCMType>                                NCMType::fromString(const std::string cmType) {
+     auto it = table.find(cmType);
+diff --git a/src/helpers/cm/Edr.hpp b/src/helpers/cm/Edr.hpp
+--- /dev/null
++++ b/src/helpers/cm/Edr.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include <algorithm>
++
++namespace NColorManagement::EDR {
++    struct SLuminanceTransform {
++        float sourceEncodingPeak;
++        float targetEncodingPeak;
++        float sourceContentPeak;
++    };
++
++    // Work in absolute luminance between decode and encode. Anchoring reference
++    // white here makes tagged SDR, untagged SDR and HDR agree. The second pass
++    // (linear working buffer -> panel) has matching reference whites, so scales
++    // by one. Absolute, unnormalised internal buffers already contain nits.
++    inline SLuminanceTransform luminanceTransform(float sourceEncodingPeak, float sourceReference, float sourceContentPeak,
++                                                  float targetEncodingPeak, float targetReference,
++                                                  bool sourceIsAbsolute = false) {
++        const float scale = sourceIsAbsolute ? 1.F : targetReference / std::max(sourceReference, 1.F);
++        return {
++            .sourceEncodingPeak = sourceEncodingPeak * scale,
++            .targetEncodingPeak = targetEncodingPeak,
++            .sourceContentPeak = (sourceContentPeak > 0 ? sourceContentPeak : sourceEncodingPeak) * scale,
++        };
++    }
++}
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -605,6 +605,23 @@
+                                                           .maxCLL              = maxCLL,
+                                                           .maxFALL             = maxFALL});
+             break;
++        case NCMType::CM_EDR: {
++            // Estimated panel luminance, not HDR10/PQ support on the wire.
++            // Keep reference white separate from the signal's full-scale white.
++            const auto peak = sc<uint32_t>(std::max(1, maxLuminance(500)));
++            const auto reference = sc<uint32_t>(std::clamp(m_sdrMaxLuminance, 1, sc<int>(peak)));
++            m_imageDescription = CImageDescription::from({
++                .transferFunction = CM_TRANSFER_FUNCTION_GAMMA22,
++                .primariesNameSet = true,
++                .primariesNamed = CM_PRIMARIES_DISPLAY_P3,
++                .primaries = getPrimaries(CM_PRIMARIES_DISPLAY_P3),
++                .luminances = {.min = 0, .max = peak, .reference = reference},
++                .masteringLuminances = {.min = 0, .max = peak},
++                .maxCLL = peak,
++                .maxFALL = peak,
++            });
++            break;
++        }
+         case NCMType::CM_HDR:
+             m_imageDescription = CImageDescription::from({.transferFunction    = NColorManagement::CM_TRANSFER_FUNCTION_ST2084_PQ,
+                                                           .primariesNameSet    = true,
+@@ -2013,6 +2030,10 @@
+     static auto PNONSHADER     = CConfigValue<Config::INTEGER>("render:non_shader_cm");
+     const auto  PWORKSPACE     = m_activeWorkspace;
+ 
++    // EDR needs the compositor's transfer and reference-white conversion.
++    if (m_cmType == NCMType::CM_EDR)
++        return DS_BLOCK_CM;
++
+     // Fast reject for the hot render path; full=true callers still collect
+     // the remaining blockers for hyprctl/debug output below.
+     if (!canAttemptDirectScanoutFast()) {
+@@ -2288,6 +2309,9 @@
+ }
+ 
+ bool CMonitor::shouldUseSoftwareCursors() {
++    if (m_cmType == NCMType::CM_EDR)
++        return true; // otherwise cursor white bypasses EDR and reaches panel peak
++
+     static auto PNOHW      = CConfigValue<Config::INTEGER>("cursor:no_hardware_cursors");
+     static auto PINVISIBLE = CConfigValue<Config::INTEGER>("cursor:invisible");
+ 
+@@ -2406,6 +2430,9 @@
+ }
+ 
+ bool CMonitor::supportsHDR() {
++    if (m_cmType == NCMType::CM_EDR)
++        return false; // EDR must never activate PQ output or automatic HDR switching
++
+     if (!supportsWideColor())
+         return false;
+ 
+@@ -2511,6 +2538,9 @@
+ 
+ // TODO support more drm properties
+ bool CMonitor::canNoShaderCM(bool forDSmode) {
++    if (m_cmType == NCMType::CM_EDR)
++        return false;
++
+     static auto PNONSHADER = CConfigValue<Config::INTEGER>("render:non_shader_cm");
+     if (*PNONSHADER == CM_NS_DISABLE)
+         return false;
+@@ -2742,7 +2772,7 @@
+     };
+ 
+     // Auto: use FP16 if the monitor is not sRGB
+-    bool        shouldUse  = *PFP16 == 1 || (*PFP16 == 2 && !isSRGB());
++    bool        shouldUse  = m_cmType == NCMType::CM_EDR || *PFP16 == 1 || (*PFP16 == 2 && !isSRGB());
+     static bool usedBefore = shouldUse;
+     if (usedBefore != shouldUse) {
+         usedBefore    = shouldUse;
+@@ -2765,7 +2795,7 @@
+     const auto& cached = m_cachedInternalDescription->value();
+ 
+     // HDR
+-    if (isHDRLikeTF || *PFP16TF != 0) {
++    if (m_cmType == NCMType::CM_EDR || isHDRLikeTF || *PFP16TF != 0) {
+         if (cached.transferFunction != LINEAR_IMAGE_DESCRIPTION->value().transferFunction || cached.luminances != value.luminances)
+             m_cachedInternalDescription = LINEAR_IMAGE_DESCRIPTION->with(value.luminances);
+         return m_cachedInternalDescription;
+diff --git a/src/render/Renderer.hpp b/src/render/Renderer.hpp
+--- a/src/render/Renderer.hpp
++++ b/src/render/Renderer.hpp
+@@ -242,6 +242,7 @@
+             uint64_t    srcDescId = 0, dstDescId = 0;
+             void*       surfacePtr      = nullptr; // read-only!!
+             bool        modifySDR       = false;
++            bool        edr             = false;
+             float       sdrMinLuminance = -1.F;
+             int         sdrMaxLuminance = -1;
+             SCMSettings settings;
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -1,4 +1,5 @@
+ #include "Renderer.hpp"
++#include "../helpers/cm/Edr.hpp"
+ #include "../Compositor.hpp"
+ #include "../helpers/math/Math.hpp"
+ #include <algorithm>
+@@ -1905,20 +1906,23 @@
+ 
+ SCMSettings IHyprRenderer::getCMSettings(const NColorManagement::PImageDescription imageDescription, const NColorManagement::PImageDescription targetImageDescription,
+                                          SP<CWLSurfaceResource> surface, bool modifySDR, float sdrMinLuminance, int sdrMaxLuminance, bool shouldUseSurface) {
++    const bool edr = m_renderData.pMonitor && m_renderData.pMonitor->m_cmType == NCMType::CM_EDR;
+     const auto srcId = imageDescription->id();
+     const auto dstId = targetImageDescription->id();
+     void*      sPtr  = shouldUseSurface ? m_renderData.surface.get() : nullptr;
+ 
+     for (auto const& entry : m_cmSettingsCache) {
+         if (entry.srcDescId == srcId && entry.dstDescId == dstId && entry.surfacePtr == sPtr && entry.modifySDR == modifySDR && entry.sdrMinLuminance == sdrMinLuminance &&
+-            entry.sdrMaxLuminance == sdrMaxLuminance)
++            entry.sdrMaxLuminance == sdrMaxLuminance && entry.edr == edr)
+             return entry.settings;
+     }
+ 
+     const auto                          sdrEOTF = NTransferFunction::fromConfig();
+     NColorManagement::eTransferFunction srcTF;
+ 
+-    const int                           tonemapMode = shouldUseSurface && m_renderData.currentWindow ? m_renderData.currentWindow->m_ruleApplicator->tonemap().valueOr(1) : 1;
++    // The alternate knee preserves diffuse white for the 200/500 nit profile.
++    const int                           defaultTonemap = edr ? 3 : 1;
++    const int                           tonemapMode = shouldUseSurface && m_renderData.currentWindow ? m_renderData.currentWindow->m_ruleApplicator->tonemap().valueOr(defaultTonemap) : defaultTonemap;
+ 
+     if (shouldUseSurface && m_renderData.surface.valid() &&
+         (imageDescription->value().transferFunction == CM_TRANSFER_FUNCTION_GAMMA22 || imageDescription->value().transferFunction == CM_TRANSFER_FUNCTION_SRGB)) {
+@@ -1974,11 +1978,32 @@
+         .sdrBrightnessMultiplier = needsSDRmod && m_renderData.pMonitor->m_sdrBrightness > 0 ? m_renderData.pMonitor->m_sdrBrightness : 1.0f,
+     };
+ 
++    if (edr) {
++        const auto& src = imageDescription->value();
++        const auto& dst = targetImageDescription->value();
++        // Relative gamma signals use their declared full-scale luminance.
++        // PQ remains 10000 nit encoded; scRGB remains 80 nit encoded.
++        const auto transform = EDR::luminanceTransform(
++            src.getTFMaxLuminance(src.luminances.max), src.luminances.reference,
++            src.maxCLL > 0 ? src.maxCLL : src.luminances.max,
++            dst.getTFMaxLuminance(dst.luminances.max), dst.luminances.reference,
++            src.transferFunction == CM_TRANSFER_FUNCTION_LINEAR);
++        result.srcTFRange = {.min = 0, .max = transform.sourceEncodingPeak};
++        result.dstTFRange = {.min = 0, .max = transform.targetEncodingPeak};
++        result.maxLuminance = transform.sourceContentPeak;
++        result.dstMaxLuminance = dst.luminances.max;
++        result.needsTonemap = tonemapMode != 0 && transform.sourceContentPeak > dst.luminances.max * 1.01;
++        result.needsSDRmod = false;
++        result.sdrSaturation = 1;
++        result.sdrBrightnessMultiplier = 1;
++    }
++
+     m_cmSettingsCache.push_back({
+         .srcDescId       = srcId,
+         .dstDescId       = dstId,
+         .surfacePtr      = sPtr,
+         .modifySDR       = modifySDR,
++        .edr             = edr,
+         .sdrMinLuminance = sdrMinLuminance,
+         .sdrMaxLuminance = sdrMaxLuminance,
+         .settings        = result,
+@@ -2338,6 +2363,9 @@
+     bool        wantHDR       = configuredHDR;
+ 
+     const auto  FULLSCREEN_WINDOW = Fullscreen::controller()->getFullscreenWindow(pMonitor);
++
++    if (pMonitor->m_cmType == NCMType::CM_EDR && pMonitor->inHDR())
++        pMonitor->m_output->state->setHDRMetadata(NO_HDR_METADATA);
+ 
+     if (pMonitor->supportsHDR()) {
+         // HDR metadata determined by
+diff --git a/src/render/OpenGL.cpp b/src/render/OpenGL.cpp
+--- a/src/render/OpenGL.cpp
++++ b/src/render/OpenGL.cpp
+@@ -1680,7 +1680,10 @@
+ 
+ static SCMSettings blurIntermediateCMSettings(bool toIntermediate) {
+     const auto WORKBUFFER   = g_pHyprRenderer->workBufferImageDescription();
+-    const auto INTERMEDIATE = getDefaultImageDescription();
++    // Blur is an encoding round trip within the same scene. Keep its reference
++    // and peak, otherwise EDR is rescaled as though this were an SDR output.
++    const bool EDR = g_pHyprRenderer->m_renderData.pMonitor->m_cmType == NCMType::CM_EDR;
++    const auto INTERMEDIATE = EDR ? getDefaultImageDescription()->with(WORKBUFFER->value().luminances) : getDefaultImageDescription();
+ 
+     auto       settings = toIntermediate ? g_pHyprRenderer->getCMSettings(WORKBUFFER, INTERMEDIATE) : g_pHyprRenderer->getCMSettings(INTERMEDIATE, WORKBUFFER);
+     auto&      range    = toIntermediate ? settings.dstTFRange : settings.srcTFRange;
