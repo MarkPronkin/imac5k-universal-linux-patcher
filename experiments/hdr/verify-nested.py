@@ -83,12 +83,17 @@ def run(binary, work):
     parent = Path(os.environ['WAYLAND_DISPLAY'])
     if not parent.is_absolute():
         parent = Path(os.environ['XDG_RUNTIME_DIR']) / parent
-    for name in ('runtime', 'config', 'cache'):
+    for name in ('config', 'cache'):
         (work / name).mkdir(mode=0o700)
+    # Hyprland binds $XDG_RUNTIME_DIR/hypr/<commit>_<time>_<random>/.socket2.sock.
+    # A socket path has 107 usable bytes and a signature with the full commit
+    # hash up to 62, leaving 25 for this directory: `work` is too long.
+    runtime = Path(tempfile.mkdtemp(prefix='edr-', dir='/tmp'))
+    (work / 'runtime').symlink_to(runtime)
     config = work / 'hyprland.lua'
     config.write_text(CONFIG)
     pattern = build(work / 'pattern')
-    env = dict(os.environ, WAYLAND_DISPLAY=str(parent), XDG_RUNTIME_DIR=str(work / 'runtime'),
+    env = dict(os.environ, WAYLAND_DISPLAY=str(parent), XDG_RUNTIME_DIR=str(runtime),
                XDG_CONFIG_HOME=str(work / 'config'), XDG_CACHE_HOME=str(work / 'cache'),
                # A nonexistent libseat backend prevents opening a physical seat.
                LIBSEAT_BACKEND='none', AQ_DRM_DEVICES='/dev/null', GSETTINGS_BACKEND='memory',
@@ -107,7 +112,7 @@ def run(binary, work):
         while True:
             if compositor.poll() is not None:
                 raise RuntimeError('Nested compositor exited; see compositor.log')
-            locks = list((work / 'runtime').glob('hypr/*/hyprland.lock'))
+            locks = list(runtime.glob('hypr/*/hyprland.lock'))
             if locks:
                 lines = locks[0].read_text().splitlines()
                 if len(lines) >= 2 and lines[0] == str(compositor.pid):

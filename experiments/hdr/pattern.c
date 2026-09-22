@@ -1,9 +1,11 @@
 #define _GNU_SOURCE
 // Native Wayland HDR test pattern. No kernel or display configuration changes.
+// Any key but a modifier closes it; the compositor's own bindings still work.
 #include <wayland-client.h>
 #include "xdg-shell-client.h"
 #include "color-management-client.h"
 #include <errno.h>
+#include <linux/input-event-codes.h>
 #include <math.h>
 #include <poll.h>
 #include <stdbool.h>
@@ -18,6 +20,8 @@
 static struct wl_display *display;
 static struct wl_compositor *compositor;
 static struct wl_shm *shm;
+static struct wl_seat *seat;
+static struct wl_keyboard *keyboard;
 static struct wl_surface *surface;
 static struct xdg_wm_base *shell;
 static struct xdg_surface *xdg_surface;
@@ -132,6 +136,43 @@ static const struct wp_color_manager_v1_listener cm_listener = {
     .supported_primaries_named = cm_event, .done = cm_done,
 };
 
+// A modifier press may begin a compositor binding such as Super+W: ignore it.
+static void key(void *data, struct wl_keyboard *object, uint32_t serial, uint32_t time, uint32_t code, uint32_t state) {
+    (void)data; (void)object; (void)serial; (void)time;
+    switch (code) {
+    case KEY_LEFTCTRL: case KEY_RIGHTCTRL: case KEY_LEFTSHIFT: case KEY_RIGHTSHIFT: case KEY_LEFTALT:
+    case KEY_RIGHTALT: case KEY_LEFTMETA: case KEY_RIGHTMETA: case KEY_CAPSLOCK: case KEY_COMPOSE:
+        return;
+    }
+    if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        running = false;
+}
+static void keymap(void *data, struct wl_keyboard *object, uint32_t format, int32_t fd, uint32_t size) {
+    (void)data; (void)object; (void)format; (void)size;
+    close(fd);
+}
+static void keyboard_enter(void *data, struct wl_keyboard *object, uint32_t serial, struct wl_surface *s, struct wl_array *keys) {
+    (void)data; (void)object; (void)serial; (void)s; (void)keys;
+}
+static void keyboard_leave(void *data, struct wl_keyboard *object, uint32_t serial, struct wl_surface *s) {
+    (void)data; (void)object; (void)serial; (void)s;
+}
+static void modifiers(void *data, struct wl_keyboard *object, uint32_t serial, uint32_t depressed, uint32_t latched,
+                      uint32_t locked, uint32_t group) {
+    (void)data; (void)object; (void)serial; (void)depressed; (void)latched; (void)locked; (void)group;
+}
+static const struct wl_keyboard_listener keyboard_listener = {
+    .keymap = keymap, .enter = keyboard_enter, .leave = keyboard_leave, .key = key, .modifiers = modifiers,
+};
+static void capabilities(void *data, struct wl_seat *object, uint32_t caps) {
+    (void)data;
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !keyboard) {
+        keyboard = wl_seat_get_keyboard(object);
+        wl_keyboard_add_listener(keyboard, &keyboard_listener, NULL);
+    }
+}
+static const struct wl_seat_listener seat_listener = {.capabilities = capabilities}; // Version 1: no name event.
+
 static void global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
     (void)data;
     if (!strcmp(interface, "wl_compositor") && version >= 4)
@@ -145,6 +186,9 @@ static void global(void *data, struct wl_registry *registry, uint32_t name, cons
     } else if (!strcmp(interface, "wp_color_manager_v1")) {
         cm = wl_registry_bind(registry, name, &wp_color_manager_v1_interface, 1);
         wp_color_manager_v1_add_listener(cm, &cm_listener, NULL);
+    } else if (!strcmp(interface, "wl_seat") && !seat) {
+        seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        wl_seat_add_listener(seat, &seat_listener, NULL);
     }
 }
 static void global_remove(void *data, struct wl_registry *registry, uint32_t name) {

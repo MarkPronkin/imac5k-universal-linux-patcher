@@ -110,8 +110,8 @@ full range is working. It does not move the brightness slider.
 
 Only load this profile in a session running the patched binary, after existing
 monitor rules. Stock Hyprland rejects `cm = "edr"`. The build and tests do not
-install or load this profile. Physical-session launch/recovery integration is
-still to be implemented before making this a patcher option.
+install or load this profile; the test session below does, without touching the
+desktop configuration. Patcher integration is still to be implemented.
 
 The native Wayland demo can be used in that session:
 
@@ -128,6 +128,64 @@ For the default PQ pattern, the target bars are approximately
 0, 50, 100, 200, 300, 400 and 500 estimated nits. In the SDR comparison the
 last four bars all stop at reference white.
 
+## Test on the iMac's display
+
+Stage a session next to a finished build, from the repository in the desktop:
+
+```bash
+python3 experiments/hdr/session.py stage "$HOME/.cache/imac5k-edr"
+```
+
+This builds the test pattern, verifies a session configuration with the
+patched binary and writes `BUILD_DIRECTORY/start`. It refuses a build from a
+different patch. Nothing is installed and the desktop configuration is not
+read or changed.
+
+Then switch to a text console with Ctrl+Alt+F3, log in and run
+`BUILD_DIRECTORY/start`. It lists the keys for leaving and waits for Enter.
+The patched compositor then takes the display while the desktop keeps running
+on its own console. The session has the desktop's monitor rules plus
+`edr.lua`, the Radeon pinning of `imac-gpu.lua`, the console keyboard layout, a
+terminal and no desktop services. A terminal opens with a guide and the
+recorded display state, which warns if EDR, 10-bit output or the software
+cursor is missing. Keys:
+
+| Keys | Action |
+|---|---|
+| Esc, or any key but a modifier | Close the test pattern |
+| Super+1 / 2 / 3 | Fullscreen PQ pattern / SDR comparison / 1,000-nit PQ |
+| Super+4 | PQ in the top half, SDR in the bottom half |
+| Super+Return, Super+W, Super+F | Terminal, close window, fullscreen |
+| Super+D | Display off for three seconds, then on |
+| Super+H | The guide again |
+| Super+Escape, Ctrl+Alt+Backspace | End the session and return to the console |
+| Ctrl+Alt+F1 | Switch to the desktop; the test keeps running |
+
+One pattern is shown at a time: a new one replaces any that are open. The
+first physical run showed why. Patterns then ignored keys and stacked, covering
+the guide, and the owner had to power off with no visible way out.
+
+Super+D repeats the DPMS cycle that restored a stretched panel before (see
+`TODO.md`). It switches off half a second after the key press, because any key
+event wakes the display.
+
+The session ends after 20 minutes unless started with `--minutes` (1..120);
+`BUILD_DIRECTORY/start --stop` ends it from any terminal. While it runs it
+blocks system sleep and does not update the desktop's systemd/D-Bus
+activation environment. When the compositor exits, the console prints a
+summary. Its log, the recorded display state, the kernel log for the period
+and any crash report are kept in `BUILD_DIRECTORY/session/runs/`.
+
+The desktop locks itself after five idle minutes while its console is in the
+background. If it returns stretched or half dark, cycle its display with a
+three-second pause. The first pause lets the Enter key's release go by, since
+Omarchy wakes the display on any key event:
+
+```bash
+sleep 1; hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "off" }))'; sleep 3
+hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "on" }))'
+```
+
 ## Validation and remaining work
 
 On 2026-09-22, the full build, shader checks and nested protocol/compositor
@@ -137,6 +195,48 @@ PQ and the 1,000-nit PQ pattern; PQ highlights remained distinct. Blur softened
 the bar edges while preserving their centers, including peak highlights. The isolated
 shader test additionally covered untagged SDR and scRGB. These results are
 software validation, not a physical HDR certification or calibration.
+
+The persistent build of the same patch, with full source provenance, then
+passed the nested test again. That build's longer instance signature exposed a
+harness bug: the nested runtime directory made Hyprland's IPC socket path
+exceed the 107-byte limit. The harness now uses a short runtime directory. The
+staged session's keys are tested in a nested compositor with real key events:
+
+```bash
+python3 experiments/hdr/verify-session.py "$HOME/.cache/imac5k-edr"
+```
+
+It needs `wtype`, and checks every binding, closing patterns with Esc and other
+keys, pattern replacement, the guide and its recorded state, the Super+D cycle
+and both exit keys. The supervisor was exercised with a stand-in compositor
+for normal exit, `--stop`, the time limit, a forced kill, a crash report and
+the start prompt.
+
+**First physical run (2026-09-22, 03:31).** The panel came up in
+`XRGB2101010` with `edr`, 200-nit desktop white, the software cursor and
+direct scanout blocked for colour management. DP-1 stayed a non-desktop tile.
+The kernel's link check passed on both tiles with no recovery, and logged no
+amdgpu errors or HDR metadata packets. The owner saw the patterns but could not
+leave them (see above).
+
+**Second physical run (03:49–03:53), with the escape fixes.** The owner found
+everything as described, with no issues: HDR highlights above desktop white,
+SDR clipped at it, matching halves, a smooth ramp and a normal pointer. They
+switched patterns, closed them, and ended the test with Super+Escape. The
+recorded state was the same as in the first run. The kernel's link check passed
+on both tiles, with no recovery, when the test started and again when the
+desktop took the display back.
+
+That exit also exposed a stock bug. The compositor segfaults in aquamarine
+0.15.0 after `Hyprland has reached the end.`: `~CDRMBackend` resets each
+connector after disconnecting it, and disconnecting a later connector that owns
+an output runs `flushAsyncCommitEvents()`, which dereferences the reset slot.
+The global `backendInUse` in aquamarine's `Session.cpp` holds the backend until
+static destruction, so this happens during `exit()`. On this iMac the 5K
+stitch's DP-1 is the second connector with an output, so **the stock desktop
+Hyprland crashes the same way at every logout and shutdown**: the journal has
+one such segfault at every clean shutdown since 2026-09-21. It is not caused by
+this patch and is unfixed in upstream `main`. The shutdown itself completes.
 
 Before shipping:
 
@@ -150,8 +250,9 @@ Before shipping:
   229/255 in captures although the calculated panel code was about 168/255.
 - Check real HDR applications. HLG, browser/video/game negotiation, ICC profiles,
   mixed monitors and saturated wide-gamut colours are not validated.
-- Add an isolated physical-session launcher, recovery path and eventual
-  apply/detect/remove support. No kernel or EDID override is part of this prototype.
+- Run the test session on the panel, including the round trip to the desktop's
+  console, then add apply/detect/remove support. No kernel or EDID override is
+  part of this prototype.
 
 The existing desktop remains on stock Hyprland with `cm = "dp3"`. All source,
 build and test artifacts created for this experiment were outside system

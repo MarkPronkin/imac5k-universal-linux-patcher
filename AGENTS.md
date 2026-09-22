@@ -1,5 +1,17 @@
 # Current work checkpoint
 
+**HDR / EDR test build (2026-09-22, 04:00 CEST):** `hdr` branches from
+`test` at `52dd6e8`; prototype committed as `5dfe72b`, not pushed. The
+owner's requested build is staged as a physical test session, run from a text
+console with `~/edr-test`. First run (03:31): healthy 10-bit EDR modeset, but
+the owner was trapped in stacked patterns and powered off; escape fixed.
+**Second run (03:49) passed** ("no issues noticed"). Its exit exposed a stock
+aquamarine 0.15.0 segfault in `~CDRMBackend` that also hits the desktop at
+every shutdown (unreported, unpatched; details in the handoff). All of it is
+committed on `hdr`, not pushed. The desktop remains stock `dp3`/8-bit. Read
+[the HDR handoff](notes/hdr-handoff-2026-09-22.md). Preserve the owner's
+uncommitted external-display notes.
+
 **Sleep split into two modules (2026-09-21):** committed on `test` and
 pushed to `origin/test`. The
 owner: the pre-2017 5K iMacs sleep out of the box, so the sleep fixes that are
