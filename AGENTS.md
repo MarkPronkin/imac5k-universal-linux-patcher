@@ -1,14 +1,17 @@
 # Current work checkpoint
 
-**HDR / EDR test build (2026-09-22, 04:00 CEST):** `hdr` branches from
-`test` at `52dd6e8`; prototype committed as `5dfe72b`, not pushed. The
+**HDR / EDR test build (2026-09-22, 04:00 CEST):** developed on an
+`hdr` branch from `test` at `52dd6e8`; prototype `5dfe72b`. The
 owner's requested build is staged as a physical test session, run from a text
 console with `~/edr-test`. First run (03:31): healthy 10-bit EDR modeset, but
 the owner was trapped in stacked patterns and powered off; escape fixed.
-**Second run (03:49) passed** ("no issues noticed"). Its exit exposed a stock
+**Second run (03:49) passed** ("no issues noticed"). Since then: HDR10 video in
+mpv validated nested (source mode matches; mpv's default curve is darker),
+Super+5 plays it; **physical video test pending**. The second run's exit exposed a stock
 aquamarine 0.15.0 segfault in `~CDRMBackend` that also hits the desktop at
-every shutdown (unreported, unpatched; details in the handoff). All of it is
-committed on `hdr`, not pushed. The desktop remains stock `dp3`/8-bit. Read
+every shutdown: upstream #383, harmless, **on hold** at the owner's request
+(README known issue, `TODO.md` entry). On 2026-10-06 the HDR work was
+moved to `test` and pushed; the `hdr` branch is deleted. The desktop remains stock `dp3`/8-bit. Read
 [the HDR handoff](notes/hdr-handoff-2026-09-22.md). Preserve the owner's
 uncommitted external-display notes.
 

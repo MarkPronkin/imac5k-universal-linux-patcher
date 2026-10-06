@@ -1,13 +1,14 @@
 # Experimental iMac EDR compositor
 
-This is a working rendering prototype on the `hdr` branch, based on `test`
-at `52dd6e8`. It adds `cm = "edr"` to **Hyprland 0.56.2**, rendering HDR
+This is a working rendering prototype on the `test` branch, first developed on
+a separate `hdr` branch from `52dd6e8`. It adds `cm = "edr"` to **Hyprland 0.56.2**, rendering HDR
 content within the existing Display P3 / gamma 2.2 output of the 2017
 iMac18,3. It is not an installable patcher module yet.
 
 The full compositor builds. Offscreen shader tests and a nested Wayland
-session pass, including SDR/PQ reference-white matching and highlight roll-off.
-**The physical 5K output has not been switched to this compositor.**
+session pass, including SDR/PQ reference-white matching, highlight roll-off and
+HDR10 video in mpv. The iMac's own 5K panel has run it in a test session with no
+visible issues. The desktop itself still runs stock Hyprland.
 
 ## What it does
 
@@ -85,15 +86,16 @@ the output and blur passes, and a monotonic, bounded roll-off for 1,000-nit cont
 the physical display or validate saturated-colour gamut mapping.
 
 For the full compositor path, run inside an existing Wayland session with
-`hyprctl`, `grim`, a C compiler, `wayland-scanner`, and Wayland client/protocol
-development files available:
+`hyprctl`, `grim`, a C compiler, `wayland-scanner`, Wayland client/protocol
+development files, `mpv` and `ffmpeg` with libx265 available:
 
 ```bash
 python3 experiments/hdr/verify-nested.py "$HOME/.cache/imac5k-edr/build/Hyprland"
 ```
 
 This briefly opens a nested compositor window with three colour-managed test
-patterns and a transparent overlay to exercise blur. It uses a private runtime/configuration directory, prevents physical
+patterns, a transparent overlay to exercise blur, and a real HDR10 video in
+mpv. It uses a private runtime/configuration directory, prevents physical
 seat access, and stops its child processes on completion. Logs, sampled values
 and captures are left in the printed `/tmp/imac-edr-nested-*` directory.
 The checks exercise the actual Wayland protocol and compositor, including
@@ -128,6 +130,38 @@ For the default PQ pattern, the target bars are approximately
 0, 50, 100, 200, 300, 400 and 500 estimated nits. In the SDR comparison the
 last four bars all stop at reference white.
 
+[`video.py`](video.py) writes the same bars as a six-second, 60 fps HDR10 clip
+(HEVC Main 10, PQ, BT.2020, 1,000-nit mastering metadata), with a ramp to
+1,000 nits and a 1,000-nit square crossing at a constant 480 px/s. It wraps
+from the right edge to the left, so the looped clip has no jumps or
+judder of its own:
+
+```bash
+python3 experiments/hdr/video.py /tmp/hdr-test.mkv
+```
+
+### HDR video in mpv
+
+mpv 0.41 negotiates HDR over the Wayland colour-management protocol. It reads
+the EDR output's preferred description (gamma 2.2, P3, 500-nit target), and
+in the nested compositor it produced these captures of the clip's bars,
+against the pattern client's reference:
+
+| Client, mode | Bars 1–7 in capture; desktop white is 229 |
+|---|---|
+| Pattern client, PQ | 0, 137, 187, **229**, 243, 251, 255 |
+| mpv `--target-colorspace-hint-mode=source` | 0, 136, 186, **228**, 243, 248, 251 |
+| mpv defaults (target mode, `spline` curve) | 0, 110, 152, **204**, 225, 235, 241 |
+| mpv target mode, `--tone-mapping=bt.2390 --hdr-compute-peak=no` | 0, 137, 187, **229**, 243, 249, 252 |
+
+In source mode mpv hands PQ to the compositor, whose tone mapping keeps the
+video's reference white on desktop white. By default mpv tone-maps to the
+500-nit target itself; highlights survive, but libplacebo's `spline` curve,
+further moved by peak detection, puts 203-nit content about a third below
+desktop white. That is mpv's curve, not a mismatch with EDR: its `bt.2390`
+or `clip` curves land exactly on desktop white. The test session plays the
+clip in source mode.
+
 ## Test on the iMac's display
 
 Stage a session next to a finished build, from the repository in the desktop:
@@ -155,7 +189,11 @@ cursor is missing. Keys:
 | Esc, or any key but a modifier | Close the test pattern |
 | Super+1 / 2 / 3 | Fullscreen PQ pattern / SDR comparison / 1,000-nit PQ |
 | Super+4 | PQ in the top half, SDR in the bottom half |
+| Super+5 | The HDR10 clip in mpv, fullscreen and looping (`q` closes it) |
 | Super+Return, Super+W, Super+F | Terminal, close window, fullscreen |
+| Brightness keys, or Super+Up / Super+Down | Desktop white in 25-nit steps |
+| Super+B | Headroom on or off, at the same desktop white |
+| Super+M | Start or stop measuring the backlight, matching two states by eye |
 | Super+D | Display off for three seconds, then on |
 | Super+H | The guide again |
 | Super+Escape, Ctrl+Alt+Backspace | End the session and return to the console |
@@ -164,6 +202,53 @@ cursor is missing. Keys:
 One pattern is shown at a time: a new one replaces any that are open. The
 first physical run showed why. Patterns then ignored keys and stacked, covering
 the guide, and the owner had to power off with no visible way out.
+
+For the video, mpv times frames to the compositor's presentation feedback
+(`--video-sync=display-resample`), and [`mpv-stats.lua`](mpv-stats.lua)
+records its frame timing each second in the run directory. The summary
+prints the last sample: video and measured display rate, vsync jitter, and
+dropped, delayed and mistimed frames.
+
+### Brightness, and the backlight traded for headroom
+
+The panel has one backlight and no local dimming, so headroom exists only while
+desktop white sits below the panel's peak: a permanent 200-nit white costs 60%
+of the panel's brightness even with nothing HDR on screen.
+[`headroom.py`](headroom.py) does what Apple's EDR does instead. It raises the
+backlight and scales the desktop down by the same factor, so desktop white keeps
+its luminance while the gap above it opens up, and it gives the backlight back
+afterwards:
+
+```bash
+python3 headroom.py state     # backlight, desktop white, panel peak, headroom
+python3 headroom.py step 25   # desktop white up a step, keeping the setting
+python3 headroom.py toggle    # headroom on or off at the same desktop white
+python3 headroom.py check     # alternate between the two to judge them by eye
+python3 headroom.py match     # measure what a backlight level is really worth
+```
+
+It only runs against an `edr` output, so it cannot move the desktop's backlight,
+and the session restores the backlight it found when it ends. Changing an EDR
+output's luminances live costs no modeset: `hyprctl eval` with the monitor rule
+updates the image description within a frame, logging nothing. The video asks
+for headroom while it plays through [`mpv-stats.lua`](mpv-stats.lua) and gives
+it back at exit; a shipping version belongs in the compositor, which is the only
+part that knows when an HDR surface is actually visible.
+
+Toggling on the panel behaved as designed: highlights collapsed onto white when
+headroom was released, blacks improved, and desktop white moved only slightly.
+That slight move is the open assumption. The ACPI backlight's 96 steps are not
+proportional to luminance, so the level chosen for a given white is a little too
+low. `match` measures it. Super+M starts a background loop that alternates the
+low backlight at full signal against the full backlight scaled to W nits, about
+a second each; the brightness keys move W while it runs, without applying
+anything themselves; Super+M again stops it. When white stops changing between
+the two states, W is what that backlight level is really worth, and
+`curve = ln(W / 500) / ln(level / top)` is stored and used from then on. Judge
+it on a white area, so show the SDR pattern first. The measurement runs in its
+own session and the launcher stops it if it outlives the compositor. The panel's 500-nit peak is still Apple's figure, and it only
+sets the scale of the nit labels, not the match. At full desktop white there is
+nothing to trade: headroom only appears below it.
 
 Super+D repeats the DPMS cycle that restored a stretched panel before (see
 `TODO.md`). It switches off half a second after the key press, because any key
@@ -207,8 +292,9 @@ python3 experiments/hdr/verify-session.py "$HOME/.cache/imac5k-edr"
 ```
 
 It needs `wtype`, and checks every binding, closing patterns with Esc and other
-keys, pattern replacement, the guide and its recorded state, the Super+D cycle
-and both exit keys. The supervisor was exercised with a stand-in compositor
+keys, pattern replacement, the video (Super+5, replaced by a pattern, closed
+with `q`), the guide and its recorded state, the Super+D cycle and both exit
+keys. The supervisor was exercised with a stand-in compositor
 for normal exit, `--stop`, the time limit, a forced kill, a crash report and
 the start prompt.
 
@@ -218,6 +304,19 @@ direct scanout blocked for colour management. DP-1 stayed a non-desktop tile.
 The kernel's link check passed on both tiles with no recovery, and logged no
 amdgpu errors or HDR metadata packets. The owner saw the patterns but could not
 leave them (see above).
+
+**Video on the panel (04:32).** The moving square looked right, was the
+brightest thing on screen, and nothing changed as it crossed the tile seam in
+the middle. Its motion looked jittery. That clip was 30 fps with an eased
+sweep: up to 84 physical pixels a frame. It is now 60 fps at a constant speed,
+and the session records mpv's frame timing to tell content judder from
+missed refreshes. With that clip the owner reported smooth motion, and the
+panel run recorded **no dropped, delayed or mistimed frames** for 60.00 fps
+video: measured display rate 59.87 Hz median (59.79–60.33) and vsync jitter
+0.073 median, against 0.009 in the small nested window. EDR's 5K
+floating-point composition, which also blocks direct scanout, therefore
+sustains 60 fps video with every frame on time; the earlier judder was the
+30 fps clip.
 
 **Second physical run (03:49–03:53), with the escape fixes.** The owner found
 everything as described, with no issues: HDR highlights above desktop white,
@@ -236,20 +335,25 @@ static destruction, so this happens during `exit()`. On this iMac the 5K
 stitch's DP-1 is the second connector with an output, so **the stock desktop
 Hyprland crashes the same way at every logout and shutdown**: the journal has
 one such segfault at every clean shutdown since 2026-09-21. It is not caused by
-this patch and is unfixed in upstream `main`. The shutdown itself completes.
+this patch and is unfixed upstream
+([hyprwm/aquamarine#383](https://github.com/hyprwm/aquamarine/issues/383)). The
+shutdown itself completes, so it is on hold; see `TODO.md`.
 
 Before shipping:
 
 - Validate real 5120×2880 10-bpc scanout and both panel tiles, gradients, cursor
   brightness, performance and recovery after suspend.
-- Measure peak/black/gamma/primaries and implement backlight-aware headroom.
-  Changing the backlight currently invalidates the nits estimate. A different
-  reference/peak ratio also needs tone-mapping validation.
+- Measure peak/black/gamma/primaries, and the backlight's own curve, with a
+  colorimeter: `headroom.py` assumes it is proportional to luminance. Move its
+  policy into the compositor, which knows when an HDR surface is visible, and
+  validate tone mapping at reference/peak ratios other than 200/500.
 - Define screenshot, screen-sharing and mirrored-output behaviour. Current SDR
   captures apply another tone map; in the nested test, reference white was
   229/255 in captures although the calculated panel code was about 168/255.
-- Check real HDR applications. HLG, browser/video/game negotiation, ICC profiles,
-  mixed monitors and saturated wide-gamut colours are not validated.
+- Check real HDR applications beyond mpv, whose HDR10 playback is validated in
+  the nested compositor. Decide whether to ship an mpv source-mode setting.
+  HLG, browsers, games, ICC profiles, mixed monitors and saturated wide-gamut
+  colours are not validated.
 - Run the test session on the panel, including the round trip to the desktop's
   console, then add apply/detect/remove support. No kernel or EDID override is
   part of this prototype.

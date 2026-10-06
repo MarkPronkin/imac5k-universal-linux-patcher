@@ -74,10 +74,10 @@ def run(work, directory, exit_keys):
         subprocess.run(['wtype', *keys], env=env, check=True, timeout=5)
         time.sleep(0.4)
 
-    def patterns_after(*keys, count=1):
+    def patterns_after(*keys, count=1, kind=PATTERN):
         press('-M', 'logo', *keys, '-m', 'logo')
-        time.sleep(0.6)  # Let any replaced pattern unmap.
-        return wait(lambda: len(windows(PATTERN)) == count and windows(PATTERN))
+        time.sleep(0.6)  # Let any replaced view unmap.
+        return wait(lambda: len(windows(kind)) == count and windows(kind))
 
     with (work / 'compositor.log').open('w') as log:
         compositor = subprocess.Popen([str(binary), '-c', str(config)], env=env, stdout=log,
@@ -101,7 +101,7 @@ def run(work, directory, exit_keys):
         # so only this test resolves bindings through each keyboard's symbols.
         subprocess.run(['hyprctl', 'eval', 'hl.config({ input = { resolve_binds_by_sym = true } })'],
                        env=env, check=True, timeout=5, stdout=subprocess.DEVNULL)
-        check(len(ctl('binds')) == 11, 'eleven bindings are registered')
+        check(len(ctl('binds')) == 18, 'eighteen bindings are registered')
         check(bool(wait(guides)), 'the guide opened at start')
         check(bool(wait(lambda: (record / 'monitors.json').exists(), 12)), 'the guide recorded monitors.json')
         monitor = ctl('monitors')[0]
@@ -129,6 +129,18 @@ def run(work, directory, exit_keys):
         check(bool(shown) and shown[0]['fullscreen'] != 0, 'Super+1 replaces both')
         press('-k', 'q')
         check(bool(wait(lambda: not windows(PATTERN), 5)), 'another key closes a pattern too')
+        shown = patterns_after('-k', '5', kind='mpv')
+        check(bool(shown) and shown[0]['fullscreen'] != 0, 'Super+5 plays the HDR video fullscreen')
+        shown = patterns_after('-k', '1')
+        check(bool(shown) and not windows('mpv'), 'Super+1 replaces the video')
+        press('-k', 'Escape')
+        wait(lambda: not windows(PATTERN), 5)
+        patterns_after('-k', '5', kind='mpv')
+        time.sleep(2.5)  # mpv-stats.lua samples once a second.
+        press('-k', 'q')
+        check(bool(wait(lambda: not windows('mpv'), 5)), 'q closes the video')
+        stats = record / 'mpv-stats.jsonl'
+        check(bool(wait(stats.exists, 3)) and 'estimated-vf-fps' in stats.read_text(), 'mpv recorded its frame timing')
         press('-M', 'logo', '-k', 'Return', '-m', 'logo')
         check(bool(wait(lambda: len(windows('foot')) >= 2)), 'Super+Return opens a terminal')
         press('-M', 'logo', '-k', 'd', '-m', 'logo')

@@ -7,7 +7,8 @@ After the escape fixes, the **second run (03:49–03:53) passed**: the owner
 reported “everything happens as you described, no issues noticed”. Its exit
 exposed a **stock aquamarine 0.15.0 crash on every Hyprland exit** on this iMac
 (see “Second physical run”). The desktop is still stock Hyprland. The work is
-committed on `hdr`, not pushed.
+committed on `test` and pushed (2026-10-06); the `hdr` branch was merged into
+`test` and deleted.
 
 ## Request and branch
 
@@ -16,12 +17,12 @@ colorimeter was required, then requested a separate HDR branch based on `test`
 and implementation work.
 
 - Repository: `/home/markpronkin/imac5k-universal-linux-patcher`.
-- Branch `hdr`, based on `test` at `52dd6e8cc23168086d030c4dbc1c19aeebd6f1d5`.
+- Branch `hdr` (merged into `test` and deleted on 2026-10-06), based on `test` at `52dd6e8cc23168086d030c4dbc1c19aeebd6f1d5`.
 - Prototype commit: `5dfe72b` — `hdr: prototype gamma-output EDR in Hyprland`.
-- Nothing from HDR has been pushed or released. `test` and `main` are unchanged.
+- On 2026-10-06 the HDR work was pushed to `origin/test`; nothing is released and `main` is unchanged.
 - Design, commands and limits: [the experiment guide](../experiments/hdr/README.md).
 
-**Committed on `hdr`, not pushed** (the owner asked for the commit):
+**Committed on `hdr`, since moved to `test`** (the owner asked for the commit):
 `experiments/hdr/session.py` and `verify-session.py` (new), the
 `verify-nested.py` socket-path fix, `pattern.c` closing on a key, README
 updates, this note and its `AGENTS.md` pointer. Still uncommitted and
@@ -185,11 +186,127 @@ Hyprland's `m_aqBackend.reset()`, so the destructor runs in `exit()`.
 2026-09-21 00:24 (boots −5…−2; −1 ended by the power-off), each followed by
 `start-hyprland: Couldn't waitpid for hyprland: No child processes`. None on
 the Sep 16 boots, although aquamarine 0.15.0-2 was installed then. No data
-loss; the shutdown completes. Fix candidates (upstream, owner's call): in
-`~CDRMBackend`, disconnect every connector before clearing the vector, and/or
-skip null entries in `flushAsyncCommitEvents()`; make `backendInUse` weak.
-Not yet reported or patched. (`journalctl -k` only covers the current boot;
-use `-b N -k` to search older boots.)
+loss; the shutdown completes. Upstream already has it as
+hyprwm/aquamarine#383 (open, no maintainer reply); the null-check fix in
+PR #413 was auto-closed because the hypr* projects only take PRs from vouched
+contributors. **On hold at the owner's request** (“in practice it's harmless
+it's not a priority”): recorded as a known rough edge in the main README and
+in `TODO.md` with the analysis, the one-line fix and the prepared (unbuilt)
+source, patch and CMake venv under `~/.cache/imac5k-edr/`. Nothing was built,
+installed or posted. (`journalctl -k` only covers the current boot; use
+`-b N -k` to search older boots.)
+
+## HDR video (mpv), after the second run
+
+New `experiments/hdr/video.py` writes a six-second HDR10 clip: HEVC Main 10,
+PQ, BT.2020, mastering metadata L(1000), MaxCLL 1000, MaxFALL 400. It carries
+`pattern.c`'s seven bars (0…507.5 nits), a 0–1,000-nit ramp and a moving
+1,000-nit square. Frames are written as exact 10-bit PQ codes; raw frames carry
+no colour tags, so `setparams` stamps them (without it ffprobe showed
+transfer/primaries `unknown`). mpv 0.41 / libplacebo 7.360 speaks
+`wp_color_manager_v1` natively. It reads EDR's preferred description (gamma
+2.2, P3, target max 500 = max_cll = max_fall; its log shows no reference
+luminance) and in target mode switches its own swapchain to PQ, tone-mapping
+to 500 nits. Captures in the nested compositor (desktop white = 229):
+
+- Source mode (`--target-colorspace-hint=yes --target-colorspace-hint-mode=source`):
+  0, 136, 186, 228, 243, 248, 251, i.e. the pattern client's values; the top
+  bars are lower because the clip's 1,000-nit peak widens the tone curve.
+- mpv defaults = target mode (GL and Vulkan alike): 0, 110, 152, 204, 225,
+  235, 241. Peak detection off: 209 for white. `bt.2390` + detection off: 229.
+  `clip`: 229. So the darkening is libplacebo's default `spline` curve, not
+  EDR. The owner has no mpv config, so plain `mpv file` gets the darker look.
+
+The staged session now generates `session/hdr-test.mkv` (stage requires `mpv`
+and `ffmpeg`) and binds **Super+5** to `mpv --no-config --fs --loop-file=inf
+--osd-level=0` in source mode. Patterns and the video replace one another; `q`
+closes mpv. `verify-nested.py` now also checks mpv in source mode against the
+PQ pattern (bars 1–4 within 3, highlights rising), and `verify-session.py`
+checks Super+5 (12 bindings). Both pass. **Physical video test pending.**
+
+## Video on the panel (run 20260922-043200) and frame timing
+
+The owner played Super+5 (the first, 30 fps clip): “cube looks allright and
+seems to be the brightest thing on the screen, nothing happenes when he
+crosses the middle of the screen” (so no tile-seam artefact), but “appears to
+be jittery and to not move very smoothly”. Nothing in the logs measured frame
+pacing (mpv's output is not captured; Hyprland logs no missed frames). That
+clip was 30 fps with a cosine-eased sweep, up to ~42 video / 84 physical px
+per frame. Changes: `video.py` is now 60 fps with a constant 8 px/frame (480
+px/s) wrap-around motion (`TRACK` 2880 px = 360 frames = the 6 s loop, so the
+loop is seamless). The Super+5 command adds `--video-sync=display-resample` and
+`--script=session/mpv-stats.lua`, which appends one JSON sample a second to
+`$IMAC_EDR_RUN/mpv-stats.jsonl` while playing: estimated video and display
+fps, vsync jitter, and dropped, decoder-dropped, delayed and mistimed frames.
+Nothing is written at shutdown, when those properties are already gone (the
+first version wrote `[]` or display-only lines). `session.py run` prints the
+last sample in its summary. Nested baseline: 60.00 fps video, display 59.97 Hz,
+jitter 0.009, all counters 0. Both nested tests pass (verify-session checks the
+stats file).
+
+**Panel run 20260922-184430 (18:44): smooth.** The owner: “tested it now it's
+smooth”. `mpv-stats.jsonl`, 96+ samples: 60.00 fps video; dropped, decoder,
+delayed and mistimed all 0; display 59.869 Hz median (59.793–60.329); vsync
+jitter 0.073 median, 0.106 max. So 5K FP16 composition with direct scanout
+blocked sustains 60 fps video with every frame on time, and the earlier judder
+was the 30 fps eased clip. The jitter metric is higher than nested, but no
+frame was mistimed. That session was left running on tty3 when the owner
+returned to the desktop; its time limit ends it.
+
+## Brightness and headroom (the owner's next choice)
+
+The owner asked whether brightness could be driven dynamically for a truer HDR
+presentation: yes, and `experiments/hdr/headroom.py` prototypes it. Mechanism
+confirmed in a nested compositor: `hyprctl eval` with a full `hl.monitor` rule
+changes `sdr_max_luminance`/`max_luminance` live, takes effect within a frame,
+logs **no modeset** and no config errors (one early sample showed a value not
+applying; a rerun of 200/100/250/300/350/400/500/200 applied every one, so it
+was a race in the harness). Captures are not a luminance measurement: the
+screencopy conversion re-normalises to the output's own reference white.
+
+Policy: desktop white W is the user's brightness; the backlight carries
+W × headroom (capped at the panel's 500-nit estimate), and the monitor rule
+carries `max_luminance` = the peak that backlight reaches and
+`sdr_max_luminance` = W. Engaging headroom therefore raises the backlight and
+scales the desktop down together, holding white's luminance while highlights
+gain room; releasing does the reverse, for deeper blacks and less power. Ramped
+over six steps of 40 ms. Open assumptions: the ACPI backlight (`acpi_video0`,
+0..96) is taken as proportional to luminance, and 500 nits is Apple's figure;
+`headroom.py check` alternates the two states so the owner can see whether
+white holds still.
+
+Wiring: the session binds the brightness keys and Super+Up/Down to
+`headroom.py step ±25`, Super+B to `toggle` (17 bindings). `mpv-stats.lua`
+engages headroom on `file-loaded` and releases it at shutdown, so the video
+demonstrates the dynamic case. `headroom.py` refuses unless `eDP-1` reports
+`colorManagementPreset: edr`, so a nested test or the desktop cannot move the
+backlight (verified: the nested run left it at 96), and `session.py run`
+restores the backlight level it found at start.
+
+**Tried on the panel.** The owner on Super+B (release): “three last ones drop in
+brightess significantly midle one is not as noticable (i think desktop one)
+black start to look better”. So the trade works — highlights collapse onto
+white without headroom, blacks improve at the lower backlight — but desktop
+white dims slightly instead of holding, which means the ACPI backlight is
+sub-linear: level 38/96 gives less than 40% of full brightness. (Panel gamma
+would move white the other way, and rounding is ~1%.) `headroom.py match` measures it.
+
+The first attempt drove it from a terminal and failed on the panel: “when i
+press - or + image just disappears, brightness didn't change before i pressed
++”. Two faults, both in the tool. The pattern window it launched took keyboard
+focus when it mapped, so the keys went to the pattern, which closes on any key
+(the window “disappeared”); and the loop alternated once and then blocked on
+`read`, so the screen sat in one state. It is now key-driven with no terminal:
+**Super+M** forks a detached loop (`measure()`, pidfile
+`~/.cache/imac5k-edr/matching.pid`) that alternates the low backlight at full
+signal against the full backlight scaled to W, a second each, taking W from the
+state file every turn; the brightness keys only move W while it runs; Super+M
+again SIGTERMs it, and its `finally` computes
+`curve = ln(W/500) / ln(level/top)`, saves it to `headroom.json`, restores the
+backlight and re-applies. `session.py run` also kills a surviving measurement
+before restoring the backlight, since `setsid` puts it outside the session.
+18 bindings; nested test passes and leaves the backlight at 96. **The
+measurement itself is still pending.**
 
 **After any further run, inspect** `~/.cache/imac5k-edr/5dfe72b/session/runs/<timestamp>/`:
 `monitors.json` (expect `colorManagementPreset: edr`, a `…2101010` format,

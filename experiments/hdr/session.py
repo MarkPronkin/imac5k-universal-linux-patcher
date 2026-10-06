@@ -25,6 +25,7 @@ CONFIG = '''\
 -- Hyprland 0.56.2 only: stock Hyprland rejects cm = "edr". It starts no desktop
 -- services and does not read or change the desktop configuration.
 local pattern = @PATTERN@
+local video = @VIDEO@
 local guide = @GUIDE@
 
 -- The desktop's monitor rules, then the EDR profile. DP-1, the panel's second
@@ -61,13 +62,15 @@ local function bind(keys, description, action)
   hl.bind(keys, action, { description = description })
 end
 
--- One pattern at a time: a new one replaces any that are open. The pattern
--- itself closes on any key but a modifier.
+-- One test view at a time: a pattern or the video replaces any that are open.
+-- A pattern closes on any key but a modifier; mpv closes on q.
 local function patterns(...)
   local commands = { ... }
   return function()
-    for _, window in ipairs(hl.get_windows({ class = "imac-edr-pattern" })) do
-      hl.dispatch(hl.dsp.window.close({ window = window }))
+    for _, class in ipairs({ "imac-edr-pattern", "mpv" }) do
+      for _, window in ipairs(hl.get_windows({ class = class })) do
+        hl.dispatch(hl.dsp.window.close({ window = window }))
+      end
     end
     for _, command in ipairs(commands) do
       hl.exec_cmd(command[1], command[2])
@@ -82,6 +85,15 @@ bind("SUPER + 3", "1000-nit HDR pattern", patterns({ pattern .. " --fullscreen -
 bind("SUPER + 4", "HDR above SDR", patterns(
   { pattern, { float = true, size = half, move = "0 0" } },
   { pattern .. " --sdr", { float = true, size = half, move = "0 monitor_h*0.5" } }))
+bind("SUPER + 5", "HDR video", patterns({ video }))
+-- Desktop white in nits, and the backlight traded for headroom at that white.
+local headroom = @HEADROOM@
+bind("XF86MonBrightnessUp", "Brighter", hl.dsp.exec_cmd(headroom .. " step 25"), { repeating = true })
+bind("XF86MonBrightnessDown", "Dimmer", hl.dsp.exec_cmd(headroom .. " step -25"), { repeating = true })
+bind("SUPER + UP", "Brighter", hl.dsp.exec_cmd(headroom .. " step 25"), { repeating = true })
+bind("SUPER + DOWN", "Dimmer", hl.dsp.exec_cmd(headroom .. " step -25"), { repeating = true })
+bind("SUPER + B", "Headroom on or off", hl.dsp.exec_cmd(headroom .. " toggle"))
+bind("SUPER + M", "Measure the backlight", hl.dsp.exec_cmd(headroom .. " match"))
 bind("SUPER + RETURN", "Terminal", hl.dsp.exec_cmd("foot"))
 bind("SUPER + H", "Test guide", hl.dsp.exec_cmd(guide))
 bind("SUPER + W", "Close window", hl.dsp.window.close())
@@ -112,6 +124,8 @@ Test patterns (a new one replaces the last)
   Super+2  the same bars in SDR
   Super+3  HDR with 1,000-nit content, tone-mapped
   Super+4  HDR above, SDR below
+  Super+5  HDR10 video in mpv: the same bars, a ramp to 1,000 nits and a
+           moving 1,000-nit square (q closes it)
 
 What to look for
   - Seven bars from black, then a ramp. In HDR the three right-hand bars
@@ -122,6 +136,19 @@ What to look for
   - Desktop white, like this text, is dimmer than on your desktop: 200 of
     an estimated 500 nits, leaving headroom for the highlights.
   - A normal pointer. It is drawn in software here.
+  - In the video, bars 1 to 4 match Super+1's, and the moving square is the
+    brightest thing on screen.
+
+Brightness, and the backlight traded for headroom
+  brightness keys, or Super+Up and Super+Down   desktop white, in 25-nit steps
+  Super+B   headroom on or off, at the same desktop white
+  Super+M   measure the backlight. Show a pattern first (Super+2). The screen
+            then alternates between the two states: hold Super+Up or Super+Down
+            until the white bar stops changing between them, then Super+M again
+  The video takes headroom while it plays and gives it back afterwards.
+  Engaging it raises the backlight and scales the desktop down by the same
+  amount: desktop white should not appear to change, only the highlights.
+  Released, the backlight drops and blacks get deeper.
 
 Other keys
   Super+Return  terminal    Super+F  full screen    Super+H  this guide
@@ -133,7 +160,7 @@ The EDR test takes over the display until it ends. In it:
   Esc                 closes a test pattern
   Super+Escape        ends the test and returns here (as does Ctrl+Alt+Backspace)
   Ctrl+Alt+F1         switches to your desktop
-  Super+1 to Super+4  show the test patterns; the on-screen guide lists every key
+  Super+1 to Super+5  show the test patterns and video; the guide lists every key
 It ends by itself after {minutes} minutes.
 Press Enter to start, or Ctrl+C to cancel: '''
 
@@ -187,6 +214,7 @@ def stage(directory):
     if not (HERE / PATCH).is_file():
         raise ValueError('Stage from the repository copy of session.py')
     from demo import build
+    from video import write
     work = directory.expanduser().resolve()
     binary = work / 'build/Hyprland'
     try:
@@ -197,19 +225,30 @@ def stage(directory):
         raise ValueError(f'{work}: no completed build.py build')
     if recorded != digest(HERE / PATCH):
         raise ValueError(f'{work} was built from another patch version; build the current one')
-    for tool in ('foot', 'hyprctl', 'systemd-inhibit', 'journalctl'):
+    for tool in ('foot', 'hyprctl', 'systemd-inhibit', 'journalctl', 'mpv', 'ffmpeg'):
         if not shutil.which(tool):
             raise ValueError(f'{tool} is required')
     session = work / 'session'
     session.mkdir(exist_ok=True)
     pattern = build(session / 'pattern')
+    clip = write(session / 'hdr-test.mkv')
+    shutil.copy2(HERE / 'mpv-stats.lua', session / 'mpv-stats.lua')
+    shutil.copy2(HERE / 'headroom.py', session / 'headroom.py')
+    # Source mode leaves tone mapping to the compositor, which keeps the video's
+    # reference white on desktop white; mpv's default curve darkens mid-tones.
+    # display-resample times frames to the compositor's presentation feedback,
+    # so the recorded statistics show whether it keeps up at 5K.
+    video = shlex.join(['mpv', '--no-config', '--fs', '--loop-file=inf', '--osd-level=0',
+                        '--target-colorspace-hint=yes', '--target-colorspace-hint-mode=source',
+                        '--video-sync=display-resample', f'--script={session / "mpv-stats.lua"}', str(clip)])
     shutil.copy2(HERE / 'edr.lua', session / 'edr.lua')
     shutil.copy2(Path(__file__).resolve(), session / 'session.py')
     layout, variant = console_layout()
     guide = f"foot --title='iMac EDR test' python3 {shlex.quote(str(session / 'session.py'))} guide"
     config = session / 'hyprland.lua'
     config.write_text(CONFIG.replace('@PATTERN@', lua(f'{shlex.quote(str(pattern))} --seconds 3600'))
-                      .replace('@GUIDE@', lua(guide)).replace('@EDR@', lua(str(session / 'edr.lua')))
+                      .replace('@HEADROOM@', lua(shlex.join(['python3', str(session / 'headroom.py')])))
+                      .replace('@VIDEO@', lua(video)).replace('@GUIDE@', lua(guide)).replace('@EDR@', lua(str(session / 'edr.lua')))
                       .replace('@LAYOUT@', lua(layout)).replace('@VARIANT@', lua(variant)))
     env = dict(os.environ, HYPRLAND_NO_SD_VARS='1', HYPRLAND_NO_SD_NOTIFY='1')
     env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
@@ -275,6 +314,14 @@ def describe(monitors):
     return lines
 
 
+def playback(stats):
+    counts = ', '.join(f'{int(stats.get(key, 0))} {label}' for key, label in (
+        ('frame-drop-count', 'dropped'), ('decoder-frame-drop-count', 'dropped by the decoder'),
+        ('vo-delayed-frame-count', 'delayed'), ('mistimed-frame-count', 'mistimed')))
+    return (f"{stats.get('estimated-vf-fps', 0):.2f} fps video on a display measured at "
+            f"{stats.get('estimated-display-fps', 0):.2f} Hz (vsync jitter {stats.get('vsync-jitter', 0):.3f}); {counts}")
+
+
 def probe():
     deadline = time.monotonic() + 5
     while True:
@@ -327,11 +374,17 @@ def run(minutes):
     began = time.time()
     deadline = time.strftime('%H:%M', time.localtime(began + minutes * 60))
     env = dict(os.environ, HYPRLAND_NO_SD_VARS='1', HYPRLAND_NO_SD_NOTIFY='1', XCURSOR_SIZE='24',
-               HYPRCURSOR_SIZE='24', IMAC_EDR_RUN=str(record), IMAC_EDR_DEADLINE=deadline)
+               HYPRCURSOR_SIZE='24', IMAC_EDR_RUN=str(record), IMAC_EDR_DEADLINE=deadline,
+               IMAC_EDR_SESSION=str(HERE))
     for key in ('NOTIFY_SOCKET', 'HYPRLAND_INSTANCE_SIGNATURE'):
         env.pop(key, None)
     if Path('/dev/dri/amd-card').exists():
         env['AQ_DRM_DEVICES'] = '/dev/dri/amd-card'  # As imac-gpu.lua does for the desktop.
+    backlight = Path('/sys/class/backlight/acpi_video0/actual_brightness')
+    try:  # The session trades the backlight for headroom; put it back afterwards.
+        restore = backlight.read_text().strip()
+    except OSError:
+        restore = None
     print(f'Starting the EDR test on {console}; it ends by {deadline}.', flush=True)
     for signum in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(signum, interrupted)
@@ -357,6 +410,15 @@ def run(minutes):
     finally:
         inhibitor.stdin.close()
         end(inhibitor, 5)
+    measuring = Path.home() / '.cache/imac5k-edr/matching.pid'
+    try:  # A backlight measurement outlives the compositor: it has its own session.
+        os.kill(int(measuring.read_text()), signal.SIGTERM)
+        time.sleep(1)
+    except (OSError, ValueError):
+        pass
+    if restore:
+        subprocess.run(['brightnessctl', '--quiet', '--device', 'acpi_video0', 'set', restore],
+                       timeout=5, check=False)
     elapsed = time.time() - began
     try:
         kernel = subprocess.run(['journalctl', '-k', '-o', 'short-precise', '--no-pager', f'--since=@{int(began)}'],
@@ -383,6 +445,10 @@ def run(minutes):
         print('Recorded at the start:\n  ' + '\n  '.join(state))
     except (OSError, ValueError):
         print('The display state was not recorded: the guide terminal did not start.')
+    try:
+        print('Video playback: ' + playback(json.loads((record / 'mpv-stats.jsonl').read_text().splitlines()[-1])))
+    except (OSError, ValueError, IndexError):
+        pass
     errors = [line for line in kernel.splitlines() if 'amdgpu' in line and re.search(r'(?i)error|fail|timed? ?out', line)]
     if errors:
         print(f'The kernel logged {len(errors)} amdgpu error lines; see kernel.log.')
@@ -411,7 +477,7 @@ def main():
             stop(HERE.parent / 'build/Hyprland')
         else:
             return run(args.minutes)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         parser.exit(1, f'{error}\n')
     return 0
 

@@ -9,6 +9,7 @@ import tempfile
 import time
 
 from demo import build
+import video
 
 CONFIG = '''hl.monitor({output="",mode="preferred",position="auto",scale=1,
   cm="edr",max_luminance=500,sdr_max_luminance=200,supports_hdr=-1})
@@ -52,11 +53,16 @@ def ppm(path):
     return width, height, pixels
 
 
-def samples(path):
+def samples(path, aspect=None):
     width, height, pixels = ppm(path)
+    shown, left, top = width, 0, 0
+    if aspect:  # A video keeps its aspect ratio: sample inside the letterbox.
+        shown = min(width, round(height * aspect))
+        left, top = (width - shown) // 2, (height - round(shown / aspect)) // 2
     values = []
     for bar in range(7):
-        offset = (height // 3 * width + (2 * bar + 1) * width // 14) * 3
+        y = top + (round(shown / aspect * 0.3) if aspect else height // 3)
+        offset = (y * width + left + (2 * bar + 1) * shown // 14) * 3
         rgb = pixels[offset:offset + 3]
         if max(rgb) - min(rgb) > 2:
             raise ValueError(f'Neutral bar acquired a color cast: {tuple(rgb)}')
@@ -73,10 +79,10 @@ def wait_window(env, client):
     time.sleep(0.3)  # Let its first frame reach the compositor.
 
 
-def capture(env, monitor, frame):
+def capture(env, monitor, frame, aspect=None):
     subprocess.run(['grim', '-o', monitor['name'], '-t', 'ppm', str(frame)],
                    env=env, check=True, timeout=8)
-    return samples(frame)
+    return samples(frame, aspect)
 
 
 def run(binary, work):
@@ -166,6 +172,24 @@ def run(binary, work):
                 stop(background)
         if any(abs(a - b) > 3 for a, b in zip(values['before_blur'], values['blur'])):
             raise RuntimeError('Blur changed the luminance of a uniform patch')
+        # A real HDR10 client: mpv in source mode hands PQ to the compositor, which
+        # must put the video's reference white on desktop white, like the pattern.
+        clip = video.write(work / 'hdr-test.mkv')
+        with (work / 'mpv.log').open('w') as log:
+            player = subprocess.Popen(['mpv', '--no-config', '--fs', '--pause', '--osd-level=0', '--no-osc',
+                                       '--target-colorspace-hint=yes', '--target-colorspace-hint-mode=source',
+                                       str(clip)], env=env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                wait_window(env, player)
+                time.sleep(1.5)  # The first decoded frame.
+                values['mpv'] = capture(env, monitor, work / 'mpv.ppm', aspect=video.WIDTH / video.HEIGHT)
+            finally:
+                stop(player)
+        played = values['mpv']
+        if any(abs(played[i] - pq[i]) > 3 for i in range(4)):
+            raise RuntimeError('mpv: the video disagrees with the PQ pattern below reference white')
+        if played[6] < played[3] + 15 or any(a >= b for a, b in zip(played[3:], played[4:])):
+            raise RuntimeError('mpv: HDR highlights are not retained')
         width, height, before = ppm(work / 'before-blur.ppm')
         w2, h2, after = ppm(work / 'blur.ppm')
         if (width, height) != (w2, h2):
@@ -176,7 +200,7 @@ def run(binary, work):
         report = {'monitor': monitor, 'screencopy_rgb8': values,
                   'note': 'Screencopy receives a separate SDR conversion. These are not panel code values or measured nits.'}
         (work / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
-        print('PASS: reference-white matching, HDR highlights, tone mapping, blur, EDR monitor policy')
+        print('PASS: reference-white matching, HDR highlights, tone mapping, blur, mpv HDR10 video, EDR monitor policy')
         print(json.dumps(values))
     finally:
         stop(compositor)

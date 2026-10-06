@@ -934,6 +934,45 @@ on it. **Do not disable it from the compositor**; that risks the fused output.
 Clean fix is patch-level: mark the slave connector `non-desktop` so compositors
 ignore it without powering it down.
 
+### Hyprland segfaults at exit: aquamarine #383 (on hold)
+
+**On hold** at the owner's request (2026-09-22): harmless in practice, so not a
+priority. Every Hyprland exit (logout, reboot, shutdown, and the HDR test
+session) segfaults after `Hyprland has reached the end.`: one
+`Hyprland[…]: segfault at 0 … libaquamarine.so.0.15.0[bbfe1]` per clean
+shutdown since 2026-09-21, none on the Sep 16 boots. Found from a core dump of
+the HDR test compositor; see `notes/hdr-handoff-2026-09-22.md`. In aquamarine
+0.15.0, 0.15.1 and upstream `main`:
+
+- `~CDRMBackend()` does `conn->disconnect(); conn.reset();` per connector, and
+  `disconnect()` → `cancelAsyncOutput()` → `flushAsyncCommitEvents()` walks
+  every entry of `connectors`, dereferencing the reset slot. Every `CDRMOutput`
+  gets a nonzero `asyncOwnerID`, so any later connector that owns an output
+  trips it. On the 5K iMac that is the phantom DP-1 above, so machines with a
+  single monitor crash too. Marking DP-1 `non-desktop` would not avoid it,
+  because aquamarine still gives such a connector an output.
+- The global strong `backendInUse` (`src/backend/Session.cpp:27`, set in
+  `CSession::attempt()`, never cleared) keeps the backend alive past
+  Hyprland's `m_aqBackend.reset()`, so the destructor runs in `exit()`
+  (`__cxa_finalize`). That is probably also behind aquamarine #267 (EGL
+  teardown during static destruction), and is not mentioned upstream yet.
+- The hot-unplug cleanup calls `disconnect()` inside `std::erase_if()`, whose
+  moved-from slots are null, so two connectors unplugged in one scan (an MST
+  dock) can crash the same way at runtime.
+- The fix proposed in #383 and in PR #413 covers both paths. The PR was
+  auto-closed: the hypr* projects only accept PRs from vouched contributors.
+
+```diff
+-        if (connector->output && connector->output->asyncCommitEventPending)
++        if (connector && connector->output && connector->output->asyncCommitEventPending)
+```
+
+Ready for later, nothing built or installed: in
+`~/.cache/imac5k-edr/aquamarine-0.15.0-fix/`, the 0.15.0 source (checksum
+matches Arch's 0.15.0-2, which applies no patches) and that patch as
+`drm-skip-null-connectors.patch`; a CMake venv in `~/.cache/imac5k-edr/tools/`.
+Installed here: aquamarine 0.15.0-2; Arch now ships 0.15.1.
+
 ## GPU video encode (VCE) hang
 
 Hardware encode via VAAPI can hang the GPU: `ring vce0 timeout` → full GPU reset →
