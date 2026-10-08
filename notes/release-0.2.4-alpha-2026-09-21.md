@@ -12,7 +12,7 @@ for the speaker retune. `main` is outside this release's scope.
   firmware brightness table extends the range; if validation or iasl is
   unavailable, the original range remains supported. An mkinitcpio post hook
   preserves the setup across kernel updates, and a shutdown unit saves the
-  brightness in NVRAM. Ported from Ahmad Al-Awadi's work.
+  brightness in NVRAM. Ported from the work of Ahmad (@ahmadtv).
 - Hardware checks on iMac18,3 / 7.2.5-3-omarchy confirmed the headless Intel
   device, Radeon compositor, unaffected audio, working dimming, full-range
   table and two successful s2idle cycles in one boot. This is limited testing,

@@ -17,7 +17,7 @@ has never been a 0.2.5-alpha. The latest release on GitHub before this one is
 - `macos` (iMac18,3): Apple's set_os firmware path exposes a headless Intel HD
   630 for Quick Sync and makes the ACPI backlight dim the panel, over the full
   range where the firmware's brightness table can be rebuilt and verified.
-  The Radeon keeps the desktop. Ported from Ahmad Al-Awadi's work.
+  The Radeon keeps the desktop. Ported from the work of Ahmad (@ahmadtv).
   - Omarchy/Limine: verified on iMac18,3 / 7.2.5-3-omarchy. That covered the
     headless iGPU, the Radeon compositor, unaffected audio, working dimming,
     the full-range table and two s2idle cycles in one boot.

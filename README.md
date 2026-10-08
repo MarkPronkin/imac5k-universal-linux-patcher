@@ -429,17 +429,17 @@ which is included in repository checkouts, but omitted from release installs.
 
 ## 🙏 Credits
 
-This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://github.com/ahmadtv/omarchy-imac18-3-patch)** by Ahmad Al-Awadi, which is where the patcher, the 5K stitch work and the original Omarchy backend come from. It is MIT licensed, and that copyright is retained in [`LICENSE`](LICENSE) alongside the one for the changes made here. The full commit history of the original is preserved in this repository, so `git log` attributes every one of those commits to its author.
+This project began as a fork of **[ahmadtv/omarchy-imac18-3-patch](https://github.com/ahmadtv/omarchy-imac18-3-patch)** by Ahmad, which is where the patcher, the 5K stitch work and the original Omarchy backend come from. It is MIT licensed, and that copyright is retained in [`LICENSE`](LICENSE) alongside the one for the changes made here. The full commit history of the original is preserved in this repository, so `git log` attributes every one of those commits to its author.
 
 Carried on separately rather than as a pull request because the changes here — a second distribution backend, and a driver change whose cause is still open — are larger and less settled than a fork should carry back upstream. Nothing here is endorsed by the original author.
 
-The `macos` module — the `set_os` hook, the headless i915 setup, the full-range brightness table and the NVRAM boot level — is ported from Ahmad Al-Awadi's [omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where it was developed and verified on an iMac18,3. It is MIT licensed, like the rest of that work.
+The `macos` module — the `set_os` hook, the headless i915 setup, the full-range brightness table and the NVRAM boot level — is ported from Ahmad's [omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where it was developed and verified on an iMac18,3. It is MIT licensed, like the rest of that work.
 
 Native 5K builds on community work from [drm/amd#4455](https://gitlab.freedesktop.org/drm/amd/-/issues/4455) — mforce2 (tile wake), erik2 (stitch), taprobane99 (7.2.2 port), with guidance from AMD's Alex Deucher. The genlock fix and the first verified iMac18,3 result came from this project. Audio driver by [jackdanyell](https://github.com/jackdanyell/imac18-3-cs8409-linux-audio). The speaker tuning the `eq` module installs is [taprobane99](https://github.com/taprobane99/iMac5KLinux)'s, measured on an iMac17,1, and is carried here under `assets/imac-audio/` byte-identical to [commit `d82e423`](https://github.com/taprobane99/iMac5KLinux/tree/d82e423a9a97a2cf2f0f8d4664025241d91ce3c2/Audio), with the previous `5069f81` tuning preserved for comparison. It is MIT licensed, and its copyright notice is carried with it in [`assets/imac-audio/LICENSE`](assets/imac-audio/LICENSE).
 
 ### Contributors
 
 - **Mark Pronkin** ([@MarkPronkin](https://github.com/MarkPronkin)) — maintainer of this fork: the genlock and warm-reboot latch-clear fixes, the first verified iMac18,3 5K result, the Fedora KDE backend, and the module-based patcher, installer and releases.
-- **Ahmad Al-Awadi** ([@ahmadtv](https://github.com/ahmadtv)) — the original patcher, the 5K stitch work and the first Omarchy backend, carried forward here.
+- **Ahmad** ([@ahmadtv](https://github.com/ahmadtv)) — the original patcher, the 5K stitch work and the first Omarchy backend, carried forward here.
 
 The upstream display, audio and tuning work this builds on is credited above; `git log` and the [contributors graph](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/graphs/contributors) carry the full record.
