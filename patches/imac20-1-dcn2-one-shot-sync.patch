@@ -1,0 +1,37 @@
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -8088,6 +8088,24 @@
+ 	}
+ }
+ 
++/*
++ * On the iMac20,1 Navi14 board, continuous NEXT_PIXEL resets underflow the
++ * reset target during page flips. Use DCN's ordinary one-shot timing sync.
++ * Keep this quirk scoped to the board tested; other tiled GPUs retain their
++ * per-frame synchronization, including the older DCE iMacs.
++ */
++static bool dm_tiled_use_per_frame_sync(struct dc_stream_state *stream)
++{
++	const struct amdgpu_device *adev = stream->ctx->driver_context;
++
++	return !(dc_link_is_apple_tiled(stream->link) &&
++		 stream->ctx->dce_version == DCN_VERSION_2_0 &&
++		 adev->pdev->device == 0x7340 &&
++		 adev->pdev->subsystem_vendor == PCI_VENDOR_ID_APPLE &&
++		 adev->pdev->subsystem_device == 0x0218 &&
++		 adev->pdev->revision == 0x41);
++}
++
+ static void dm_enable_per_frame_crtc_master_sync(struct dc_state *context)
+ {
+ 	int i = 0;
+@@ -8114,7 +8132,8 @@
+ 	for (i = 0; i < context->stream_count; i++) {
+ 		stream = context->streams[i];
+ 		if (stream && stream->link && stream->link->tiled_peer)
+-			stream->triggered_crtc_reset.enabled = true;
++			stream->triggered_crtc_reset.enabled =
++				dm_tiled_use_per_frame_sync(stream);
+ 	}
+ 
+ 	set_master_stream(context->streams, context->stream_count);

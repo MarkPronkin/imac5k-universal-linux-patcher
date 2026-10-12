@@ -36,5 +36,6 @@ class PatchStackTests(unittest.TestCase):
                     "5k-resume-drop-cached-peer.patch", "5k-resume-arm-link-health.patch",
                     "imacpro-slave-dp-panel-mode.patch", "dce120-enable-crtc-reset.patch",
                     "dce12-multisync-master-first.patch", "dce110-genlock-master-from-pipe0.patch",
-                    "5k-resync-postpone-on-modeset.patch"]
+                    "5k-resync-postpone-on-modeset.patch",
+                    "imac20-1-dcn2-one-shot-sync.patch"]
         self.assertEqual([name for name in stack if name in required], required)

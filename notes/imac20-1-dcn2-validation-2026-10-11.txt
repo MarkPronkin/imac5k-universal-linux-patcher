@@ -1,0 +1,81 @@
+iMac20,1 Navi14 tiled-display synchronization validation, 2026-10-11
+
+Hardware / software
+  2020 27-inch iMac20,1; AMD Navi14, 1002:7340 / 106b:0218, revision 41.
+  linux-t2 7.2.9.arch1-1; release 7.2.9-arch1-Watanare-T2-1-t2.
+  Omarchy dev 4.0.0.r6866.g77bfaca-1; Hyprland 0.56.2-4; Aquamarine 0.15.1-1.
+  eDP-1 presents 5120x2880 at 59.982 Hz, scale 2, XRGB8888.
+
+Before
+  The stitched desktop booted but flashed black on keyboard/mouse activity
+  and ordinary framebuffer updates. Software cursors, forced high GPU clocks
+  and profile_peak did not resolve it. Function tracing captured fast flips
+  without explicit display-blanking calls.
+
+  Live stream/pipe probes showed identical 2560x2880 timings: totals
+  2720x2962, pixel clock 483250 kHz, matching clamping/view and ignore_msa=0.
+  Root/left eDP link0 used pipe1/TG1. Peer/right DP link1 used pipe0/TG0 and
+  was the timing master. Both streams had per-frame reset enabled; the
+  hard-coded source TG0 was correct for this allocation.
+
+  DTN excerpt (other columns omitted):
+                    HUBP underflow       OTG underflow
+    pipe0 / peer        0x0                    0
+    pipe1 / root        0x3                    1
+
+Change and results
+  Disabling forced per-frame resets on the DCN2 tiled pair, while retaining
+  dc_trigger_sync()/program_timing_sync(), stopped the flashing after reboot.
+  The mechanism is consistent with repeated NEXT_PIXEL resets disturbing
+  scanout/prefetch; that precise hardware interaction is not independently
+  established by the traces.
+
+  - Normal typing, mouse movement, scrolling and fullscreen video: user
+    reports stable output and no center-seam mismatch.
+  - Native 5K synthetic animation, target 60 fps: about 42 seconds before
+    the user closed it, not the planned 180 seconds. No visual problems.
+  - Three DPMS off/on cycles: each restored one 5120x2880 output, and the
+    user confirmed stable alignment. These are not full-system suspends.
+  - 23 initial hardware samples and three final awake samples: HUBP/OTG
+    underflows zero on both pipes. The collector stopped on an empty read
+    during display-off; its parser was corrected before final sampling.
+    No claim of uninterrupted counter coverage across all DPMS transitions.
+  - Peak sampled GPU load 89%, temperature 57 C. No observed GPU resets,
+    ring/flip timeouts or final link-health failures during those tests.
+  - Subsequent user-confirmed full shutdown/boot, then one deep suspend/wake:
+    display remained stable at 5K. Kernel suspend_stats success=1, fail=0,
+    failed_resume=0; SMU resumed successfully. Both links passed checks
+    after boot and after resume. Three more post-resume samples showed
+    zero HUBP/OTG underflows on both pipes.
+  - Two transient "enabling link 1 failed: 15" messages occurred during
+    startup before the final passing link checks. None during tested resume.
+
+Scope of the submitted patch
+  Hardware captures used a DCN_VERSION_2_0-wide predicate and a temporary
+  diagnostic printk. The submitted patch removes that printk and narrows
+  the same behavior to the tested Apple Navi14 board and Apple tile pair.
+  This final guard is compile-tested; it has not separately been booted.
+  It intentionally leaves other DCN2 GPUs and older DCE behavior unchanged.
+  Long-duration drift, repeated power/suspend cycles, other iMac models,
+  Fedora hardware, and the stock patcher installation path remain untested.
+
+Reproduction provenance / dependencies
+  Community source: c1086d2b438c800b382e111f3ce94203a4205365.
+  T2 patch source: 65fdd4d492d7e219a05742ce4768f16e5ba4f976.
+  Arch T2 package source: bdca079a252aaa5091960f354de2bba690fd44ce.
+
+  Reconstructed Linux 7.2.9 + matching Arch patch + T2 patch set, replacing
+  T2 7003's display implementation with the community lean/stitch stack.
+  The lean-core USB4 context needed a one-line rebase on 7.2.9. In addition:
+  - Apple 0218 late-UCLK change from t2linux/linux-t2-patches PR #60.
+  - Display-before-SMU initialization order retained from T2 patch 7003.
+  - T2 DCN source-TG change adapted to the community tiled-root helper
+    (retained; not the observed fix).
+  - Local guard limiting queued tiled resync work to modesets. This alone
+    did not cure flicker and remained present in the successful build.
+
+  Only the synchronization correction is proposed here. These supporting
+  T2 changes are not claimed as new work, nor included in this PR. The test
+  module was embedded in a separate Limine UKI; the normal kernel remained
+  available as a fallback. No boot images or unredacted system logs are
+  distributed with this report.
