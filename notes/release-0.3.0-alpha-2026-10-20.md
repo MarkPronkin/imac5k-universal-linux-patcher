@@ -53,3 +53,45 @@ everything since it:
   four Fedora 44 sources; the lean `amdgpu.ko` built against Fedora
   7.2.10-200. Details in `patches/README.md` and commit `f36c1cf`.
 - Nothing was applied to this machine, and nothing was booted.
+
+## Publication
+
+- Published [v0.3.0-alpha](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/releases/tag/v0.3.0-alpha)
+  at 07:55:48 UTC, 2026-10-20, as a prerelease targeting `main`. GitHub
+  confirms `MarkPronkin` as release author and uploader of both assets.
+- The annotated tag points at `5de443c596eeebb5809f0fe49c164f755337e863`.
+  `test` (from `77c3367`), `main` (from `c1086d2`) and the tag were pushed
+  atomically with explicit refspecs; both branches fast-forwarded. No other
+  tag was pushed.
+- Archive: 367842 bytes, 101 entries. SHA-256:
+  `ebfc03443e298652e747a6ced9bb014c4d1c5cb0f84bd4d1e33065794d336bfb`.
+- Two builds from the tag in fresh clones from GitHub were byte-identical,
+  including the single-release `SHA256SUMS`. In the archive, VERSION is
+  `0.3.0-alpha` and COMMIT the tagged commit; it carries
+  `scripts/hypr-edr.py`, `patches/hyprland-0.56.2-edr.patch`, `docs/hdr.md`
+  and both re-anchored hunks, and no tests, notes or workflow files.
+- The public downloads, fetched without authentication, are byte-identical
+  to the build. The unauthenticated release list now starts with
+  `v0.3.0-alpha`, then `v0.2.2-alpha`; the `v0.2.6-alpha` draft stays hidden.
+- `main`'s own `install.sh`, fetched from raw.githubusercontent.com and
+  identical to the released one, resolved the newest release by itself and
+  installed it into scratch HOME, data and bin directories: `checksum
+  verified`, `--version` 0.3.0-alpha, COMMIT the tag. No host installation or
+  live module was changed.
+- GitHub [release verification 39389808923](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/39389808923)
+  passed: tag and prerelease metadata, offline checks, required isolated
+  startup checks, and a rebuild compared byte-for-byte with both published
+  assets.
+- Branch checks passed at the released commit on
+  [main 39389625488](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/39389625488)
+  and [test 39389625236](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/39389625236).
+  The documentation-only commit that follows records this on both branches;
+  the tag stays at `5de443c`.
+
+## Open
+
+- `hdr`: the owner's real `imac-patcher --apply hdr`, a login through it,
+  and one s2idle cycle with EDR on.
+- #12: a Fedora 7.2.9+ boot with the rebuilt module; the reporter can now
+  re-run `imac-patcher --apply 5k` after `imac-patcher upgrade`.
+- `macos` on GRUB and `t2suspend` remain untested on hardware.

@@ -5,7 +5,9 @@ release "with the stuff from hdr and test branch, to main", as 0.3.0-alpha.
 On `test`: the #12 Fedora 7.2.9+ fix (`f36c1cf`) and the `hdr` module
 (`6878431`) committed, then the release record. `main` is fast-forwarded to
 `test`; local `main`'s unpushed `bd139a7` was the same Ahmad credit `test`
-already has. `v0.2.6-alpha` stays a draft, superseded. The external-display
+already has. **Published** 07:55 UTC as a prerelease targeting `main`, tag
+at `5de443c`; release verification 39389808923 and both branch checks
+passed, and `main`'s installer installs it. `v0.2.6-alpha` stays a draft, superseded. The external-display
 notes stay uncommitted. Read
 [the release record](notes/release-0.3.0-alpha-2026-10-20.md) for validation
 and publication.
