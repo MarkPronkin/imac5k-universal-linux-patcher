@@ -72,8 +72,9 @@ kernel and need neither. Read the suspend section of the
 
 On the iMac18,3, `imac-patcher --apply macos` works on this backend too. The
 brightness keys dim the panel over its full range where the ACPI table can
-be rebuilt, while `i915` is blocked so the Intel GPU exposes no graphics or
-video device. NVRAM brightness saving is retained. It installs what it does
+be rebuilt, while `i915` is blocked by default so the Intel GPU exposes no
+graphics or video device. The separate experimental [`igpu`](igpu.md) patch
+can enable Intel video independently, without installing brightness services. NVRAM brightness saving is retained. It installs what it does
 on Omarchy (see [macOS mode](macos-mode.md#boot-configuration)), with three
 differences:
 

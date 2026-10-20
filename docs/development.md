@@ -42,6 +42,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
 | `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
+| `test_igpu.py` | Independent iGPU opt-in on both backends, apply/removal in both orders with brightness, retained shared files, reboot status, model gates and failures |
 | `test_macos.py` | macOS mode's model and boot-path gates; the set_os hook on UKIs and on GRUB's `/boot` kernel, and its restore mode; apply, detect and remove on Limine and, end to end with the real hook and GRUB libraries, on GRUB; the brightness table's checks; the NVRAM writer; the headless VBT |
 | `test_release.py` | Reproducible archives, checksum validation, launchers, upgrades, version pruning and uninstall |
 | `test_review_regressions.py` | Atomic Limine config edits, pinned image verification, failed decompression/rebuilds, colour restoration, and upgrade copy failure |
@@ -105,6 +106,7 @@ IMAC5K_REQUIRE_EQ_AUDIO_TESTS=1 python3 -m unittest discover -s tests -p 'test_e
 | `scripts/imac-audio-jack-switch` | Swaps the built-in output between the tuned speaker sink and the untuned jack output, installed by the `eq` module |
 | `scripts/t2-speakers.py` | Owns the iMac Pro WirePlumber rule, verifies its live conversion, and handles rollback/recovery |
 | `scripts/lib/grub.sh` | Arch GRUB command-line edits, generated menu selection, custom test entries and mkinitcpio image helpers |
+| `scripts/lib/igpu.sh` | Independent experimental Intel graphics apply/detect/remove, sharing firmware resources with the brightness module |
 | `scripts/lib/arch-grub.sh` | Arch-family GRUB module overrides; Limine boot repair is n/a |
 | `scripts/lib/fedora.sh` | Fedora module overrides using DNF, DKMS, dracut and GRUB |
 | `scripts/lib/kde.sh`, `scripts/kde-display.py` | KDE colour handling through KScreen |
@@ -138,7 +140,7 @@ Each ID in `MODULES` implements these Bash functions:
 | Function | Contract |
 |---|---|
 | `mod_<id>_title`, `_desc` | Print user-facing text |
-| `mod_<id>_tier` | Print `safe` or `boot`; the tier may depend on current boot configuration |
+| `mod_<id>_tier` | Print `safe`, `boot`, or `experimental`; the tier may depend on current boot configuration |
 | `mod_<id>_detect` | Print exactly `applied`, `not-applied`, `partial`, or `n/a`; inspect without applying changes |
 | `mod_<id>_apply`, `_remove` | Perform the requested operation and return nonzero on failure |
 

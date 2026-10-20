@@ -2,9 +2,10 @@
 
 This is the original implementation and hardware validation record. Since
 0.3.1-alpha, the `macos` module blocks Intel graphics while retaining the
-firmware brightness path. Use [the current guide](macos-mode.md) for applying,
+firmware brightness path, unless the separate experimental `igpu` module is
+explicitly enabled. Use [the current guide](macos-mode.md) for applying,
 upgrading or removing the module. The video acceleration instructions below
-apply only to releases through 0.3.0-alpha.
+describe the original combined mode; Intel video now requires `--apply igpu`.
 
 # macOS mode: the Intel iGPU and a backlight that works
 

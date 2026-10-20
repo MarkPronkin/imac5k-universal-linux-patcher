@@ -55,7 +55,7 @@ mod_5k_desc() { echo "Wakes the panel's second tile, stitches both into one 5120
 # has to be taken back out explicitly: rebuilding the initramfs never re-copies
 # the kernel. The parameters go in GRUB_CMDLINE_LINUX, which recovery entries
 # read too, because every entry boots the same edited image.
-mod_macos_desc() { echo "Enables Apple's firmware backlight path so the brightness slider dims the panel, with the full-range brightness table where iasl is available and NVRAM brightness saving at shutdown. Blocks i915 so the Intel iGPU exposes no graphics or video-acceleration device; the Radeon handles display, desktop and video. A mkinitcpio hook makes the firmware edit in the kernel image GRUB loads and repeats it after every kernel update; the parameters go in GRUB_CMDLINE_LINUX. Needs GRUB 2.12 or newer installed for UEFI. The GRUB path is untested on hardware."; }
+mod_macos_desc() { echo "Enables Apple's firmware backlight path so the brightness slider dims the panel, with the full-range brightness table where iasl is available and NVRAM brightness saving at shutdown. Intel graphics stays blocked unless you separately opt into the experimental igpu patch. A mkinitcpio hook makes the firmware edit in the kernel image GRUB loads and repeats it after every kernel update; the parameters go in GRUB_CMDLINE_LINUX. Needs GRUB 2.12 or newer installed for UEFI. The GRUB path is untested on hardware."; }
 macos_boot_image() {
     local pkgbase
     pkgbase=$(imac_kernel_pkgbase "$KREL") || return 1
@@ -69,6 +69,7 @@ macos_restore_images() {
 # Read without sudo, as detection must never ask for a password;
 # /etc/default/grub is world-readable. Each parameter is its own token.
 macos_cmdline_present() {
+    macos_select_opts
     local opts=() p
     read -ra opts <<< "$MACOS_OPTS"
     GRUB_SUDO='' grub_read_cmdlines 2>/dev/null || return 1
@@ -80,20 +81,22 @@ macos_cmdline_present() {
 # /etc/default/grub.d that reassigns GRUB_CMDLINE_LINUX would otherwise leave
 # an edited kernel booting without them.
 macos_add_cmdline() {
+    macos_select_opts
     local opts=()
     # Replace the old blacklist rather than appending a second value.
-    grub_cmdline_remove module_blacklist=i2c_i801 || return 1
+    grub_cmdline_remove module_blacklist=i2c_i801 module_blacklist=i915,i2c_i801 || return 1
     read -ra opts <<< "$MACOS_OPTS"
     grub_cmdline_add_linux "${opts[@]}" && macos_verify_cmdline present
 }
 macos_remove_cmdline() {
     local opts=()
-    read -ra opts <<< "$MACOS_OPTS"
+    read -ra opts <<< "$MACOS_DISABLED_OPTS"
     grub_cmdline_remove "${opts[@]}" module_blacklist=i2c_i801
 }
 # All four, token by token: the mark the Limine drop-in is found by is only a
 # prefix of one of them, and a GRUB entry is compared by whole tokens.
 macos_verify_cmdline() {   # present|absent
+    macos_select_opts
     local opts=() p
     read -ra opts <<< "$MACOS_OPTS"
     for p in "${opts[@]}"; do
@@ -105,3 +108,24 @@ macos_verify_cmdline() {   # present|absent
 macos_image_note()  { printf 'the kernel image GRUB loads,\n    %s, each time mkinitcpio runs' "$(macos_boot_image)"; }
 macos_params_note() { echo "to GRUB_CMDLINE_LINUX in ${GRUB_DEFAULT_FILE}"; }
 macos_menu_note()   { echo "GRUB"; }
+
+igpu_cmdline_present() {
+    local p opts=()
+    read -ra opts <<< "$IGPU_OPTS"
+    GRUB_SUDO='' grub_read_cmdlines 2>/dev/null || return 1
+    for p in "${opts[@]}"; do
+        grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" "$p" || return 1
+    done
+    ! grub_has_token "$GRUB_LINUX $GRUB_LINUX_DEFAULT" module_blacklist=i915,i2c_i801
+}
+igpu_add_cmdline() {
+    local opts=()
+    grub_cmdline_remove module_blacklist=i915,i2c_i801 || return 1
+    read -ra opts <<< "$IGPU_OPTS"
+    grub_cmdline_add_linux "${opts[@]}"
+}
+igpu_remove_cmdline() {
+    local opts=()
+    read -ra opts <<< "$IGPU_OPTS"
+    grub_cmdline_remove "${opts[@]}"
+}

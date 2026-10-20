@@ -37,7 +37,10 @@ def model_table(models):
 
 def module_section():
     start = PATCHER.index("# ═══════════════════════ module: macos ")
-    return PATCHER[start:PATCHER.index("# ═══════════════════════ module: 5k ", start)]
+    section = PATCHER[start:PATCHER.index("# ═══════════════════════ module: 5k ", start)]
+    # Inline the shared module before the fixtures redirect system paths.
+    return section.replace('source "${REPO_DIR}/scripts/lib/igpu.sh" || exit 1',
+                           (ROOT / "scripts/lib/igpu.sh").read_text())
 
 
 bcl_spec = importlib.util.spec_from_file_location("make_bcl_table", ROOT / "scripts/make-bcl-table.py")
@@ -166,6 +169,8 @@ class ModuleTests(unittest.TestCase):
             "MACOS_HOOK": self.root / "etc/initcpio/post/imac-setos",
             "MACOS_MKI": self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf",
             "MACOS_DROPIN": self.root / "etc/limine-entry-tool.d/imac5k-macos.conf",
+            "IGPU_MKI": self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu-experimental.conf",
+            "IGPU_DROPIN": self.root / "etc/limine-entry-tool.d/imac5k-igpu.conf",
             "MACOS_VBT_DIR": self.root / "usr/lib/firmware/imac18-3",
             "MACOS_VBT": self.root / "usr/lib/firmware/imac18-3/headless-vbt.bin",
             "MACOS_AML": self.root / "etc/initcpio/acpi_override/imac-bcl100.aml",
@@ -191,7 +196,7 @@ class ModuleTests(unittest.TestCase):
             (self.root / "acpi_override_hook").unlink(missing_ok=True)
         if igpu:
             (self.root / "sys").mkdir(exist_ok=True)
-            (self.root / "sys/igpu").write_text("")
+            (self.root / "sys/igpu").mkdir(exist_ok=True)
         stubs = f'''
 set -uo pipefail
 export HOME="{self.home}"
@@ -600,11 +605,13 @@ class GrubModuleTests(unittest.TestCase):
     def run_module(self, code, *, iasl=True, igpu=False, **env):
         if igpu:
             (self.root / "sys").mkdir(exist_ok=True)
-            (self.root / "sys/igpu").write_text("")
+            (self.root / "sys/igpu").mkdir(exist_ok=True)
         paths = {
             "MACOS_HOOK": self.hook,
             "MACOS_MKI": self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu.conf",
             "MACOS_DROPIN": self.root / "etc/limine-entry-tool.d/imac5k-macos.conf",
+            "IGPU_MKI": self.root / "etc/mkinitcpio.conf.d/zz-imac-igpu-experimental.conf",
+            "IGPU_DROPIN": self.root / "etc/limine-entry-tool.d/imac5k-igpu.conf",
             "MACOS_VBT_DIR": self.root / "usr/lib/firmware/imac18-3",
             "MACOS_VBT": self.root / "usr/lib/firmware/imac18-3/headless-vbt.bin",
             "MACOS_AML": self.root / "etc/initcpio/acpi_override/imac-bcl100.aml",
@@ -1234,7 +1241,9 @@ class PackagingTests(unittest.TestCase):
     def test_every_installed_file_ships_in_the_release(self):
         paths = re.search(r"^PATHS=\(([^)]*)\)", (ROOT / "scripts/make-release.sh").read_text(), re.M)[1]
         shipped = set(paths.split())
-        for path in ("configs/macos/61-imac-dri-names.rules",
+        for path in ("configs/macos/zz-imac-igpu-experimental.conf",
+                     "scripts/lib/igpu.sh",
+                     "configs/macos/61-imac-dri-names.rules",
                      "configs/macos/62-imac-smbus-acpi.rules",
                      "configs/macos/zz-imac-igpu.conf",
                      "configs/macos/imac-backlight-nvram.service",

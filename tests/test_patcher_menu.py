@@ -193,6 +193,18 @@ run_module() { echo "RUN $*"; }
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("Apply all non-experimental patches", result.stdout + result.stderr)
 
+    def test_igpu_alone_makes_the_non_experimental_option_visible(self):
+        result = self.run_menu("", choice="2\n", picks="", extra=self.experimental_mocks("n/a") + '''
+MODULES+=(igpu)
+mod_igpu_title() { echo 'Expose Intel iGPU'; }
+mod_igpu_tier() { echo experimental; }
+mod_igpu_detect() { echo not-applied; }
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2) Apply all non-experimental patches", result.stderr)
+        self.assertNotIn("RUN apply igpu", result.stdout)
+        self.assertNotIn("RUN apply hdr", result.stdout)
+
     def test_non_experimental_option_remains_when_hdr_is_installed(self):
         for state in ("applied", "partial"):
             with self.subTest(state=state):

@@ -2,11 +2,14 @@
 
 **Release 0.3.1-alpha (2026-10-20):** preparing on `main` at the owner's
 request. `macos` retains firmware brightness, ACPI range, SMBus and NVRAM,
-while blocking `i915` so Intel exposes no DRM device (the firmware still
-exposes its PCI function). Reapply `macos` and reboot after upgrading. The
+while blocking `i915` by default (the firmware still exposes its PCI
+function). The owner added a separate experimental `igpu` module: it works
+alone without the brightness table/NVRAM service, or alongside `macos`;
+either removal preserves the other and the last removal restores plain boot. Reapply `macos` and reboot after upgrading. The
 menu adds `Apply all non-experimental patches` immediately below the safe
 batch only when an experimental module is available, excluding n/a. Existing
-`all` still skips experimental modules. See
+`all` still skips both experimental modules, `igpu` and `hdr`, as confirmed
+by the owner. See
 [the release record](notes/release-0.3.1-alpha-2026-10-20.md). Hardware reboot
 validation is pending; no host patches or boot config were changed.
 

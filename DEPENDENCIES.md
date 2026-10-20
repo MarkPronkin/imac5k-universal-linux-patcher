@@ -323,6 +323,14 @@ after upgrading from an older GRUB, run your `grub-install` command again.
 
 N/A on every model but iMac18,3, and on Fedora. See docs/macos-mode.md.
 
+## Intel iGPU module (experimental tier, iMac18,3)
+
+`igpu` has the same boot-tool, model and backend prerequisites as `macos`.
+It does not need `iasl` or the ACPI override hook. Its preflight optionally
+offers `intel-media-driver` for Quick Sync and `libva-utils` for `vainfo`.
+It installs no brightness table or NVRAM service and is skipped by all batch
+actions. See [docs/igpu.md](docs/igpu.md).
+
 ## HDR module (experimental tier, iMac18,3; Hyprland 0.56.2 under uwsm)
 
 | Tool | Arch package | Fedora package |

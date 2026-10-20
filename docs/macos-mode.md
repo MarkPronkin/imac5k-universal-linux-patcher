@@ -2,14 +2,16 @@
 
 `imac-patcher --apply macos` enables Apple's firmware backlight path on the
 iMac18,3. Since **0.3.1-alpha**, it blocks `i915`, so the Intel HD 630 exposes
-no DRM graphics or render device. The Radeon handles the desktop and video.
+no DRM graphics or render device by default. The separate experimental
+[`igpu` patch](igpu.md) is the explicit opt-in for Intel video. The Radeon handles the desktop and video.
 The working brightness slider, optional full-range brightness table, SMBus
 rule and brightness saving to Apple NVRAM are retained.
 
 The firmware call needed for brightness also makes the Intel PCI function
 visible at `00:02.0`. It can therefore still appear in `lspci`; blocking its
 Linux driver keeps it unavailable to compositors and video applications.
-Quick Sync and Intel VP9 acceleration are no longer enabled by this module.
+Quick Sync and Intel VP9 acceleration require `imac-patcher --apply igpu`;
+the brightness module never enables that experiment by itself.
 
 ## Apply or upgrade
 
@@ -30,6 +32,19 @@ The module is offered only on **iMac18,3** with Omarchy/Limine or an
 Arch-family GRUB installation using mkinitcpio. On GRUB, the installed
 UEFI loader must support the kernel EFI stub (GRUB 2.12+); the preflight
 checks the installed loader. Fedora/dracut and other models are unsupported.
+
+## Independent Intel opt-in
+
+The optional `igpu` module works with or without `macos`. Applying it does
+not install the full-range brightness table or NVRAM service. When it is
+explicitly enabled, the brightness module keeps its firmware settings but
+stops blocking `i915`. Reapplying brightness preserves that choice.
+
+`imac-patcher --remove igpu` retains an installed brightness module and
+restores the Intel driver block. `imac-patcher --remove macos` removes its
+brightness table and NVRAM service while retaining an enabled `igpu` module.
+The shared firmware hook, VBT and Radeon pin are removed only after the last
+of these modules is removed. Reboot after changes; no live driver is unloaded.
 
 ## What is retained
 
@@ -56,12 +71,13 @@ by the module. Existing packages are left installed.
 
 ## Boot configuration
 
-The parameters are:
+With no experimental `igpu` opt-in, the parameters are:
 
 ```text
 snd_hda_core.gpu_bind=0 i915.disable_display=1 i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i915,i2c_i801
 ```
 
+With `igpu` enabled the blacklist contains only `i2c_i801`.
 `module_blacklist` is enforced by the kernel, so explicit module loads cannot
 start `i915`. See [the kernel parameter documentation](https://www.kernel.org/doc/html/latest/admin-guide/kernel-parameters.html).
 `snd_hda_core.gpu_bind=0` keeps the HD-audio controller independent of the
