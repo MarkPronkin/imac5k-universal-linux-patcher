@@ -56,10 +56,30 @@ feature and confirmed that the existing all-patches action keeps skipping HDR.
 
 ## Publication
 
-Prepared for `main`, with an annotated `v0.3.1-alpha` tag. The release assets
-are built from the tag in a fresh checkout, with a one-release SHA256SUMS.
-The publication record will be completed after download/installer and CI
-verification.
+- Published [v0.3.1-alpha](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/releases/tag/v0.3.1-alpha)
+  at **17:31:41 UTC**, 2026-10-20, as a prerelease targeting `main`.
+  GitHub confirms `MarkPronkin` as release author and uploader of both assets.
+- `main` and the annotated tag were pushed atomically with explicit refspecs;
+  the tagged commit is `11b95f2944d0e6ddae90835b71d8757286ed169e`.
+  The `test` branch and all other tags are unchanged.
+- Archive: **373018 bytes, 105 entries**. SHA-256:
+  `09b39cf0a2ceb639b4b2a84b87cbee49b8c0a823a4e766311c5dc135c53b8346`.
+  Two fresh tagged checkouts built byte-identical archives and single-release
+  SHA256SUMS files. VERSION and COMMIT agree with the release and tag.
+  The archive contains the independent iGPU library, configuration and guide,
+  and the existing HDR runtime; development tests/notes/workflows are excluded.
+- Public unauthenticated downloads of both files match those builds exactly.
+  The installer fetched from `main` automatically selected 0.3.1-alpha,
+  verified its checksum and installed into a scratch home/data/bin tree;
+  its `--version`, `--help` and COMMIT agree with the tag. No host patch
+  installation or boot configuration was changed.
+- [Main branch check 39466826684](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/39466826684)
+  passed at the tagged commit.
+- [Release verification 39466865830](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/actions/runs/39466865830)
+  passed: tag/prerelease metadata, offline checks, required isolated startup
+  tests, and a fresh rebuild compared byte-for-byte to both published files.
+- The following documentation-only main commit records publication; the tag
+  remains at `11b95f2`.
 
 ## Upgrade
 

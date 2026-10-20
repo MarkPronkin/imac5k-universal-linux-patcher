@@ -1,17 +1,22 @@
 # Current work checkpoint
 
-**Release 0.3.1-alpha (2026-10-20):** preparing on `main` at the owner's
-request. `macos` retains firmware brightness, ACPI range, SMBus and NVRAM,
-while blocking `i915` by default (the firmware still exposes its PCI
-function). The owner added a separate experimental `igpu` module: it works
-alone without the brightness table/NVRAM service, or alongside `macos`;
-either removal preserves the other and the last removal restores plain boot. Reapply `macos` and reboot after upgrading. The
-menu adds `Apply all non-experimental patches` immediately below the safe
-batch only when an experimental module is available, excluding n/a. Existing
-`all` still skips both experimental modules, `igpu` and `hdr`, as confirmed
-by the owner. See
-[the release record](notes/release-0.3.1-alpha-2026-10-20.md). Hardware reboot
-validation is pending; no host patches or boot config were changed.
+**Release 0.3.1-alpha (2026-10-20): published from `main`** at 17:31:41
+UTC, tag at `11b95f2944d0e6ddae90835b71d8757286ed169e`. `macos` retains
+firmware brightness, ACPI range, SMBus and NVRAM while blocking `i915` by
+default (the firmware still exposes its PCI function). The owner added a
+separate experimental `igpu` module: it works alone without the brightness
+table/NVRAM service, or alongside `macos`; either removal preserves the other
+and the last removal restores plain boot. Reapply `macos` and reboot after
+upgrading. The menu adds `Apply all non-experimental patches` immediately
+below the safe batch only when an experimental module is available,
+excluding n/a. Existing `all` still skips both `igpu` and `hdr`, as confirmed
+by the owner. **602 tests passed with no skips**, including required startup
+and audio integration tests. Public assets, reproducibility and scratch
+installation verified; main check 39466826684 and release verification
+39466865830 passed. `test` and all other tags were left unchanged. No host
+patch or boot configuration was changed; hardware boot validation of the
+new configurations is pending. See
+[the release record](notes/release-0.3.1-alpha-2026-10-20.md).
 
 **Release 0.3.0-alpha to `main` (2026-10-20):** the owner asked for a new
 release "with the stuff from hdr and test branch, to main", as 0.3.0-alpha.
