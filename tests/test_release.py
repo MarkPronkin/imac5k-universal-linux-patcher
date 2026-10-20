@@ -124,6 +124,7 @@ class ReleaseTests(unittest.TestCase):
                        "patches/dce12-multisync-master-first.patch",
                        "patches/dce110-genlock-master-from-pipe0.patch",
                        "patches/5k-resync-postpone-on-modeset.patch",
+                       "patches/imac20-1-dcn2-one-shot-sync.patch",
                        # The speaker tuning is vendored, not downloaded: an
                        # archive without it installs a graph that cannot load.
                        "assets/imac-audio/iMacAudio.conf",

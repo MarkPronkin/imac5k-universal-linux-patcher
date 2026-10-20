@@ -21,6 +21,30 @@ internal tiled panel, as one diff against **kernel 7.2.2** source:
 
 Boot parameter once installed: `amdgpu.tiled_stitch=1`
 
+## iMac20,1 Navi14: one-shot synchronization
+
+The lean stack includes `imac20-1-dcn2-one-shot-sync.patch`. On the tested
+iMac20,1 (DCN 2.0, PCI device `7340`, Apple subsystem `106b:0218`, revision
+`41`), continuously resetting one tile's timing caused black flashes during
+ordinary page flips and underflows on the reset target. The quirk disables
+the forced per-frame reset for that board and uses DCN's ordinary one-shot
+timing synchronization. Other boards keep the existing per-frame behavior;
+the verbose stack is unchanged.
+
+Hardware validation on a custom `linux-t2` 7.2.9 build with Omarchy/Hyprland:
+native 5120×2880 at 59.982 Hz, stable desktop and fullscreen video, three
+display-off/on cycles, one cold boot and one deep suspend/resume. The
+post-change HUBP/OTG samples showed zero underflows on both pipes. This is
+single-machine evidence, not validation of every DCN2 iMac or the complete
+stock installer on this model.
+
+The tested build also preserved T2 display/SMU initialization changes and
+the Apple `0218` late-UCLK fix from
+[t2linux/linux-t2-patches#60](https://github.com/t2linux/linux-t2-patches/pull/60).
+This synchronization patch does not supply those prerequisites. The full
+test provenance and remaining limitations are recorded in
+`notes/imac20-1-dcn2-validation-2026-10-11.txt` in the source checkout.
+
 ## Installing without a second kernel
 
 **On Fedora KDE**, run `../scripts/imac-patcher --apply 5k` as your normal user
