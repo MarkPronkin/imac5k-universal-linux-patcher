@@ -54,7 +54,7 @@ imac-patcher --remove eq        # undo one module
 | `partial` | Some changes are present, but a required file, running driver, or setting is missing; a reboot or re-apply may be needed |
 | `n/a` | The module is unavailable for the detected hardware, desktop, or platform; the command skips it |
 
-The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `t2suspend`, `boot`, `macos`, and `5k`.
+The module IDs are `audio`, `eq`, `t2speakers`, `color`, `suspend`, `t2suspend`, `boot`, `macos`, `5k`, and `hdr`.
 `--apply safe` and `--remove safe` select the modules currently in the `safe`
 tier. Use `safe` by itself. It can include **`suspend` (the iMac18,3's sleep
 fixes) or `t2suspend` (T2 models), which enable suspend but block
@@ -62,7 +62,8 @@ hibernate**; select individual modules to skip them. Either moves to the
 `boot` tier while cleanup of an old `idle=poll` setting or an Omarchy
 hibernation setup is needed. `--apply all` applies every module not yet
 applied, boot tier included — including the long `5k` kernel-module build,
-which runs last.
+which runs last. Neither batch includes the `experimental` tier, which is
+`hdr` alone: apply it by name or pick it in the menu.
 
 Commands check all arguments before running any module. Exit status is `0` for
 success or a skipped operation, `1` for a failed operation, and `2` for invalid
@@ -98,20 +99,20 @@ Grey marks are all one thing: nobody has confirmed it on hardware yet.
 
 ### Models and module availability
 
-All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the nine hardware/system modules, plus what each machine can decode and encode in hardware. Sleep is two modules, each for its own models: `suspend` holds the iMac18,3's fixes and `t2suspend` follows t2linux on T2 models; both **enable suspend and block hibernate**. The 2014-2015 models sleep with the stock kernel and need neither.
+All models below pass the model gate. Years and identifiers follow [Apple's model list](https://support.apple.com/en-us/108054). The columns cover the ten hardware/system modules, plus what each machine can decode and encode in hardware. Sleep is two modules, each for its own models: `suspend` holds the iMac18,3's fixes and `t2suspend` follows t2linux on T2 models; both **enable suspend and block hibernate**. The 2014-2015 models sleep with the stock kernel and need neither.
 
-| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | Video codecs |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | `suspend`: ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** (Limine); ⚪ GRUB untested | ✅ **Measured**, [both GPUs](#video-codecs) |
-| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ⚪ Untested: Vega only, no iGPU to add to it |
-| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ➖ N/A: untested; the iMac18,3's fixes are not offered | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| Model | Release | Identifier | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | T2 speakers (`t2speakers`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | HDR (`hdr`) | Video codecs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | `suspend`: ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** (Limine); ⚪ GRUB untested | ⚪ **Experimental**: EDR verified on the panel (Chromium, mpv); module untested at login | ✅ **Measured**, [both GPUs](#video-codecs) |
+| iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: Vega only, no iGPU to add to it |
+| iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ➖ N/A: untested; the iMac18,3's fixes are not offered | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
+| iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. Select either sleep module only with a 5K module built from release 0.1.91-alpha or newer: the stitch-layer sleep fix is in its kernel patches.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. HDR is iMac18,3 only too, on Hyprland 0.56.2 started through uwsm, as Omarchy does. Select either sleep module only with a 5K module built from release 0.1.91-alpha or newer: the stitch-layer sleep fix is in its kernel patches.
 
 ### Video codecs
 
@@ -136,15 +137,15 @@ prints the live lists for whatever machine it is run on.
 
 Distribution status assumes compatible hardware from the table above. Arch and Omarchy are separate rows because the boot and Hyprland integrations depend on Omarchy's configuration, not just on the package manager.
 
-| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) |
-|---|---|---|---|---|---|---|---|
-| **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout | ⚪ Untested: GRUB 2.12+ with mkinitcpio; Omarchy/Limine also supported |
-| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB | ⚪ Untested: GRUB 2.12+ + mkinitcpio |
-| **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB | ⚪ Untested: same GRUB backend as CachyOS |
-| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** |
-| **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend | ➖ N/A: dracut and kernel-install |
-| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported |
-| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported |
+| Distribution | Native 5K (`5k`) | Audio driver (`audio`) | Speaker EQ (`eq`) | Colour (`color`) | Sleep (`suspend`, `t2suspend`) | Boot repair (`boot`) | macOS mode (`macos`) | HDR (`hdr`) |
+|---|---|---|---|---|---|---|---|---|
+| **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout | ⚪ Untested: GRUB 2.12+ with mkinitcpio; Omarchy/Limine also supported | ⚪ Conditional: Hyprland 0.56.2 Lua config started by uwsm |
+| **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB | ⚪ Untested: GRUB 2.12+ + mkinitcpio | ⚪ Conditional: as Arch; ➖ N/A on KDE |
+| **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Conditional: as Arch |
+| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** | ⚪ **Experimental**: EDR verified (iMac18,3); module untested at login |
+| **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend | ➖ N/A: dracut and kernel-install | ➖ N/A: KDE |
+| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
+| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
 
 Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. The install-and-boot path is hardware-validated on CachyOS; the staged test entries and promotion are implemented and covered offline, but have not been exercised on hardware. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
 
@@ -162,6 +163,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 🎨 **Colour** | Wide-gamut (P3) panel rendered as sRGB — everything oversaturated. | ✅ Correct gamut mapping |
 | 😴 **Suspend** | On the iMac18,3, hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, Apple's USB-controller firmware reset the machine on every second sleep, and deep S3 resets the machine. The 2014-2015 models sleep with the stock kernel. | ⚠️ Suspend works in s2idle (verified on iMac18,3, still experimental); deep S3 and hibernate blocked. T2 models get their own module (untested) — see below |
 | 🔆 **Brightness** | The firmware hands Linux a backlight that accepts writes and dims nothing, because it only drives the panel for macOS. | ✅ Dims in macOS mode, over the panel's full range (verified on iMac18,3) |
+| 🌈 **HDR** | The panel takes no HDR signal, so HDR video is squeezed into SDR white. | ⚠️ Experimental EDR desktop: highlights above desktop white, as on macOS (iMac18,3, Hyprland) |
 | 🎞️ **Video encode/decode** | The Intel HD 630 next to the Radeon is hidden by the firmware, so its Quick Sync engine is unreachable and Polaris does all video. | ✅ Quick Sync headless as the default video GPU in macOS mode (verified on iMac18,3) |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
@@ -310,6 +312,16 @@ Read [docs/macos-mode.md](docs/macos-mode.md) before applying it: what gets inst
 
 ---
 
+## 🌈 HDR — experimental
+
+`imac-patcher --apply hdr` shows HDR on the iMac18,3 the way macOS does. The panel accepts no HDR signal, so the module builds Hyprland 0.56.2 with this project's EDR patch: desktop white sits at an estimated 200 of the panel's 500 nits, and HDR video and images use the rest. Chromium plays HDR video with Omarchy's default flags, and mpv plays HDR10 at a steady 60 fps; both were verified on the panel with the same build run as the desktop.
+
+Everything stays in your home directory: the compositor goes into `~/.local/share/imac-patcher/hdr`, and a user-level session entry starts it at each login, with your own Hyprland configuration unchanged apart from the built-in display's colour mode. Before every login it checks that the system's Hyprland and its libraries still match the build, and starts the stock compositor with a notification when they do not. The build takes about ten minutes and needs CMake. Because white is no longer the panel's peak, **ordinary windows look dimmer: keep the brightness at maximum**, or trade headroom for a brighter desktop. Not yet tried: sleep with it on.
+
+Read [docs/hdr.md](docs/hdr.md) for the profile and how to tune it, what gets installed, what happens when Hyprland is upgraded, and recovery.
+
+---
+
 ## 😴 Suspend — read this before you try it
 
 Sleep is two modules, and each model is offered only its own; `--status` lists
@@ -371,6 +383,7 @@ The sleep policy is the same as `suspend`'s: `suspend.target` unmasked, the hibe
 - 🎬 **Video encode (VCE)** hangs the GPU on certain transcodes, taking the session down. Under investigation.
 - 💥 **Hyprland segfaults on its way out** — at every logout, reboot or shutdown the journal logs `Hyprland[…]: segfault at 0 … in libaquamarine.so.0.15.0`, and `start-hyprland` reports `Couldn't waitpid for hyprland`. It happens after Hyprland has finished shutting down, so nothing is lost and the shutdown completes. The cause is an upstream bug in aquamarine 0.15 ([hyprwm/aquamarine#383](https://github.com/hyprwm/aquamarine/issues/383)): with more than one output, tearing down the DRM backend dereferences a connector it has already released. On a 5K iMac the panel's second tile, DP-1, is that second output even without an external monitor. Harmless in practice, so it is on hold here; the known one-line fix awaits upstream.
 - 🌗 **macOS mode is new here** — verified on the iMac18,3 under Omarchy (iGPU, Quick Sync, full-range brightness, and two s2idle cycles with suspend on), but it is one machine and a few days old, and the GRUB path has not been booted yet. It adds a second PCI device with runtime PM to the sleep path and swaps in a recompiled ACPI table, so keep an eye on sleep after applying it and know [the recovery paths](docs/macos-mode.md#recovery).
+- 🌈 **HDR is experimental and tied to Hyprland 0.56.2** — the EDR patch is for that version alone. Once Hyprland is upgraded, every login falls back to the stock compositor, with a notification, until a release carries the patch for the new version. The luminance figures are estimates, and sleep with HDR on is untested. See [docs/hdr.md](docs/hdr.md).
 - 📺 **VP9 in Firefox and Chromium is still CPU-decoded** — with macOS mode the iGPU decodes VP9, but those two render on the compositor's GPU, the Radeon, which has no VP9 decoder, and neither can import frames decoded on the other chip: Firefox closed cross-GPU decode as WONTFIX, Chromium fails the import. Everything built on GStreamer *can*, because its `va` plugin is multi-device: a WebKit browser (Epiphany) with `gst-plugin-va` installed decodes VP9 on the iGPU and displays it through the Radeon, verified here with Flathub's GNOME Web, fullscreen included. Arch's own `epiphany` package has an unrelated fullscreen bug — its window goes black with nothing playing at all — so take the Flatpak. So does `mpv --hwdec=vaapi-copy --vaapi-device=/dev/dri/intel-render`. See [docs/macos-mode.md](docs/macos-mode.md#except-in-a-webkit-browser-where-it-works). AV1 is on neither chip; that one is a plain hardware limit.
 
 ---

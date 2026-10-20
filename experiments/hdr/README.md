@@ -3,12 +3,17 @@
 This is a working rendering prototype on the `test` branch, first developed on
 a separate `hdr` branch from `52dd6e8`. It adds `cm = "edr"` to **Hyprland 0.56.2**, rendering HDR
 content within the existing Display P3 / gamma 2.2 output of the 2017
-iMac18,3. It is not an installable patcher module yet.
+iMac18,3. Since 2026-10-17 it is also the experimental patcher module `hdr`
+(`imac-patcher --apply hdr`, see [docs/hdr.md](../../docs/hdr.md)): the patch
+moved to `patches/hyprland-0.56.2-edr.patch`, and the build below is
+`scripts/hypr-edr.py`'s, shared with the module. This directory keeps the test
+harnesses.
 
 The full compositor builds. Offscreen shader tests and a nested Wayland
 session pass, including SDR/PQ reference-white matching, highlight roll-off and
 HDR10 video in mpv. The iMac's own 5K panel has run it in a test session with no
-visible issues. The desktop itself still runs stock Hyprland.
+visible issues, and as the everyday desktop through `desktop.py`, where
+Chromium played HDR video.
 
 ## What it does
 
@@ -50,8 +55,8 @@ python3 experiments/hdr/build.py "$HOME/.cache/imac5k-edr" --jobs 4
 ```
 
 The script downloads checksum-pinned Hyprland, its protocol and udis86
-submodules, and Glaze; applies the patch without fuzz; and builds only the
-compositor. It writes under the chosen directory and never installs packages,
+submodules, and Glaze; applies `patches/hyprland-0.56.2-edr.patch` without
+fuzz; and builds only the compositor. It writes under the chosen directory and never installs packages,
 replaces the running compositor, or edits desktop/boot configuration.
 `--prepare-only` stops after extraction and patching. After changing the patch,
 use a new build directory; `--cache` can reuse the verified downloads.
@@ -113,7 +118,8 @@ full range is working. It does not move the brightness slider.
 Only load this profile in a session running the patched binary, after existing
 monitor rules. Stock Hyprland rejects `cm = "edr"`. The build and tests do not
 install or load this profile; the test session below does, without touching the
-desktop configuration. Patcher integration is still to be implemented.
+desktop configuration. The `hdr` module does not use this file: its wrapper
+configuration adds the same profile to the user's own `eDP-1` rule.
 
 The native Wayland demo can be used in that session:
 
@@ -271,6 +277,39 @@ sleep 1; hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "off" }))'; sleep 3
 hyprctl eval 'hl.dispatch(hl.dsp.dpms({ action = "on" }))'
 ```
 
+## Run it as the desktop, for one login
+
+The test session has no desktop services. To try EDR with the real desktop
+(bar, notifications, lock screen, browsers, every application and binding),
+arm the next login:
+
+```bash
+python3 experiments/hdr/desktop.py arm "$HOME/.cache/imac5k-edr"
+python3 experiments/hdr/desktop.py status   # what runs now, and at the next login
+python3 experiments/hdr/desktop.py disarm   # keep the next login stock
+```
+
+`arm` writes `BUILD_DIRECTORY/desktop/`: a configuration that runs
+`~/.config/hypr/hyprland.lua` unchanged and then `edr.lua`, whose eDP-1 rule
+replaces the desktop's (Hyprland keeps the last rule per output), verified with
+the patched binary. It then writes `~/.local/share/wayland-sessions/hyprland.desktop`.
+uwsm searches the user's data directory first, so that entry shadows
+`/usr/share/wayland-sessions/hyprland.desktop`, which the login runs through
+`uwsm start … hyprland.desktop`. Its launcher removes the entry before anything
+else, so the login after it is stock again, whatever happens in between: a
+restart, a crash, a logout. A missing build falls back to the stock compositor.
+
+The launcher starts the patched binary through the stock `start-hyprland`
+watchdog (`--path`), so uwsm, the systemd activation environment and the
+crash-restart behave as on the stock desktop. It blocks system sleep while it
+runs, since resume with this compositor is untested. Each login gets
+`BUILD_DIRECTORY/desktop/runs/<timestamp>/`: Hyprland's log written directly
+there (it survives a power-off), `monitors.json` and `state.txt` recorded at
+start, the kernel log for the session and any crash report. A notification at
+start says whether EDR, 10-bit output and the software cursor are in effect.
+Omarchy's brightness keys move the backlight as usual; the 200/500 profile
+assumes it at maximum.
+
 ## Validation and remaining work
 
 On 2026-09-22, the full build, shader checks and nested protocol/compositor
@@ -354,10 +393,8 @@ Before shipping:
   the nested compositor. Decide whether to ship an mpv source-mode setting.
   HLG, browsers, games, ICC profiles, mixed monitors and saturated wide-gamut
   colours are not validated.
-- Run the test session on the panel, including the round trip to the desktop's
-  console, then add apply/detect/remove support. No kernel or EDID override is
-  part of this prototype.
+- Start the `hdr` module's install at a real login, and try sleep with it on.
+  No kernel or EDID override is part of this work.
 
-The existing desktop remains on stock Hyprland with `cm = "dp3"`. All source,
-build and test artifacts created for this experiment were outside system
-installation paths.
+All source, build and test artifacts created for this experiment were outside
+system installation paths.

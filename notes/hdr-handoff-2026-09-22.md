@@ -316,6 +316,100 @@ measurement itself is still pending.**
 `crash-report.txt`. Then ask what the owner saw: bars 5–7 brighter than bar 4
 in PQ only, a smooth ramp, matching halves, a normal pointer.
 
+## EDR as the real desktop (2026-10-07)
+
+The owner: “let's test hdr in actual envierment”, i.e. the real desktop rather
+than the bare test session. New `experiments/hdr/desktop.py`:
+`arm BUILD_DIRECTORY` writes `~/.cache/imac5k-edr/5dfe72b/desktop/`
+(`hyprland.lua` = `dofile(~/.config/hypr/hyprland.lua)` then `edr.lua`, plus
+copies of `desktop.py`, `session.py`, `edr.lua`, and a bash `launch`) and the
+one-shot entry `~/.local/share/wayland-sessions/hyprland.desktop`. SDDM's
+autologin session `omarchy.desktop` runs `uwsm start -g -1 -e -D Hyprland
+hyprland.desktop`; uwsm resolves entries through pyxdg `load_data_paths`, user
+directory first, and bakes the resolved Exec into
+`/run/user/1000/systemd/user/wayland-wm@hyprland.desktop.service.d/50_custom.conf`
+at each start. `launch` removes the entry first (only if it carries
+`X-iMac-EDR=`), falls back to `/usr/bin/start-hyprland` if the build is
+missing, takes a sleep block inhibitor, runs `start-hyprland --path
+build/Hyprland -- --config desktop/hyprland.lua` with stdout to
+`desktop/runs/<ts>/hyprland.log` (`enable_stdout_logs`), forwards SIGTERM, then
+writes `kernel.log` and copies crash reports. On `hyprland.start` the config
+runs `desktop.py record`: `monitors.json`, `state.txt` and a notification.
+`desktop.py status` says what runs now and at the next login; `disarm`
+removes an unused entry.
+
+Checked: the config passes `--verify-config` with the patched binary and the
+owner's full Omarchy config; Hyprland's `CMonitorRuleManager::add` erases an
+earlier rule of the same name, so `edr.lua` replaces `monitors.lua`'s `dp3`
+rule. uwsm's own `find_entries`/`entry_parser_by_ids`, run with a scratch
+`XDG_DATA_HOME`, picks the shadow when present and the system entry otherwise.
+The launcher passed five stub-compositor cases (exit status passed through and
+crash report copied; SIGTERM to the whole group as the unit's
+`KillMode=control-group` does, and to the launcher alone; fallback without
+`--path`; a foreign entry left in place); the inhibitor was held during and
+gone after each. `record` and `status` on the stock desktop flag all four
+warnings. The build has the same flags as `/usr/bin/Hyprland` (XWayland,
+`USES_SYSTEMD`; `NO_UWSM` only skips installing a session file). Chromium 152
+contains the `wp_color_manager_v1` client (`kWaylandWpColorManagerV1`);
+Firefox 155 has `gfx.color_management.hdr`. Neither is tested here yet.
+
+**Armed for the owner's next login** at the end of this step. Logging out ends
+this agent's terminal; resume with `claude --continue` from the repository in
+the EDR desktop, then `python3 experiments/hdr/desktop.py status` and read the
+newest `desktop/runs/` directory.
+
+## Patcher module `hdr` (2026-10-17)
+
+The owner, from the armed EDR desktop (run `20261016-024747`, a full day,
+link-health PASS, no errors): “hdr seems to work (tested in chromium with hdr
+video), prepare an hdr patcher, it should work through imac-patcher for now
+just limited to imac 5k 2017”. Chromium 152 needed no flags beyond Omarchy's
+`chromium-flags.conf`.
+
+Design, all in `scripts/hypr-edr.py` (`status|note|apply|remove|check`):
+
+- **Build:** `build.py`'s code, moved unchanged in behaviour; the experiment's
+  `build.py` is now a shim with the same CLI and layout. The existing
+  `~/.cache/imac5k-edr/5dfe72b` still matches (`--prepare-only` accepted its
+  marker after the patch move). The module builds in
+  `~/.cache/imac-patcher/hdr/<patch sha12>`, logs to `build.log`, uses
+  `min(cpus, RAM/2 GiB)` jobs, and deletes the tree after installing; the
+  downloads stay. All build dependencies but `cmake` come with Arch's
+  `hyprland` package.
+- **Install:** binary, `hyprland.lua` (wrapper), `launch`, a copy of the helper
+  and `build.json` (version, patch hash, real paths of the libaquamarine and
+  libhypr* libraries) in `~/.local/share/imac-patcher/hdr`, and the entry
+  written last. The wrapper is verified with `--verify-config` against the
+  user's real config before anything is replaced.
+- **Login:** `launch` runs `timeout 20 python3 hypr-edr.py check`. If that
+  fails, it schedules `notify-send` with `setsid -f`, so `start-hyprland` never
+  sees it as a child, and execs stock `start-hyprland`; otherwise it runs
+  `start-hyprland --path …/Hyprland -- --config …/hyprland.lua`.
+- **uwsm:** `check_entry_basic` raises on a validation failure or a failed
+  `TryExec` (main.py:474) and does not fall back to the system entry, so the
+  entry has no `TryExec` and only valid keys. A test runs uwsm's
+  `entry_parser_by_ids` on it.
+- **Wrapper:** `hl` is a plain table (`LuaBindingsRegistration.cpp`), so
+  `hl.monitor` is wrapped before the user config loads. The user config is
+  loaded by `require("<absolute path>")`, which Hyprland's searcher hook tracks
+  for auto-reload; `dofile` is not tracked. The user's config directory is put
+  first on `package.path`. Without an eDP-1 rule, one is derived from the
+  catch-all.
+- **Status:** `partial` with reasons in the note (upgraded Hyprland, libraries,
+  older release or patch, missing entry); `hdr takes effect at your next
+  login` when applied but not running.
+
+**End-to-end in scratch dirs** (`XDG_DATA_HOME`/`XDG_CACHE_HOME` under the
+session scratchpad, downloads seeded from the verified cache, cmake from
+`~/.cache/imac5k-edr/tools/venv`): about 8 minutes, `exit 0`, owner's config
+verified, `status` → `applied`, the installed `check` → 0. The real login is
+untouched.
+
+**Next:** the owner runs `imac-patcher --apply hdr` (it offers `cmake`), logs
+out and in; then check `hyprctl -j monitors` (edr, `XRGB2101010`, the owner's
+scale) and `imac-patcher --status`. The module takes no sleep inhibitor, so
+one s2idle cycle with EDR on is the next physical test.
+
 ## Findings worth keeping
 
 - **`hl.dsp.dpms("off")` toggles.** The dispatcher reads `action` only from a
@@ -356,4 +450,4 @@ in PQ only, a smooth ramp, matching halves, a normal pointer.
 Physical run and its evidence; measured luminance/gamma/gamut; backlight-aware
 headroom; saturated-colour validation; real HDR apps (e.g. `mpv --vo=gpu-next`
 in the session), HLG, ICC and mixed monitors; screenshots; recovery after
-suspend; patcher integration (apply/detect/remove).
+suspend; the `hdr` module's first real login (see above).

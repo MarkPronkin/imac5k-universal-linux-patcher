@@ -9,8 +9,9 @@
 #   mod_<id>_remove                  undo it
 #
 # Tiers:
-#   safe   included by the "safe" batch selector
-#   boot   touches boot config or GPU driver    (flagged, prints recovery first)
+#   safe          included by the "safe" batch selector
+#   boot          touches boot config or GPU driver (flagged, prints recovery first)
+#   experimental  only when named or picked; never in the "safe" or "all" batches
 #
 # Usage:
 #   imac-patcher                 interactive
@@ -103,7 +104,7 @@ XHCI_FIX_MODULES_DIR=/usr/lib/modules
 # this machine the same way suspend does.
 HIBERNATE_HOOK_CONF=/etc/mkinitcpio.conf.d/omarchy_resume.conf
 HIBERNATE_DROPIN="${LIMINE_DROPIN_DIR}/resume.conf"
-MODULES=(audio eq t2speakers color suspend t2suspend boot macos 5k)
+MODULES=(audio eq t2speakers color suspend t2suspend boot macos 5k hdr)
 
 HAVE_GUM=0; command -v gum >/dev/null && HAVE_GUM=1
 say()  { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
@@ -127,13 +128,14 @@ Usage: imac-patcher [--force] [COMMAND]
   (no command)          open the interactive menu
   --status              show the state of every module
   --apply <id...|safe|all>  apply modules: safe covers the safe tier; all covers
-                            everything not yet applied, boot tier included (5k)
+                            everything not yet applied, boot tier included (5k),
+                            but not the experimental hdr
   --remove <id...|safe>  remove modules, or all modules currently in the safe tier
   --version             show the installed release or checkout version
   upgrade               install the newest release of the tool
   -h, --help            show this help
 
-Module IDs: audio eq t2speakers color suspend t2suspend boot macos 5k
+Module IDs: audio eq t2speakers color suspend t2suspend boot macos 5k hdr
   suspend holds the iMac18,3's sleep fixes: it allows suspend and blocks
   hibernate; it is experimental, and n/a on other models.
   t2suspend does the same on T2 models (iMac Pro, 2020 iMacs), following
@@ -141,6 +143,8 @@ Module IDs: audio eq t2speakers color suspend t2suspend boot macos 5k
   t2speakers enables all four iMac Pro speakers; it is n/a on other models.
   macos exposes the Intel iGPU and the working backlight on iMac18,3 with
   Omarchy/Limine or Arch-family GRUB (GRUB untested); n/a everywhere else.
+  hdr builds a patched Hyprland that shows HDR video and highlights on the
+  iMac18,3 under Omarchy; experimental, so apply it by name.
 
 --force may appear anywhere. It bypasses only the Retina 5K model gate;
 individual module compatibility checks still apply. Run as your desktop user.
@@ -2534,6 +2538,69 @@ if imac_is_fedora; then source "${SCRIPT_DIR}/lib/fedora.sh"; fi
 if imac_is_arch_grub; then source "${SCRIPT_DIR}/lib/arch-grub.sh"; fi
 if imac_is_kde; then source "${SCRIPT_DIR}/lib/kde.sh"; fi
 
+# ═══════════════════════ module: hdr ═══════════════════════════════════════
+# HDR the way macOS shows it on this panel (EDR): the panel takes no PQ signal,
+# so a patched Hyprland renders HDR content into its P3/gamma 2.2 output with
+# desktop white below the panel's peak. Everything lives in the user's home:
+# the build in ~/.local/share/imac-patcher/hdr, started through a user-level
+# hyprland.desktop that shadows the system one uwsm runs at login. The
+# launcher checks the build before every login and starts the stock
+# compositor instead once Hyprland or its libraries have been upgraded.
+# Experimental: never part of the safe or all batches. Logic in hypr-edr.py.
+mod_hdr_title() { echo "HDR desktop (EDR)"; }
+mod_hdr_tier()  { echo experimental; }
+mod_hdr_desc()  { echo "Experimental. Builds Hyprland ${HDR_HYPRLAND_VERSION} with imac-patcher's EDR patch, which shows HDR video and images — Chromium and mpv, verified on the iMac18,3 — the way macOS does on this panel: desktop white sits at an estimated 200 of the panel's 500 nits and HDR highlights use the rest, so ordinary windows look dimmer and the brightness belongs at maximum. Also turns the panel to 10-bit output. Nothing system-wide changes: the compositor goes into ~/.local/share/imac-patcher/hdr and a user-level session entry starts it at each login, with your own Hyprland configuration unchanged apart from the built-in display's colour mode. Logins check the build first and fall back to the stock compositor, with a notification, once Hyprland is upgraded. The build takes about ten minutes and needs CMake. Sleep with it on is untested. iMac18,3 under Omarchy only."; }
+HDR_HYPRLAND_VERSION=0.56.2
+
+hdr_run() {   # $1 = status|note|apply|remove
+    python3 "$SCRIPT_DIR/hypr-edr.py" "$1" --model "${product:-$(imac_product_name)}"
+}
+mod_hdr_detect() {
+    if ! command -v python3 >/dev/null; then
+        local data=${XDG_DATA_HOME:-$HOME/.local/share}
+        if grep -qs '^X-iMac-Patcher-HDR=' "$data/wayland-sessions/hyprland.desktop" || [[ -d $data/imac-patcher/hdr ]]; then
+            echo partial
+        elif imac_hdr_supported; then echo not-applied
+        else echo n/a; fi
+        return
+    fi
+    hdr_run status
+}
+# The compiler and build tools, offered as packages; the Hyprland libraries
+# and headers it builds against come with the hyprland package itself.
+hdr_build_tools() {
+    local tool pkg missing=() packages=() installer=()
+    for tool in cmake gcc g++ make patch pkg-config; do
+        command -v "$tool" >/dev/null || missing+=("$tool")
+    done
+    ((${#missing[@]})) || return 0
+    for tool in "${missing[@]}"; do
+        pkg="$(imac_tool_package "$tool")"
+        [[ " ${packages[*]} " == *" $pkg "* ]] || packages+=("$pkg")
+    done
+    read -ra installer <<<"$(imac_pkg_installer)"
+    ((${#installer[@]})) || { warn "install these, then apply hdr again: ${packages[*]}"; return 1; }
+    say "building HDR needs ${missing[*]}"
+    confirm "Install ${packages[*]} now?" || { warn "hdr needs ${packages[*]}"; return 1; }
+    "${installer[@]}" "${packages[@]}" || { warn "installing ${packages[*]} failed"; return 1; }
+    hash -r
+}
+mod_hdr_apply() {
+    imac_hdr_supported || { warn "HDR (EDR) is built for the iMac18,3 panel only."; return 1; }
+    command -v python3 >/dev/null || { warn "python3 is required for hdr"; return 1; }
+    hdr_build_tools || return 1
+    hdr_run apply
+}
+mod_hdr_remove() {
+    command -v python3 >/dev/null || { warn "python3 is required for hdr"; return 1; }
+    hdr_run remove
+}
+hdr_note() {   # $1 = hdr state from the current status snapshot
+    [[ ${1:-} == applied || ${1:-} == partial ]] || return 0
+    command -v python3 >/dev/null || return 0
+    hdr_run note
+}
+
 # ── generic driver ─────────────────────────────────────────────────────────
 # One snapshot for the status display and its following menu. Actions always
 # probe again in run_module: applying audio can change EQ's live prerequisites.
@@ -2588,7 +2655,9 @@ show_status() {
         # runners keep a complete snapshot; only the display hides a speaker
         # fix built for another model. The apply picker already skips n/a.
         mod_visible "$m" || continue
-        badge=''; [[ $tier == boot ]] && badge=$'\033[0;33m[boot]\033[0m'
+        badge=''
+        [[ $tier == boot ]] && badge=$'\033[0;33m[boot]\033[0m'
+        [[ $tier == experimental ]] && badge=$'\033[0;35m[experimental]\033[0m'
         printf '  %-32s %-22b %s\n' "$("mod_${m}_title")" "$(state_label "$st")" \
             "$badge"
     done
@@ -2597,6 +2666,7 @@ show_status() {
     startup_deps_note
     eq_prereq_note "${MODULE_STATES[eq]:-n/a}"
     macos_range_note "${MODULE_STATES[macos]:-n/a}"
+    hdr_note "${MODULE_STATES[hdr]:-n/a}"
     return "$result"
 }
 
@@ -2670,6 +2740,8 @@ startup_deps_note() {
                     [[ -f $LIMINE_DEFAULT ]] || continue
                     tools=(limine-mkinitcpio mkinitcpio objcopy python3 udevadm systemctl)
                 fi ;;
+            # Experimental and opt-in: its apply offers its own build tools.
+            hdr) continue ;;
             5k)
                 [[ ${MODULE_STATES[$id]} == n/a ]] && continue
                 tools=(gcc make ld strip objcopy bc pahole flex bison patch xz curl tar modinfo depmod python3)
@@ -2813,12 +2885,13 @@ run_safe_modules() {
     return "$result"
 }
 
-# Everything applicable, every tier — run_module skips the already-applied and
-# n/a ones, so this is the "finish my half-done install" batch. Order stays the
-# MODULES order, so the long 5K build runs last.
+# Everything applicable but the experimental tier — run_module skips the
+# already-applied and n/a ones, so this is the "finish my half-done install"
+# batch. Order stays the MODULES order, so the long 5K build runs last.
 run_all_modules() {
     local m result=0
     for m in "${MODULES[@]}"; do
+        [[ $("mod_${m}_tier") == experimental ]] && continue
         run_module apply "$m" || result=1
     done
     return "$result"
@@ -2954,7 +3027,10 @@ case "$sel" in
         ids=(); avail=(); for m in "${MODULES[@]}"; do
             st=${MODULE_STATES[$m]}; [[ $st == applied || $st == n/a ]] && continue
             ids+=("$m")
-            avail+=("${m} — $("mod_${m}_title")$([[ ${MODULE_TIERS[$m]} == boot ]] && echo '  [boot]')")
+            badge=''
+            [[ ${MODULE_TIERS[$m]} == boot ]] && badge='  [boot]'
+            [[ ${MODULE_TIERS[$m]} == experimental ]] && badge='  [experimental]'
+            avail+=("${m} — $("mod_${m}_title")${badge}")
         done
         (( ${#avail[@]} )) || { say "everything applicable is already applied"; exit 0; }
         # The picker gathers the whole selection before anything runs, so module

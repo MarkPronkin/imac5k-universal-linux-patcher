@@ -90,6 +90,23 @@ run_module apply audio
         self.assertIn("detection failed", result.stdout)
         self.assertIn("EQ", result.stdout)
 
+    def test_experimental_tier_runs_only_when_named(self):
+        result = self.run_shell('''
+mod_eq_tier() { echo experimental; }
+run_module() { echo "RUN $*"; }
+run_all_modules
+run_safe_modules apply
+run_modules apply eq
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["RUN apply audio", "RUN apply audio", "RUN apply eq"])
+
+    def test_status_flags_the_experimental_tier(self):
+        result = self.run_shell("mod_eq_tier() { echo experimental; }\nshow_status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "EQ" in line)
+        self.assertIn("[experimental]", line)
+
     def test_duplicate_modules_run_only_once(self):
         result = self.run_shell('run_module() { echo "RUN $*"; }; run_modules apply audio audio eq')
         self.assertEqual(result.returncode, 0)

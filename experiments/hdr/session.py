@@ -18,7 +18,8 @@ import subprocess
 import time
 
 HERE = Path(__file__).resolve().parent
-PATCH = 'hyprland-0.56.2-edr.patch'
+# Absolute, so HERE / PATCH is the patch itself; it exists only in a checkout.
+PATCH = HERE.parents[1] / 'patches/hyprland-0.56.2-edr.patch'
 
 CONFIG = '''\
 -- Physical EDR test session, written by session.py stage. For the patched

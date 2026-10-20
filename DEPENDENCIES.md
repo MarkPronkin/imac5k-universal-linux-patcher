@@ -326,6 +326,30 @@ after upgrading from an older GRUB, run your `grub-install` command again.
 
 N/A on every model but iMac18,3, and on Fedora. See docs/macos-mode.md.
 
+## HDR module (experimental tier, iMac18,3; Hyprland 0.56.2 under uwsm)
+
+| Tool | Arch package | Fedora package |
+|---|---|---|
+| cmake (3.30 or newer) | cmake | — |
+| gcc, g++, make | base-devel | — |
+| patch | patch | — |
+| pkg-config | pkgconf | — |
+| python3 | python | — |
+| uwsm, start-hyprland | uwsm, hyprland | — |
+
+The module offers the build tools when it is applied; the startup audit leaves
+them out, since the module is opt-in. Everything Hyprland links against, with
+its headers, comes with Arch's `hyprland` package (hyprwayland-scanner, glslang
+and wayland-protocols included); `hyprland-protocols`, `udis86` and Glaze are
+downloaded with the pinned sources. The system's Hyprland must be 0.56.2, the
+version the patch is for. The build needs network access, about 10 minutes and
+about 450 MB in `~/.cache`. At each login the launcher needs `python3`, `ldd`
+(glibc), `timeout` and `setsid`, and `notify-send` for its fallback
+notification.
+
+N/A on every model but iMac18,3, and wherever the desktop is not Hyprland
+started through uwsm. See docs/hdr.md.
+
 ## scripts/verify.sh (optional probes)
 
 The baseline probes use `lspci`, `modinfo`, `nmcli`, and `ip`, alongside standard
@@ -339,4 +363,6 @@ Run `./scripts/check.sh` from a repository checkout. It needs Bash, Python 3
 (standard library only), Git, curl, and the GNU archive/core utilities used by
 the release tests. It does not need kernel headers, a compiler, a display or
 audio session, or root. The additional isolated startup tests need `bubblewrap`
-and working Linux user namespaces. See the [development guide](docs/development.md).
+and working Linux user namespaces. The HDR wrapper tests need a Lua interpreter, and
+the HDR session-entry test uses uwsm's own validation; both are skipped when
+absent. See the [development guide](docs/development.md).

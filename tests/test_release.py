@@ -132,6 +132,9 @@ class ReleaseTests(unittest.TestCase):
                        "assets/imac-audio/iMacAudio-legacy.conf",
                        # MIT requires its notice to travel with the copies.
                        "assets/imac-audio/LICENSE",
+                       # hdr builds from its patch next to the helper; the
+                       # experiments/ copy it came from is not shipped.
+                       "scripts/hypr-edr.py", "patches/hyprland-0.56.2-edr.patch",
                        "configs/monitors.lua", "patches/imac5k-lean-core-7.2.x.patch"):
             self.assertIn(needed, names)
         for excluded in ("TODO.md", "notes", "tests"):

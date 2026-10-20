@@ -68,6 +68,10 @@ imac_t2speakers_supported() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 
 # an iGPU (15,1 Haswell, 17,1 Skylake, 19,1 Coffee Lake, 20,x Comet Lake), but
 # each one needs its own VBT, PCI addresses and ACPI table shape checked first.
 imac_macos_mode_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
+# HDR (EDR): iMac18,3 only. Its 500-nit/200-nit profile, the panel's P3 and
+# gamma 2.2 EDID and the 10-bit output of the stitched panel were checked on
+# that machine and nowhere else; other panels need their own profile first.
+imac_hdr_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 
 # Vega 10 / DCE 12 (iMac Pro): the tile pair latches only when the stream is
 # brought up at the panel's native 10 bpc. Hyprland's default 8 bpc leaves the
@@ -116,6 +120,8 @@ imac_tool_package() {   # $1 = command name
             ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
             modinfo|depmod|lsmod|modprobe) echo kmod ;;
             pahole)                 echo dwarves ;;
+            g++)                    echo gcc-c++ ;;
+            pkg-config)             echo pkgconf-pkg-config ;;
             iasl)                   echo acpica-tools ;;
             rpmbuild)               echo rpm-build ;;
             pactl)                  echo pulseaudio-utils ;;
@@ -132,7 +138,8 @@ imac_tool_package() {   # $1 = command name
         return
     fi
     case $1 in
-        gcc|make|ld|strip|objcopy|flex|bison) echo base-devel ;;
+        gcc|g++|make|ld|strip|objcopy|flex|bison) echo base-devel ;;
+        pkg-config)             echo pkgconf ;;
         modinfo|depmod|lsmod|modprobe) echo kmod ;;
         pactl)                  echo libpulse ;;
         pw-cli|pw-dump)         echo pipewire ;;
