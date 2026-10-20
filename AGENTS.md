@@ -1,5 +1,42 @@
 # Current work checkpoint
 
+**Release 0.3.0-alpha to `main` (2026-10-20):** the owner asked for a new
+release "with the stuff from hdr and test branch, to main", as 0.3.0-alpha.
+On `test`: the #12 Fedora 7.2.9+ fix (`f36c1cf`) and the `hdr` module
+(`6878431`) committed, then the release record. `main` is fast-forwarded to
+`test`; local `main`'s unpushed `bd139a7` was the same Ahmad credit `test`
+already has. `v0.2.6-alpha` stays a draft, superseded. The external-display
+notes stay uncommitted. Read
+[the release record](notes/release-0.3.0-alpha-2026-10-20.md) for validation
+and publication.
+
+**HDR patcher module (2026-10-17):** committed on `test` as `6878431` and
+released in 0.3.0-alpha. The owner: "hdr seems to
+work (tested in chromium with hdr video), prepare an hdr patcher, it should
+work through imac-patcher for now just limited to imac 5k 2017". New module
+`hdr`, the only one in the new `experimental` tier, which `safe` and `all`
+both skip. Gated to iMac18,3 (`imac_hdr_supported`) with a Lua Hyprland
+config, `start-hyprland` and uwsm; apply refuses any Hyprland but 0.56.2.
+Logic is in `scripts/hypr-edr.py`. The build code was moved there from
+`experiments/hdr/build.py`, now a shim, and the patch went to
+`patches/hyprland-0.56.2-edr.patch` (staged `git mv`), because releases do
+not ship `experiments/`. It installs to `~/.local/share/imac-patcher/hdr` plus
+a persistent user `hyprland.desktop` with `X-iMac-Patcher-HDR=1` and no
+`TryExec`: uwsm fails the login on a rejected entry. The launcher runs `check`
+at every login and falls back to stock start-hyprland, with a notification,
+if stock Hyprland is not 0.56.2 or the Hypr libraries' real paths changed.
+The wrapper config wraps `hl.monitor`, so the user's eDP-1 rule keeps its
+fields and gains cm/bitdepth/supports_hdr; user luminances win. No sleep
+inhibitor, unlike `desktop.py`. Validation: 30 new tests (Lua wrapper in real
+Lua 5.5, launcher, states, apply/remove, uwsm's own entry validation);
+18 mutations caught. Also an end-to-end apply into a scratch
+XDG_DATA_HOME/XDG_CACHE_HOME with the venv cmake: built, verified the owner's
+real config, `status` applied, installed `check` passes. The full suite ran
+575 tests with one PipeWire-timing failure under build load; it passes alone.
+**Not yet done:** the owner's real `imac-patcher --apply hdr` (it offers
+`cmake`, which needs sudo) and a login with it; sleep with EDR on. User doc:
+[docs/hdr.md](docs/hdr.md); details in the HDR handoff's newest section.
+
 **HDR / EDR test build (2026-09-22, 04:00 CEST):** developed on an
 `hdr` branch from `test` at `52dd6e8`; prototype `5dfe72b`. The
 owner's requested build is staged as a physical test session, run from a text
@@ -11,9 +48,25 @@ Super+5 plays it; **physical video test pending**. The second run's exit exposed
 aquamarine 0.15.0 segfault in `~CDRMBackend` that also hits the desktop at
 every shutdown: upstream #383, harmless, **on hold** at the owner's request
 (README known issue, `TODO.md` entry). On 2026-10-06 the HDR work was
-moved to `test` and pushed; the `hdr` branch is deleted. The desktop remains stock `dp3`/8-bit. Read
+moved to `test` and pushed; the `hdr` branch is deleted. The desktop remains stock `dp3`/8-bit, but on
+2026-10-07 the owner asked to test EDR in the real desktop: new
+`experiments/hdr/desktop.py arm` makes the next login (only) run the patched
+compositor with the owner's own config plus `edr.lua`, through a self-removing
+`~/.local/share/wayland-sessions/hyprland.desktop`; logs go to
+`~/.cache/imac5k-edr/5dfe72b/desktop/runs/`. Read
 [the HDR handoff](notes/hdr-handoff-2026-09-22.md). Preserve the owner's
 uncommitted external-display notes.
+
+**External display on DP (2026-09-22):** not committed. The owner's black
+USB-C monitor on the Thunderbolt port was a **faulty monitor** (it fails on
+a MacBook too), not the patch: the external stream was verified clean at the
+register level. The owner's #5 comment blaming the patch for second-display
+problems rests on that monitor; #5's own symptom (right tile lost after the
+session picks up an external display) stays open. Read from the source: on
+DCE 11.2 the per-frame genlock arms nothing and the deferred
+settle-and-resync most likely aligns nothing. See
+[the investigation note](notes/external-display-dp-2026-09-22.md), plus the
+new read-only `notes/dce112-display-state.sh` and `notes/atomdis.py`.
 
 **Sleep split into two modules (2026-09-21):** committed on `test` and
 pushed to `origin/test`. The
