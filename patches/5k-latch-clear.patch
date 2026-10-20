@@ -246,17 +246,15 @@ No-op on hardware without the tiled-panel quirk.
  void link_blank_all_dp_displays(struct dc *dc)
  {
  	unsigned int i;
-@@ -2244,6 +2305,10 @@
+@@ -2244,4 +2305,8 @@
  	update_psp_stream_config(pipe_ctx, true);
  	dc->hwss.blank_stream(pipe_ctx);
- 
++
 +	/* Stream is dark now and the link is still up: return the Apple 5K
 +	 * panel latch to its cold-boot state before the link goes away. */
 +	dp_write_tiled_stream_disable_latch(link);
-+
- 	if (pipe_ctx->link_config.dp_tunnel_settings.should_use_dp_bw_allocation)
- 		deallocate_usb4_bandwidth(pipe_ctx->stream);
  
+ 	if (pipe_ctx->link_config.dp_tunnel_settings.should_use_dp_bw_allocation)
 --- a/drivers/gpu/drm/amd/display/dc/link/link_detection.c
 +++ b/drivers/gpu/drm/amd/display/dc/link/link_detection.c
 @@ -1692,6 +1692,20 @@

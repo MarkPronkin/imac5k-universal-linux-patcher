@@ -106,6 +106,21 @@ at `--fuzz=0` to pristine 7.2.5 and their `amdgpu.ko` builds against the
 `7.2.5-3-omarchy` headers; the changed `amdgpu_dm_helpers.c` hunks also apply to
 7.2.2–7.2.4, and the lean ones to 7.1.9 and 7.1.13.
 
+### 7.2.9+ context (`link_set_dpms_off()` cleanup)
+
+Linux 7.2.9 rewrote `link_set_dpms_off()` to use local `stream`/`link`
+variables, so `deallocate_usb4_bandwidth(pipe_ctx->stream)` became
+`deallocate_usb4_bandwidth(stream)`. That line was trailing context of the
+stream-disable latch hunk in both the lean core and `5k-latch-clear.patch`, so
+Fedora `7.2.9-200.fc44` stopped with `Hunk #4 FAILED` (issue #12). Both hunks
+now anchor on two stable lines either side; the patched code is unchanged and
+byte-identical to before on 7.1.13, 7.2.2, 7.2.5 and 7.2.8. Both full stacks
+apply at `--fuzz=0` to pristine 7.2.2 through 7.2.11 and to Fedora
+`7.2.9-201.fc44`, whose Fedora patch carries early 7.2.10 amd backports
+(`7.2.9-200`, `7.2.10-200` and `7.2.11-200` have no Fedora amd changes).
+The lean stack's `amdgpu.ko` builds without warnings on Fedora `7.2.10-200`
+source with its config and `kernel-devel` `Module.symvers`. Not booted there.
+
 ## Lean mainline candidate: `imac5k-lean-core-7.2.x.patch`
 
 The upstream candidate: taprobane99's mechanism, reworked. **+355 code / +89
