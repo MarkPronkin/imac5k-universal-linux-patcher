@@ -23,7 +23,7 @@ installation using dracut, systemd-boot or only UKIs needs a different boot
 backend. The patcher does not convert those installations. Boot repair
 (`boot`) remains specific to Omarchy/Limine and reports **n/a** on GRUB.
 macOS mode (`macos`) is available on this backend; see
-[below](#macos-mode-the-igpu-and-brightness).
+[below](#macos-mode-brightness-with-intel-graphics-disabled).
 
 Detection prefers Fedora’s backend first, then `/etc/default/limine`, then
 Arch-family `/etc/default/grub`. If both bootloader configs exist, Limine wins.
@@ -68,12 +68,13 @@ and keeps the kernel's sleep mode. The 2014-2015 models sleep with the stock
 kernel and need neither. Read the suspend section of the
 [README](../README.md) before applying either.
 
-## macOS mode: the iGPU and brightness
+## macOS mode: brightness with Intel graphics disabled
 
 On the iMac18,3, `imac-patcher --apply macos` works on this backend too. The
-Intel HD 630 is exposed for video, and the brightness keys dim the panel, over
-its full range where the ACPI table can be rebuilt. It installs what it does
-on Omarchy (see [macOS mode](macos-mode.md#on-arch-family-grub)), with three
+brightness keys dim the panel over its full range where the ACPI table can
+be rebuilt, while `i915` is blocked so the Intel GPU exposes no graphics or
+video device. NVRAM brightness saving is retained. It installs what it does
+on Omarchy (see [macOS mode](macos-mode.md#boot-configuration)), with three
 differences:
 
 - The mkinitcpio hook edits `/boot/vmlinuz-<pkgbase>`, the image GRUB loads,
@@ -96,7 +97,7 @@ counts as the running one for the 5K preflight and the test-entry helpers
 below.
 
 If the desktop does not come back, press `e` at the GRUB menu, append
-`module_blacklist=i915` to the line that starts with `linux`, and boot with
+`module_blacklist=i915,i2c_i801` to the line that starts with `linux`, and boot with
 ctrl-x. This path has offline test coverage only and has not been booted on
 hardware yet.
 

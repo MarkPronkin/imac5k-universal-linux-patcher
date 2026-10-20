@@ -55,7 +55,7 @@ mod_5k_desc() { echo "Wakes the panel's second tile, stitches both into one 5120
 # has to be taken back out explicitly: rebuilding the initramfs never re-copies
 # the kernel. The parameters go in GRUB_CMDLINE_LINUX, which recovery entries
 # read too, because every entry boots the same edited image.
-mod_macos_desc() { echo "Makes the kernel tell Apple's firmware that macOS is starting, as it already does for some MacBook Pros. That exposes the Intel HD 630 the firmware otherwise hides, which then encodes and decodes video for every app that takes the first GPU (H.264 about 3.7x faster than the Radeon, plus VP9 and HEVC 10-bit), and it makes the brightness slider actually dim the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. The Radeon keeps the display and all 3D. A mkinitcpio hook makes the edit in the kernel image GRUB loads and repeats it after every kernel update; the parameters go in GRUB_CMDLINE_LINUX. Needs GRUB 2.12 or newer installed for UEFI, which starts the kernel through its EFI stub. Verified on an iMac18,3 under Omarchy/Limine; the GRUB path is untested on hardware."; }
+mod_macos_desc() { echo "Enables Apple's firmware backlight path so the brightness slider dims the panel, with the full-range brightness table where iasl is available and NVRAM brightness saving at shutdown. Blocks i915 so the Intel iGPU exposes no graphics or video-acceleration device; the Radeon handles display, desktop and video. A mkinitcpio hook makes the firmware edit in the kernel image GRUB loads and repeats it after every kernel update; the parameters go in GRUB_CMDLINE_LINUX. Needs GRUB 2.12 or newer installed for UEFI. The GRUB path is untested on hardware."; }
 macos_boot_image() {
     local pkgbase
     pkgbase=$(imac_kernel_pkgbase "$KREL") || return 1
@@ -81,13 +81,15 @@ macos_cmdline_present() {
 # an edited kernel booting without them.
 macos_add_cmdline() {
     local opts=()
+    # Replace the old blacklist rather than appending a second value.
+    grub_cmdline_remove module_blacklist=i2c_i801 || return 1
     read -ra opts <<< "$MACOS_OPTS"
     grub_cmdline_add_linux "${opts[@]}" && macos_verify_cmdline present
 }
 macos_remove_cmdline() {
     local opts=()
     read -ra opts <<< "$MACOS_OPTS"
-    grub_cmdline_remove "${opts[@]}"
+    grub_cmdline_remove "${opts[@]}" module_blacklist=i2c_i801
 }
 # All four, token by token: the mark the Limine drop-in is found by is only a
 # prefix of one of them, and a GRUB entry is compared by whole tokens.

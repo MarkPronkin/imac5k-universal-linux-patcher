@@ -48,6 +48,8 @@ product=iMac18,3
 KREL=test
 hdr() { :; }
 startup_deps_note() { :; }
+macos_range_note() { :; }
+hdr_note() { :; }
 say() { printf '%s\n' "$*"; }
 mod_5k_detect() { echo PROBE_5K >&2; echo not-applied; }
 mod_5k_title() { echo 'Native 5K display'; }
@@ -160,6 +162,57 @@ run_module() { echo "RUN $*"; [[ $2 != color ]]; }
         self.assertIn("RUN apply color", result.stdout)
         # Unlike the safe batch, the boot-tier 5k module runs too.
         self.assertIn("RUN apply 5k", result.stdout)
+
+    @staticmethod
+    def experimental_mocks(state="not-applied"):
+        return '''
+MODULES=(audio 5k hdr)
+mod_audio_title() { echo Audio; }
+mod_audio_tier() { echo safe; }
+mod_audio_detect() { echo not-applied; }
+mod_hdr_title() { echo HDR; }
+mod_hdr_tier() { echo experimental; }
+mod_hdr_detect() { echo ''' + state + '''; }
+run_module() { echo "RUN $*"; }
+'''
+
+    def test_non_experimental_batch_sits_below_safe_and_skips_hdr(self):
+        result = self.run_menu("", choice="2\n", picks="", extra=self.experimental_mocks())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stderr, r"1\) Apply all safe patches[^\n]*\n2\) Apply all non-experimental patches")
+        runs = [line for line in result.stdout.splitlines() if line.startswith("RUN ")]
+        self.assertEqual(runs, ["RUN apply audio", "RUN apply 5k"])
+
+    def test_non_experimental_option_is_hidden_without_experimental_modules(self):
+        result = self.run_menu("", choice="5\n", picks="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Apply all non-experimental patches", result.stdout + result.stderr)
+
+    def test_non_experimental_option_is_hidden_when_hdr_is_unavailable(self):
+        result = self.run_menu("", choice="5\n", picks="", extra=self.experimental_mocks("n/a"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Apply all non-experimental patches", result.stdout + result.stderr)
+
+    def test_non_experimental_option_remains_when_hdr_is_installed(self):
+        for state in ("applied", "partial"):
+            with self.subTest(state=state):
+                result = self.run_menu("", choice="6\n", picks="", extra=self.experimental_mocks(state))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("2) Apply all non-experimental patches", result.stderr)
+
+    def test_gum_shows_the_same_order_and_dispatches_the_new_batch(self):
+        result = self.run_menu("", choice="", picks="", extra=self.experimental_mocks() + '''
+HAVE_GUM=1
+gum() {
+    [[ $1 == choose ]] || return 1
+    printf '%s\\n' "${@:2}" >&2
+    echo 'Apply all non-experimental patches'
+}
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Apply all safe patches\nApply all non-experimental patches\nApply all patches", result.stderr)
+        runs = [line for line in result.stdout.splitlines() if line.startswith("RUN ")]
+        self.assertEqual(runs, ["RUN apply audio", "RUN apply 5k"])
 
     def test_safe_batch_retains_failure_after_a_later_success(self):
         result = self.run_menu("", choice="1\n", picks="", extra='''

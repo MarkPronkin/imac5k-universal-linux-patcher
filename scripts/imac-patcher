@@ -141,7 +141,7 @@ Module IDs: audio eq t2speakers color suspend t2suspend boot macos 5k hdr
   t2suspend does the same on T2 models (iMac Pro, 2020 iMacs), following
   t2linux; untested on hardware. The 2014-2015 models need neither.
   t2speakers enables all four iMac Pro speakers; it is n/a on other models.
-  macos exposes the Intel iGPU and the working backlight on iMac18,3 with
+  macos enables the working backlight while blocking Intel graphics on iMac18,3 with
   Omarchy/Limine or Arch-family GRUB (GRUB untested); n/a everywhere else.
   hdr builds a patched Hyprland that shows HDR video and highlights on the
   iMac18,3 under Omarchy; experimental, so apply it by name.
@@ -1883,8 +1883,8 @@ mod_boot_remove() {
 # changes two things: the firmware stops hiding the Intel HD 630 at 00:02.0,
 # and its own ACPI backlight path starts driving the panel, so acpi_video0
 # finally dims it instead of accepting writes and doing nothing. The Radeon
-# keeps the display, the compositor and all 3D; the Intel chip only encodes
-# and decodes video, the way macOS runs it (0 framebuffers, Quick Sync).
+# keeps the display, the compositor and video. Block i915 so the firmware's
+# visible PCI function does not become a graphics or video-acceleration device.
 #
 # The model list is a char[][15] stored uncompressed in the stub, so a
 # mkinitcpio post hook rewrites its last slot in every UKI mkinitcpio builds.
@@ -1910,8 +1910,9 @@ MACOS_DROPIN="${LIMINE_DROPIN_DIR}/imac5k-macos.conf"
 # because in macOS mode the firmware drives the backlight over that SMBus
 # itself and inhibits the driver; 62-imac-smbus-acpi.rules re-enables the
 # controller's decoding so those firmware writes still land.
-MACOS_OPTS="snd_hda_core.gpu_bind=0 i915.disable_display=1 i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801"
-MACOS_OPTS_MARK='i915.vbt_firmware=imac18-3'
+MACOS_LEGACY_OPTS="snd_hda_core.gpu_bind=0 i915.disable_display=1 i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801"
+MACOS_OPTS="snd_hda_core.gpu_bind=0 i915.disable_display=1 i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i915,i2c_i801"
+MACOS_OPTS_MARK='module_blacklist=i915,i2c_i801'
 MACOS_VBT_DIR=/usr/lib/firmware/imac18-3
 MACOS_VBT="${MACOS_VBT_DIR}/headless-vbt.bin"
 MACOS_RULES=(61-imac-dri-names.rules 62-imac-smbus-acpi.rules)
@@ -1925,9 +1926,9 @@ MACOS_HYPR="${HOME}/.config/hypr/imac-gpu.lua"
 MACOS_HYPR_MAIN="${HOME}/.config/hypr/hyprland.lua"
 MACOS_IGPU=/sys/bus/pci/devices/0000:00:02.0
 
-mod_macos_title() { echo "macOS mode: iGPU & brightness"; }
+mod_macos_title() { echo "macOS mode: brightness (iGPU disabled)"; }
 mod_macos_tier()  { echo boot; }
-mod_macos_desc()  { echo "Makes the kernel tell Apple's firmware that macOS is starting, as it already does for some MacBook Pros. That exposes the Intel HD 630 the firmware otherwise hides, which then encodes and decodes video for every app that takes the first GPU (H.264 about 3.7x faster than the Radeon, plus VP9 and HEVC 10-bit), and it makes the brightness slider actually dim the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. The Radeon keeps the display and all 3D. One mkinitcpio hook keeps the edit through kernel updates, so the boot menu is unchanged. Ported from ahmadtv/omarchy-imac18-3 and verified on an iMac18,3 under Omarchy, including two s2idle cycles in one boot."; }
+mod_macos_desc()  { echo "Makes the kernel tell Apple's firmware that macOS is starting so the brightness slider actually dims the panel — over the full range where the ACPI table can be rebuilt, which needs iasl. Saves brightness to Apple NVRAM at shutdown. Blocks i915 so the Intel iGPU exposes no graphics or video-acceleration device; the Radeon handles the display, desktop and video. One mkinitcpio hook keeps the firmware edit through kernel updates, so the boot menu is unchanged. Ported from ahmadtv/omarchy-imac18-3. The firmware brightness path was verified on an iMac18,3 under Omarchy; the iGPU-disabled configuration needs a reboot after applying."; }
 
 # The drop-in asks for the acpi_override hook only when the brightness table
 # was actually built: a hook with no .aml fails every later initramfs build.
@@ -1964,9 +1965,12 @@ macos_image_lists_model() {
 macos_restore_images() { return 0; }
 macos_cmdline_present() { boot_config_has "$MACOS_OPTS_MARK"; }
 macos_add_cmdline() {
+    # Retire both the previous drop-in and the original in-place layout.
+    # Leaving the old module_blacklist= token beside the new one is ambiguous.
+    macos_remove_cmdline || return 1
     sudo mkdir -p "$LIMINE_DROPIN_DIR" || return 1
     printf '%s\n%s\n%s\n' \
-        '# Written by imac-patcher (macOS mode: Intel video and brightness).' \
+        '# Written by imac-patcher (macOS mode: brightness, Intel graphics disabled).' \
         '# Delete this file to drop the parameters, or run: imac-patcher --remove macos' \
         "KERNEL_CMDLINE[default]+=\" ${MACOS_OPTS}\"" \
         | sudo tee "$MACOS_DROPIN" >/dev/null || return 1
@@ -1975,9 +1979,9 @@ macos_add_cmdline() {
 macos_remove_cmdline() {
     sudo rm -f "$MACOS_DROPIN" || return 1
     # Older layouts appended the parameters straight into /etc/default/limine.
-    if grep -qs -- "$MACOS_OPTS_MARK" "$LIMINE_DEFAULT"; then
+    if grep -qs -- 'i915.vbt_firmware=imac18-3' "$LIMINE_DEFAULT"; then
         sudo cp "$LIMINE_DEFAULT" "${LIMINE_DEFAULT}.backup-unmacos-$(date +%s)" || return 1
-        sudo sed -i "s| ${MACOS_OPTS}||" "$LIMINE_DEFAULT" || return 1
+        sudo sed -i -e "s| ${MACOS_OPTS}||g" -e "s| ${MACOS_LEGACY_OPTS}||g" "$LIMINE_DEFAULT" || return 1
     fi
 }
 macos_verify_cmdline() {   # present|absent
@@ -2002,7 +2006,9 @@ mod_macos_detect() {
     macos_initramfs_conf_ok && ((have++))
     macos_cmdline_present && ((have++))
     [[ "$(systemctl is-enabled "$MACOS_NVRAM_SERVICE" 2>/dev/null)" == enabled ]] && ((have++))
-    [[ -e $MACOS_IGPU ]] && ((have++))
+    # A previous release's already-bound i915 remains live until reboot.
+    # Configuration alone must not report that graphics are disabled yet.
+    [[ -e $MACOS_IGPU && ! -e $MACOS_IGPU/driver && ! -d $MACOS_IGPU/drm ]] && ((have++))
     # Keep an installed module removable even where it could not be applied
     # today; only a machine with nothing installed reports n/a.
     if ((have == 0)) && { ! imac_macos_mode_supported || ! macos_backend_supported; }; then
@@ -2089,18 +2095,12 @@ mod_macos_preflight() {
     if imac_is_arch_grub; then
         grub_read_cmdlines && grub_require_layout && grub_boots_efi_stub || return 1
     fi
-    # Both optional, and each loses a different half of the feature: without
-    # iasl the brightness range stays at the firmware's 80 levels, without the
-    # VA-API driver the iGPU appears but nothing can encode on it.
+    # Without iasl the brightness range stays at the firmware's 80 levels.
+    # Intel's video packages are no longer needed while i915 is blocked.
     local want=()
     command -v iasl >/dev/null || want+=("$(imac_tool_package iasl)")
-    if command -v pacman >/dev/null; then
-        pacman -Qq intel-media-driver >/dev/null 2>&1 || want+=(intel-media-driver)
-        # vainfo, which is how imac-igpu-check shows what the chip can do.
-        pacman -Qq libva-utils >/dev/null 2>&1 || want+=(libva-utils)
-    fi
     if ((${#want[@]})); then
-        say "recommended: ${want[*]} — acpica builds the full-range brightness table, intel-media-driver is the VA-API driver the iGPU needs, libva-utils reports what it can do"
+        say "recommended: ${want[*]} — acpica builds the full-range brightness table"
         macos_offer_packages "${want[@]}"
     fi
     return 0
@@ -2113,8 +2113,8 @@ mod_macos_apply() {
 What this changes, and how to undo it:
   * a mkinitcpio hook rewrites 14 bytes in $(macos_image_note), so the
     kernel's EFI stub tells the firmware macOS is starting
-  * i915 loads first and headless: the Intel HD 630 becomes the default GPU
-    for video; the Radeon keeps the display, the desktop and all 3D
+  * i915 is blocked: the Intel HD 630 exposes no graphics or video device;
+    the Radeon handles the display, desktop and video
   * these kernel parameters are added $(macos_params_note):
       ${MACOS_OPTS}
   * where the ACPI table can be rebuilt, brightness covers the panel's full
@@ -2125,8 +2125,7 @@ Undo:  $0 --remove macos
 
 If the desktop does not come back:
   * at the $(macos_menu_note) menu press 'e' on the entry and append
-    module_blacklist=i915 to the kernel command line — that boots with the
-    iGPU ignored and everything else in place
+    module_blacklist=i915,i2c_i801 to the kernel command line
   * from a TTY (ctrl-alt-F2) or over SSH:  $0 --remove macos
 EOF
     confirm "Boot in macOS mode from now on?" || return 1
@@ -2182,13 +2181,13 @@ EOF
     macos_image_lists_model || {
         warn "the rebuilt boot image ${image} does not list iMac18,3 — read the imac-setos lines in the output above."
         warn "A warning there means the kernel's model list has moved; no line for it means mkinitcpio never passed the hook this image."
-        warn "Either way the firmware keeps the iGPU hidden until that is fixed."
+        warn "Either way the firmware brightness path stays inactive until that is fixed."
         return 1
     }
     say "${image} carries the set_os model list entry"
     macos_verify_cmdline present || return 1
     ((acpi)) && say "brightness table rebuilt: levels 4..100 instead of 1..80"
-    say "reboot to start in macOS mode, then check it with: ${SCRIPT_DIR}/imac-igpu-check"
+    say "reboot to enable firmware brightness with Intel graphics disabled, then check: $0 --status"
     return 0
 }
 
@@ -3011,16 +3010,24 @@ show_status || exit 1
 startup_deps_install
 echo
 sel=''
+menu_options=("Apply all safe patches")
+for m in "${MODULES[@]}"; do
+    if [[ ${MODULE_TIERS[$m]} == experimental && ${MODULE_STATES[$m]} != n/a ]]; then
+        menu_options+=("Apply all non-experimental patches")
+        break
+    fi
+done
+menu_options+=("Apply all patches" "Choose patches to apply" "Remove a patch" "Quit")
 if ((HAVE_GUM)); then
-    sel=$(gum choose "Apply all safe patches" "Apply all patches" "Choose patches to apply" "Remove a patch" "Quit") || exit 0
+    sel=$(gum choose "${menu_options[@]}") || exit 0
 else
-    select sel in "Apply all safe patches" "Apply all patches" "Choose patches to apply" "Remove a patch" "Quit"; do break; done
+    select sel in "${menu_options[@]}"; do break; done
 fi
 case "$sel" in
     "Apply all safe patches")
         run_safe_modules apply
         exit "$?" ;;
-    "Apply all patches")
+    "Apply all patches"|"Apply all non-experimental patches")
         run_all_modules
         exit "$?" ;;
     "Choose patches to apply")

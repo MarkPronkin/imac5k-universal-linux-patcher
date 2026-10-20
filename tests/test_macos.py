@@ -1,4 +1,4 @@
-"""macOS mode: the set_os edit made to the UKI, the headless-i915 install, the
+"""macOS mode: the set_os edit made to the UKI, the disabled-i915 install, the
 full-range brightness table and the gates that keep all of it away from the
 machines it was never verified on.
 
@@ -259,7 +259,7 @@ verify_cmdline() {{ echo "VERIFY ${{1:-}} ${{2:-}}" >> "{self.calls}"; }}
         self.assertEqual(result.stdout.strip(), "partial", result.stdout)
 
     def test_applying_leaves_partial_until_the_reboot_then_applied(self):
-        applied = "i915.vbt_firmware=imac18-3"
+        applied = "module_blacklist=i915,i2c_i801"
         pending = self.run_module("mod_macos_apply >/dev/null; mod_macos_detect",
                                   dropin_has=applied, enabled="enabled")
         self.assertEqual(pending.stdout.strip(), "partial", pending.stdout)
@@ -286,11 +286,84 @@ verify_cmdline() {{ echo "VERIFY ${{1:-}} ${{2:-}}" >> "{self.calls}"; }}
         self.assertRegex(dropin, re.compile(r'^KERNEL_CMDLINE\[default\]\+=" ', re.M))
         for option in ("snd_hda_core.gpu_bind=0", "i915.disable_display=1",
                        "i915.vbt_firmware=imac18-3/headless-vbt.bin",
-                       "module_blacklist=i2c_i801"):
+                       "module_blacklist=i915,i2c_i801"):
             self.assertIn(option, dropin)
         # /etc/default/limine is never edited: on Omarchy it appends with '+=',
         # which an in-place edit of that line would silently miss.
         self.assertFalse((self.root / "etc/default/limine").exists())
+
+    def test_previous_release_requires_reapplying_even_after_its_reboot(self):
+        result = self.run_module("mod_macos_apply >/dev/null; mod_macos_detect",
+                                 dropin_has="i915.vbt_firmware=imac18-3/headless-vbt.bin module_blacklist=i2c_i801",
+                                 enabled="enabled", igpu=True)
+        self.assertEqual(result.stdout.strip(), "partial", result.stdout + result.stderr)
+
+    def test_running_intel_driver_keeps_status_partial_until_reboot(self):
+        result = self.run_module('''
+mod_macos_apply >/dev/null
+mkdir -p "$MACOS_IGPU/driver"
+mod_macos_detect
+''', dropin_has="module_blacklist=i915,i2c_i801", enabled="enabled")
+        self.assertEqual(result.stdout.strip(), "partial", result.stdout + result.stderr)
+
+    def test_running_intel_drm_device_keeps_status_partial(self):
+        result = self.run_module('''
+mod_macos_apply >/dev/null
+mkdir -p "$MACOS_IGPU/drm/card0"
+mod_macos_detect
+''', dropin_has="module_blacklist=i915,i2c_i801", enabled="enabled")
+        self.assertEqual(result.stdout.strip(), "partial", result.stdout + result.stderr)
+
+    def test_initramfs_does_not_force_load_intel_graphics(self):
+        result = subprocess.run(["bash", "-uc", '''
+MODULES=(amdgpu nvme)
+FILES=()
+source "$1"
+printf '%s\\n' "${MODULES[@]}"
+printf 'FILE %s\\n' "${FILES[@]}"
+''', "test", str(ROOT / "configs/macos/zz-imac-igpu.conf")],
+                                text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[:2], ["amdgpu", "nvme"])
+        self.assertNotIn("i915", result.stdout)
+        self.assertIn("FILE /etc/udev/rules.d/62-imac-smbus-acpi.rules", result.stdout)
+
+    def test_preflight_does_not_offer_intel_video_packages(self):
+        result = self.run_module('''
+pacman() { echo "UNEXPECTED_PACMAN $*"; return 1; }
+macos_offer_packages() { echo "OFFER $*"; }
+mod_macos_preflight
+''', iasl=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("OFFER iasl", result.stdout)
+        self.assertNotIn("intel-media-driver", result.stdout)
+        self.assertNotIn("libva-utils", result.stdout)
+        self.assertNotIn("UNEXPECTED_PACMAN", result.stdout)
+
+    def test_apply_migrates_legacy_limine_parameters_and_keeps_other_options(self):
+        default = self.root / "etc/default/limine"
+        default.parent.mkdir(parents=True)
+        legacy = re.search(r'^MACOS_LEGACY_OPTS="([^"]+)"', module_section(), re.M)[1]
+        default.write_text(f'KERNEL_CMDLINE[default]+="root=/dev/x {legacy} quiet"\n')
+        dropin = self.root / "etc/limine-entry-tool.d/imac5k-macos.conf"
+        dropin.parent.mkdir(parents=True)
+        dropin.write_text(f'KERNEL_CMDLINE[default]+=" {legacy}"\n')
+        result = self.run_module("mod_macos_apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(default.read_text(), 'KERNEL_CMDLINE[default]+="root=/dev/x quiet"\n')
+        self.assertIn("module_blacklist=i915,i2c_i801", dropin.read_text())
+        self.assertNotIn("module_blacklist=i2c_i801", dropin.read_text())
+        self.assertTrue((self.root / "etc/initcpio/acpi_override/imac-bcl100.aml").exists())
+        self.assertIn("enable --now imac-backlight-nvram.service", self.calls.read_text())
+
+    def test_remove_also_clears_previous_release_parameters(self):
+        default = self.root / "etc/default/limine"
+        default.parent.mkdir(parents=True)
+        legacy = re.search(r'^MACOS_LEGACY_OPTS="([^"]+)"', module_section(), re.M)[1]
+        default.write_text(f'KERNEL_CMDLINE[default]+="root=/dev/x {legacy}"\n')
+        result = self.run_module("mod_macos_remove")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(default.read_text(), 'KERNEL_CMDLINE[default]+="root=/dev/x"\n')
 
     def test_apply_installs_every_piece_and_rebuilds_the_boot_image(self):
         result = self.run_module("mod_macos_apply")
@@ -666,6 +739,21 @@ grub-mkconfig() {{
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.kernel.read_bytes().count(self.EDITED), 1)
         self.assertEqual(self.default.read_text().count("i915.disable_display=1"), 1)
+
+    def test_apply_replaces_legacy_grub_blacklist_and_preserves_brightness(self):
+        legacy = re.search(r'^MACOS_LEGACY_OPTS="([^"]+)"', module_section(), re.M)[1]
+        self.default.write_text(f'GRUB_CMDLINE_LINUX="rootflags=subvol=@ {legacy}"\n'
+                                'GRUB_CMDLINE_LINUX_DEFAULT="quiet"\n')
+        self.cfg.write_text(grub_cfg(f"rootflags=subvol=@ {legacy}", "quiet"))
+        result = self.run_module("mod_macos_apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for content in (self.default.read_text(), self.cfg.read_text()):
+            self.assertNotIn("module_blacklist=i2c_i801", content)
+            self.assertIn("module_blacklist=i915,i2c_i801", content)
+            self.assertIn("rootflags=subvol=@", content)
+        self.assertIn("module_blacklist=i915,i2c_i801", self.cfg.read_text().split("(recovery)")[1])
+        self.assertTrue((self.root / "etc/initcpio/acpi_override/imac-bcl100.aml").exists())
+        self.assertIn("enable --now imac-backlight-nvram.service", self.calls.read_text())
 
     def test_parameters_that_could_not_be_written_leave_no_hook_behind(self):
         """Once the hook is in, any mkinitcpio run edits the kernel, a kernel

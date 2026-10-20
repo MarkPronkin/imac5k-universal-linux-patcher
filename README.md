@@ -63,7 +63,11 @@ hibernate**; select individual modules to skip them. Either moves to the
 hibernation setup is needed. `--apply all` applies every module not yet
 applied, boot tier included — including the long `5k` kernel-module build,
 which runs last. Neither batch includes the `experimental` tier, which is
-`hdr` alone: apply it by name or pick it in the menu.
+`hdr` alone: apply it by name or pick it in the menu. When an experimental
+patch is available on your system, the menu also shows **Apply all
+non-experimental patches** directly below **Apply all safe patches**. It
+applies safe and boot-tier patches, including `macos` and `5k`, while skipping
+HDR. The existing **Apply all patches** action retains the same behavior.
 
 Commands check all arguments before running any module. Exit status is `0` for
 success or a skipped operation, `1` for a failed operation, and `2` for invalid
@@ -106,7 +110,7 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | Late 2014 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 | iMac Retina 5K, 27-inch | Mid 2015 | `iMac15,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ KDE untested; ➖ P3 preset N/A | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 | iMac Retina 5K, 27-inch | Late 2015 | `iMac17,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Upstream-measured; locally untested | ➖ N/A | ⚪ Untested | ➖ N/A: sleeps with the stock kernel | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
-| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | `suspend`: ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** (Limine); ⚪ GRUB untested | ⚪ **Experimental**: EDR verified on the panel (Chromium, mpv); module untested at login | ✅ **Measured**, [both GPUs](#video-codecs) |
+| iMac Retina 5K, 27-inch | 2017 | `iMac18,3` | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ➖ N/A | ✅ **Verified** | `suspend`: ✅ **Verified: repeated s2idle sleeps** | ✅ **Verified** | ✅ Brightness path verified (Limine); ⚪ iGPU-disabled boot and GRUB untested | ⚪ **Experimental**: EDR verified on the panel (Chromium, mpv); module untested at login | ✅ Radeon measured; Intel disabled; [details](#video-codecs) |
 | iMac Pro, 27-inch | 2017 | `iMacPro1,1` | ✅ **Verified** | ➖ N/A: T2 audio | ➖ N/A: T2 audio | ⚪ Untested | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: no iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: Vega only, no iGPU to add to it |
 | iMac Retina 5K, 27-inch | 2019 | `iMac19,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | ➖ N/A: untested; the iMac18,3's fixes are not offered | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
@@ -117,21 +121,19 @@ The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID check
 ### Video codecs
 
 Only `iMac18,3` has been measured, and only its own two chips; every other
-model pairs a different Radeon with a different hidden iGPU. Read from
-`vainfo` on both render nodes, with `macos` applied:
+model pairs a different Radeon with a different hidden iGPU. Historical measurements from
+`vainfo` with `macos` applied through 0.3.0-alpha are below. **Since
+0.3.1-alpha, `macos` disables Intel graphics; only the Radeon is available.**
 
-| | Radeon Pro 580X (always) | Intel HD 630 (with `macos`) |
+| | Radeon Pro 580X (always) | Intel HD 630 (through 0.3.0-alpha) |
 |---|---|---|
 | **Decode** | H.264, HEVC Main + Main10, VC-1, MPEG-2, JPEG | the same, **plus VP9 Profile 0 and 2, and VP8** |
 | **Encode** | H.264, HEVC Main | H.264 (plus a low-power path), HEVC Main **+ Main10**, VP8, MPEG-2, JPEG |
 | **Neither** | AV1 | AV1 |
 
-So macOS mode adds VP9 and VP8 decode, HEVC 10-bit encode, and a faster
-H.264 encoder; Kaby Lake tops out near 4096x2304, so 5K captures must be
-scaled before encoding on either chip. Which application reaches which chip
-is a separate question — see [macOS mode](#-macos-mode--the-hidden-intel-gpu-and-a-working-brightness-slider)
-and [docs/macos-mode.md](docs/macos-mode.md). `scripts/imac-igpu-check`
-prints the live lists for whatever machine it is run on.
+Intel previously added VP9/VP8 decode and HEVC 10-bit encode. Those paths
+are disabled in 0.3.1-alpha. See [the current macOS-mode guide](docs/macos-mode.md)
+and [the historical video measurements](docs/macos-igpu-history.md).
 
 ### 🐧 Distributions
 
@@ -142,7 +144,7 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 | **Arch Linux** | ⚪ Untested: GRUB backend verified on CachyOS; Omarchy/Limine also supported | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ⚪ Conditional: Omarchy/Limine layout | ⚪ Untested: GRUB 2.12+ with mkinitcpio; Omarchy/Limine also supported | ⚪ Conditional: Hyprland 0.56.2 Lua config started by uwsm |
 | **CachyOS** | ✅ **Verified: GRUB + mkinitcpio** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: KDE** | ⚪ Untested: Thunderbolt hook + s2idle unverified | ➖ N/A on GRUB | ⚪ Untested: GRUB 2.12+ + mkinitcpio | ⚪ Conditional: as Arch; ➖ N/A on KDE |
 | **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Conditional: as Arch |
-| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ✅ **Verified: iGPU, brightness, suspend** | ⚪ **Experimental**: EDR verified (iMac18,3); module untested at login |
+| **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ✅ Brightness path verified; ⚪ iGPU-disabled boot untested | ⚪ **Experimental**: EDR verified (iMac18,3); module untested at login |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend | ➖ N/A: dracut and kernel-install | ➖ N/A: KDE |
 | **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
 | **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
@@ -164,7 +166,7 @@ Fedora specifics — dependencies, Secure Boot signing, recovery, and how the ba
 | 😴 **Suspend** | On the iMac18,3, hibernate hard-hangs the machine. Suspend hung in the stitch-layer driver and the Thunderbolt controller, the Wi-Fi driver refuses it, Apple's USB-controller firmware reset the machine on every second sleep, and deep S3 resets the machine. The 2014-2015 models sleep with the stock kernel. | ⚠️ Suspend works in s2idle (verified on iMac18,3, still experimental); deep S3 and hibernate blocked. T2 models get their own module (untested) — see below |
 | 🔆 **Brightness** | The firmware hands Linux a backlight that accepts writes and dims nothing, because it only drives the panel for macOS. | ✅ Dims in macOS mode, over the panel's full range (verified on iMac18,3) |
 | 🌈 **HDR** | The panel takes no HDR signal, so HDR video is squeezed into SDR white. | ⚠️ Experimental EDR desktop: highlights above desktop white, as on macOS (iMac18,3, Hyprland) |
-| 🎞️ **Video encode/decode** | The Intel HD 630 next to the Radeon is hidden by the firmware, so its Quick Sync engine is unreachable and Polaris does all video. | ✅ Quick Sync headless as the default video GPU in macOS mode (verified on iMac18,3) |
+| 🎞️ **Video encode/decode** | The Intel HD 630 next to the Radeon is hidden by the firmware, so its Quick Sync engine is unreachable and Polaris does all video. | Intel graphics disabled since 0.3.1-alpha; the Radeon handles video |
 | ⚡ **Thunderbolt / 10GbE** | Adapter detected but never authorised. | ✅ Persistent enrolment |
 
 ---
@@ -298,17 +300,30 @@ hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2,
 
 ---
 
-## 🌗 macOS mode — the hidden Intel GPU and a working brightness slider
+## 🌗 macOS mode — brightness with Intel graphics disabled
 
-`imac-patcher --apply macos` makes the kernel tell Apple's firmware that macOS is starting. The firmware then stops hiding the **Intel HD 630** sitting next to the Radeon, and its own backlight path starts driving the panel — so the brightness keys finally dim it, over the panel's full range rather than the 80% the firmware's ACPI table stops at. The Radeon keeps the display, the desktop and all 3D; the Intel chip only does video, the way macOS runs it. Upstream measured H.264 encode on it at about 3.7× the Radeon's rate, plus the VP9 and 10-bit HEVC decode Polaris does not have.
+`imac-patcher --apply macos` enables Apple's firmware backlight path on the
+iMac18,3 while blocking `i915`. The brightness keys dim the panel, the optional
+full-range ACPI brightness table is retained, and the level is saved to Apple
+NVRAM at shutdown. The Radeon handles the display, desktop and video; the
+Intel GPU exposes no graphics or video-acceleration device. Its PCI function
+can still appear in `lspci`, because the firmware mode needed for brightness
+also makes that function visible.
 
-The kernel's own EFI stub already makes that call, for eight MacBook Pro models listed in its boot code. A mkinitcpio hook adds `iMac18,3` to that list inside every boot image mkinitcpio builds — the UKI on Omarchy, the kernel image GRUB loads on Arch-family GRUB — so there is no extra boot entry and kernel updates keep it.
+After upgrading from an earlier release, **reapply `macos` and reboot**. The
+old configuration reports `partial` so it can be updated. The patcher keeps
+the existing Radeon pin and compatibility files, and kernel updates retain
+the firmware edit. Intel media packages are no longer offered.
 
-Ported from [ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3), where it was developed and verified on an iMac18,3, and **confirmed here on 2026-09-21**: the iGPU comes up headless with no connectors, Quick Sync is the default video device, the Radeon keeps the desktop, audio is unaffected, and the brightness keys dim the panel for the first time on this machine. Sleep was the open question, since that repository masks it and names `i915` as a suspend suspect: two s2idle cycles in one boot with macOS mode on both returned cleanly, including the second, which is the one that used to reset this machine before the USB controller fix. `imac-patcher --remove macos` puts everything back, and at the Limine or GRUB menu `e` lets you add `module_blacklist=i915` to the command line for one boot.
+Ported from [ahmadtv/omarchy-imac18-3](https://github.com/ahmadtv/omarchy-imac18-3).
+The firmware brightness path was verified under Omarchy/Limine; the
+0.3.1-alpha iGPU-disabled boot is covered offline and awaits hardware
+validation. Arch-family GRUB 2.12+ with mkinitcpio is supported and covered
+offline, but has not been booted on hardware.
 
-On **Arch-family GRUB** (Arch, CachyOS, EndeavourOS with mkinitcpio) the module does the same, the full-range brightness table included. It needs GRUB 2.12 or newer as installed on the ESP, because only those start the kernel through its EFI stub; the module checks for it. The parameters go in `GRUB_CMDLINE_LINUX`, and removal restores the kernel image. That path is covered by offline tests but has **not been booted on hardware yet**.
-
-Read [docs/macos-mode.md](docs/macos-mode.md) before applying it: what gets installed, why the headless VBT is needed, how the brightness table is checked before it is written, and every recovery path.
+See [docs/macos-mode.md](docs/macos-mode.md) for upgrades, what is retained,
+boot configuration and recovery. `imac-patcher --remove macos` restores the
+stock behavior.
 
 ---
 
@@ -382,9 +397,9 @@ The sleep policy is the same as `suspend`'s: `suspend.target` unmasked, the hibe
 - 🪞 **Sheared seam after login** — two causes, both **fixed and shipped**: the driver's master pick left the slave tile out of the hardware sync group (`patches/5k-genlock-deterministic.patch`), and on a full modeset the one-shot alignment ran before the re-trained tile was up (`patches/5k-genlock-settle-resync.patch`, a re-sync 250 ms after each tiled commit). The black flashes on the second tile after the disk password, and the brief skew as the session exits before a reboot, were a regression from the first logo fix (its latch clear ran on every stream-off and each write toggled the tile's hotplug line, forcing a full re-detect and re-train on the next commit — 30–40 re-detects per boot instead of 4). Fixed and shipped: `patches/5k-latch-clear-going-down-only.patch`.
 - 🎬 **Video encode (VCE)** hangs the GPU on certain transcodes, taking the session down. Under investigation.
 - 💥 **Hyprland segfaults on its way out** — at every logout, reboot or shutdown the journal logs `Hyprland[…]: segfault at 0 … in libaquamarine.so.0.15.0`, and `start-hyprland` reports `Couldn't waitpid for hyprland`. It happens after Hyprland has finished shutting down, so nothing is lost and the shutdown completes. The cause is an upstream bug in aquamarine 0.15 ([hyprwm/aquamarine#383](https://github.com/hyprwm/aquamarine/issues/383)): with more than one output, tearing down the DRM backend dereferences a connector it has already released. On a 5K iMac the panel's second tile, DP-1, is that second output even without an external monitor. Harmless in practice, so it is on hold here; the known one-line fix awaits upstream.
-- 🌗 **macOS mode is new here** — verified on the iMac18,3 under Omarchy (iGPU, Quick Sync, full-range brightness, and two s2idle cycles with suspend on), but it is one machine and a few days old, and the GRUB path has not been booted yet. It adds a second PCI device with runtime PM to the sleep path and swaps in a recompiled ACPI table, so keep an eye on sleep after applying it and know [the recovery paths](docs/macos-mode.md#recovery).
+- 🌗 **macOS mode** — the firmware brightness path was verified on iMac18,3 under Omarchy. Since 0.3.1-alpha Intel graphics is disabled; this configuration and the GRUB path await hardware boot validation. Reapply `macos` after upgrading and reboot; see [the guide and recovery paths](docs/macos-mode.md).
 - 🌈 **HDR is experimental and tied to Hyprland 0.56.2** — the EDR patch is for that version alone. Once Hyprland is upgraded, every login falls back to the stock compositor, with a notification, until a release carries the patch for the new version. The luminance figures are estimates, and sleep with HDR on is untested. See [docs/hdr.md](docs/hdr.md).
-- 📺 **VP9 in Firefox and Chromium is still CPU-decoded** — with macOS mode the iGPU decodes VP9, but those two render on the compositor's GPU, the Radeon, which has no VP9 decoder, and neither can import frames decoded on the other chip: Firefox closed cross-GPU decode as WONTFIX, Chromium fails the import. Everything built on GStreamer *can*, because its `va` plugin is multi-device: a WebKit browser (Epiphany) with `gst-plugin-va` installed decodes VP9 on the iGPU and displays it through the Radeon, verified here with Flathub's GNOME Web, fullscreen included. Arch's own `epiphany` package has an unrelated fullscreen bug — its window goes black with nothing playing at all — so take the Flatpak. So does `mpv --hwdec=vaapi-copy --vaapi-device=/dev/dri/intel-render`. See [docs/macos-mode.md](docs/macos-mode.md#except-in-a-webkit-browser-where-it-works). AV1 is on neither chip; that one is a plain hardware limit.
+- 📺 **Intel video acceleration is disabled** — 0.3.1-alpha keeps brightness support while blocking the iGPU. Applications use the Radeon; the historical WebKit and mpv Intel VP9 paths are unavailable. See [the current guide](docs/macos-mode.md) and [the earlier measurements](docs/macos-igpu-history.md).
 
 ---
 

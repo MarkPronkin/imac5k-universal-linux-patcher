@@ -1,5 +1,15 @@
 # Current work checkpoint
 
+**Release 0.3.1-alpha (2026-10-20):** preparing on `main` at the owner's
+request. `macos` retains firmware brightness, ACPI range, SMBus and NVRAM,
+while blocking `i915` so Intel exposes no DRM device (the firmware still
+exposes its PCI function). Reapply `macos` and reboot after upgrading. The
+menu adds `Apply all non-experimental patches` immediately below the safe
+batch only when an experimental module is available, excluding n/a. Existing
+`all` still skips experimental modules. See
+[the release record](notes/release-0.3.1-alpha-2026-10-20.md). Hardware reboot
+validation is pending; no host patches or boot config were changed.
+
 **Release 0.3.0-alpha to `main` (2026-10-20):** the owner asked for a new
 release "with the stuff from hdr and test branch, to main", as 0.3.0-alpha.
 On `test`: the #12 Fedora 7.2.9+ fix (`f36c1cf`) and the `hdr` module
