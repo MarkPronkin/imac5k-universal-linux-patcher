@@ -249,6 +249,35 @@ was checked at `--fuzz=0` against pristine Linux 7.1.13 and 7.2.3 during the
 merge review. See [the review record](../notes/imacpro-pr2-review-2026-09-10.md)
 in the Git checkout for compile results and limits.
 
+## Crash fix: `5k-root-plane-zero-width-guard.patch`
+
+**Status: in the lean stack on both installers.** Reported in
+[#11](https://github.com/MarkPronkin/imac5k-universal-linux-patcher/issues/11).
+
+`dm_update_plane_state()` adds the root (left-tile) plane with the stock
+`dc_state_add_plane()`, and the stitch layer narrowed it to the left tile only
+after that add. The add already builds the scaling parameters against the
+2560-wide root stream, using the 5120-wide rects the compositor submitted. If
+those rects leave nothing on the left tile, the viewport is 0 wide and DCE's
+`dce_transform_get_optimal_number_of_taps()` divides by it: an oops in the
+compositor's atomic check, and a frozen display. Every iMac 5K here is a DCE
+part (the iMac Pro's DCE 12, the iMac18,3's DCE 11.2).
+
+Seen three times on an iMac Pro (Vega 56) under KDE Plasma Wayland, each time
+while idle:
+
+```
+!(pixel_width)
+WARNING: dc/dce/dce_transform.c:921 at dce_transform_get_optimal_number_of_taps
+Oops: divide error: 0000 [#1] SMP PTI
+```
+
+The patch narrows the root plane before its add, with the same gate the split
+uses. A plane on a stitched CRTC that is not split and has no pixels on the
+left tile now fails the check with `-EINVAL`, and the compositor composites
+instead. Both cases log the plane's clip rect (rate limited) as
+`TILED_STITCH: plane N has no pixels on the root tile`.
+
 ## Crash fix: `5k-logical-modeset-guard.patch`
 
 **Status: promoted into both installers on 2026-09-10** after passing

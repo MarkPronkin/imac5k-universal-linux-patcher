@@ -1,0 +1,119 @@
+iMac 5K: put the stitched root plane in tile space before adding it
+
+dm_update_plane_state() adds the root (left-tile) plane to the root stream
+with the stock dc_state_add_plane() call, and the stitch layer narrows the
+plane to the left tile only afterwards. But the add already builds the
+scaling parameters: resource_build_scaling_params() clips the plane against
+the root stream, which is one tile (2560) wide, while the plane still holds
+the stitched-screen rects userspace submitted (5120 wide). If those rects
+leave nothing inside x = 0..2559, recout and viewport come out 0 wide.
+DCN tolerates that; DCE does not: dce_transform_get_optimal_number_of_taps()
+only ASSERTs the width and then divides by it.
+
+Seen on iMacPro1,1 (Vega 56, DCE 12), CachyOS 7.2.3 and 7.2.6, lean stack
+plus the iMac Pro patches, KDE Plasma 6 Wayland: three hard freezes while
+idle (2026-09-16, 10-06, 10-07), each the same trace:
+
+  !(pixel_width)
+  WARNING: dc/dce/dce_transform.c:921 at dce_transform_get_optimal_number_of_taps
+  Oops: divide error: 0000 [#1] SMP PTI
+   dce_transform_get_optimal_number_of_taps
+   resource_build_scaling_params
+   resource_append_dpp_pipes_for_plane_composition
+   dc_state_add_plane
+   dm_update_plane_state
+   amdgpu_dm_atomic_check
+   drm_mode_atomic_ioctl  <- kwin_wayland
+
+The disassembly of the running module puts the return address on the root
+add, not the peer add. The oops is in an atomic check with the modeset locks
+held, so the display stays dead until a reset.
+
+Narrow the root plane to the left tile before its add, with the same gate the
+split already uses (stream_peer and a full-width fb), so the add sees the
+final rects. A plane on a stitched CRTC that is not split (fb narrower than
+two tiles) keeps its own rects; if they have no pixels on the left tile, fail
+the check with -EINVAL instead of oopsing, and the compositor falls back to
+composition. Either case logs the plane's clip rect (rate limited).
+
+Applies on top of the lean stack (after the stitch layer).
+
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -14262,6 +14262,7 @@
+ 
+ 	} else { /* Add new planes */
+ 		struct dc_plane_state *dc_new_plane_state;
++		bool stitch_split;
+ 
+ 		if (drm_atomic_plane_disabling(plane->state, new_plane_state))
+ 			return 0;
+@@ -14310,6 +14311,41 @@
+ 		}
+ 
+ 		/*
++		 * Tiled stitch: dc_state_add_plane() builds the scaling params
++		 * against the one-tile root stream, so narrow the root plane to
++		 * the left tile before the add, to avoid a zero-width viewport
++		 * and a divide by zero.
++		 */
++		stitch_split = dm_new_crtc_state->stream_peer &&
++			       new_plane_state->fb &&
++			       new_plane_state->fb->width >=
++				       2 * dm_new_crtc_state->stream->timing.h_addressable;
++		if (dm_new_crtc_state->stream_peer) {
++			const struct rect *t = &dm_new_crtc_state->stream->src;
++			const struct rect *c = &dc_new_plane_state->clip_rect;
++			bool on_root_tile =
++				c->width > 0 && c->height > 0 &&
++				c->x < t->x + t->width && c->x + c->width > t->x &&
++				c->y < t->y + t->height && c->y + c->height > t->y;
++
++			if (!on_root_tile)
++				dev_warn_ratelimited(new_plane_crtc->dev->dev,
++					"TILED_STITCH: plane %d has no pixels on the root tile, %s (clip %d,%d %dx%d)\n",
++					plane->base.id, stitch_split ? "split" : "rejected",
++					c->x, c->y, c->width, c->height);
++
++			if (stitch_split) {
++				tiled_stitch_set_plane_rects(dc_new_plane_state, 0,
++					dm_new_crtc_state->stream->timing.h_addressable,
++					dm_new_crtc_state->stream->timing.v_addressable);
++			} else if (!on_root_tile) {
++				dc_plane_state_release(dc_new_plane_state);
++				ret = -EINVAL;
++				goto out;
++			}
++		}
++
++		/*
+ 		 * Any atomic check errors that occur after this will
+ 		 * not need a release. The plane state will be attached
+ 		 * to the stream, and therefore part of the atomic
+@@ -14347,11 +14383,7 @@
+ 		 * when the stitch gate passed at crtc-state time, so its
+ 		 * presence (plus a full-width fb) is the gate here.
+ 		 */
+-		if (dm_new_crtc_state->stream_peer &&
+-		    dm_new_crtc_state->stream &&
+-		    new_plane_state->fb &&
+-		    new_plane_state->fb->width >=
+-			    2 * dm_new_crtc_state->stream->timing.h_addressable) {
++		if (stitch_split) {
+ 			int tile_w = dm_new_crtc_state->stream->timing.h_addressable;
+ 			int tile_h = dm_new_crtc_state->stream->timing.v_addressable;
+ 			struct dc_plane_state *peer_plane = dc_create_plane_state(dc);
+@@ -14369,10 +14401,9 @@
+ 				goto out;
+ 			}
+ 
+-			/* Root plane -> left half; peer plane -> right half. All
+-			 * rects (incl. clip) reconciled to tile stream space. */
+-			tiled_stitch_set_plane_rects(dc_new_plane_state, 0,
+-						     tile_w, tile_h);
++			/* Peer plane -> right half (the root plane was set to
++			 * the left half before its add). All rects (incl. clip)
++			 * reconciled to tile stream space. */
+ 			tiled_stitch_set_plane_rects(peer_plane, tile_w,
+ 						     tile_w, tile_h);
+ 			peer_plane->update_flags.bits.full_update = 1;

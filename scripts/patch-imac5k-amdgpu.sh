@@ -73,7 +73,9 @@ lean)
 		"${SCRIPT_DIR}/../patches/dce12-multisync-master-first.patch"
 		"${SCRIPT_DIR}/../patches/dce110-genlock-master-from-pipe0.patch"
 		# A modeset postpones the queued post-commit pass; see the patch header.
-		"${SCRIPT_DIR}/../patches/5k-resync-postpone-on-modeset.patch")
+		"${SCRIPT_DIR}/../patches/5k-resync-postpone-on-modeset.patch"
+		# A zero-width root plane oopsed DCE in atomic check; see the patch header.
+		"${SCRIPT_DIR}/../patches/5k-root-plane-zero-width-guard.patch")
 	;;
 verbose)
 	PATCH_FILE="${SCRIPT_DIR}/../patches/imac5k-amdgpu-7.2.2.patch"
