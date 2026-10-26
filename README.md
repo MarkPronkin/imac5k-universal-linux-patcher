@@ -1,8 +1,8 @@
 # 🖥️ Retina 5K iMac Linux Patcher
 
-[![Join pronkin projects on Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/J7t64xupfQ)
+[![Join pronkin projects on Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/J7t64xupfQ) [![Join pronkin projects on Telegram](https://img.shields.io/badge/Telegram-Join%20the%20community-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/+ac3Kq-v-r7JmMmVi)
 
-Join **[pronkin projects on Discord](https://discord.gg/J7t64xupfQ)** for help, project updates, discussion, and feature requests.
+Join **pronkin projects** on **[Discord](https://discord.gg/J7t64xupfQ)** or **[Telegram](https://t.me/+ac3Kq-v-r7JmMmVi)** for help, project updates, discussion, and feature requests.
 
 ![Retina 5K iMac Linux Patcher — display, audio, colour and boot fixes, applied module by module](.github/social-preview.png)
 
