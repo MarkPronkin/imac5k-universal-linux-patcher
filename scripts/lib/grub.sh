@@ -209,12 +209,15 @@ grub_list_entries() {
 # Select the normal entry for the running kernel's package, including entries
 # inside submenus. The first entry may boot a different installed kernel.
 # Retain GRUB's own root, encryption, subvolume and microcode paths.
-grub_kernel_entry() {
-    local pkgbase
+grub_kernel_entry() {   # optional kernel/initrd basenames, excluded entry ID prefix
+    local pkgbase kernel initrd
     pkgbase=$(imac_kernel_pkgbase "${KREL:-$(uname -r)}") || return 1
-    $GRUB_SUDO awk -v kernel="vmlinuz-$pkgbase" -v initrd="initramfs-$pkgbase.img" '
+    kernel=${1:-vmlinuz-$pkgbase}
+    initrd=${2:-initramfs-$pkgbase.img}
+    $GRUB_SUDO awk -v kernel="$kernel" -v initrd="$initrd" -v exclude="${3:-}" '
         /^[[:space:]]*menuentry[[:space:]]/ {
             block=""; linux=0; image=0; inside=1
+            if (exclude != "" && index($0, exclude)) { inside=0; next }
             match($0, /^[[:space:]]*/); indent=substr($0, 1, RLENGTH)
         }
         inside {

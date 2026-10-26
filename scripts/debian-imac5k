@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Debian kernel sources and ABI; shared initramfs/GRUB transactions.
+set -Eeuo pipefail
+export PATH="/usr/sbin:/sbin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+source "$SCRIPT_DIR/lib/platform.sh"
+IMAC_APT_DISTRO=debian
+source "$SCRIPT_DIR/lib/apt-imac5k.sh"
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0
+apt_imac5k_main "$@"

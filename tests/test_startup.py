@@ -58,11 +58,12 @@ class StartupTests(unittest.TestCase):
         self.stub("uname", "echo 7.2.2-startup-test")
         self.stub("sudo", '''
 case "$1" in
-    pacman|dnf) exec "$@" ;;
+    pacman|dnf|apt-get) exec "$@" ;;
     *) exit 1 ;;
 esac''')
         self.package_manager("pacman")
         self.package_manager("dnf")
+        self.package_manager("apt-get")
         self.sys = self.root / "sys"
         dmi = self.sys / "class/dmi/id"
         dmi.mkdir(parents=True)
@@ -112,7 +113,8 @@ done
                 path.unlink(missing_ok=True)
         commands = self.commands - set(missing)
         if not both_managers:
-            commands -= {"pacman"} if fedora else {"dnf"}
+            chosen = "apt-get" if distro in ("debian", "ubuntu") else "dnf" if fedora else "pacman"
+            commands -= {"pacman", "dnf", "apt-get"} - {chosen}
         launcher = self.repo / "scripts/imac-patcher"
         if symlink:
             link = self.root / "launcher"
@@ -301,6 +303,71 @@ esac''')
         self.assertIn("grubby", result.stdout)
         self.assertNotIn("grub-mkconfig", result.stdout)
         self.assertNotIn("limine-mkinitcpio", result.stdout)
+
+    def test_debian_uses_apt_even_with_other_package_managers(self):
+        result = self.launch("--status", distro="debian", grub=True,
+                             both_managers=True, missing=("find",), answer="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        self.assertIn("apt-get install -y findutils", line)
+        self.assertNotIn("pacman", line)
+        self.assertNotIn("dnf", line)
+        line = next(line for line in result.stdout.splitlines() if "5k missing dependencies:" in line)
+        for command in ("dpkg-query", "dpkg-deb", "mkinitramfs", "lsinitramfs", "grub-mkconfig"):
+            self.assertIn(command, line)
+        self.assertNotIn("mkinitcpio", result.stdout)
+        self.assertNotIn("limine-mkinitcpio", result.stdout)
+        self.assertNotIn("command not found", result.stderr)
+
+    def test_debian_stock_kernel_skips_the_newer_audio_driver(self):
+        self.stub("uname", "echo 6.12.113+deb13-amd64")
+        result = self.launch("--status", distro="debian", grub=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        row = next(line for line in result.stdout.splitlines() if "Speakers, headphones" in line)
+        self.assertIn("n/a", row)
+        self.assertNotIn("audio missing dependencies:", result.stdout)
+        self.assertNotIn("command not found", result.stderr)
+
+    def test_debian_startup_installs_debian_package_names(self):
+        result = self.launch(distro="debian", grub=True, desktop="KDE", answer="y\n4\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        for package in ("build-essential", "kmod", "dkms", "pahole", "pulseaudio-utils",
+                        "pipewire-bin", "linux-headers-7.2.2-startup-test", "initramfs-tools", "grub-common", "xz-utils"):
+            self.assertIn(package, line)
+        self.assertIn("apt-get install -y", line)
+        for package in ("base-devel", "kernel-devel", "mkinitcpio", "dracut"):
+            self.assertNotIn(package, line)
+
+    def test_ubuntu_26_04_uses_apt_with_other_managers_installed(self):
+        self.stub("uname", "echo 7.0.0-38-generic")
+        result = self.launch("--status", distro="ubuntu", grub=True,
+                             both_managers=True, missing=("find",), answer="y\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        self.assertIn("apt-get install -y findutils", line)
+        self.assertNotIn("pacman", line)
+        self.assertNotIn("dnf", line)
+        self.assertIn("audio missing dependencies:", result.stdout)
+        self.assertIn("5k missing dependencies:", result.stdout)
+        for command in ("mkinitramfs", "lsinitramfs", "grub-mkconfig", "bzip2"):
+            self.assertIn(command, result.stdout)
+        for command in ("mkinitcpio", "limine-mkinitcpio", "dracut", "grubby"):
+            self.assertNotIn(command, result.stdout)
+        self.assertNotIn("command not found", result.stderr)
+
+    def test_ubuntu_startup_installs_exact_headers_and_apt_package_names(self):
+        self.stub("uname", "echo 7.0.0-38-generic")
+        result = self.launch(distro="ubuntu", grub=True, desktop="KDE", answer="y\n4\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        line = next(line for line in result.stdout.splitlines() if "PACKAGE_MANAGER" in line)
+        for package in ("build-essential", "kmod", "dkms", "pahole", "pulseaudio-utils",
+                        "pipewire-bin", "linux-headers-7.0.0-38-generic", "initramfs-tools",
+                        "grub-common", "xz-utils", "bzip2", "zstd"):
+            self.assertIn(package, line)
+        self.assertIn("apt-get install -y", line)
+        for package in ("base-devel", "kernel-devel", "mkinitcpio", "dracut"):
+            self.assertNotIn(package, line)
 
     def test_help_and_version_do_not_offer_module_dependencies(self):
         for arg in ("--help", "--version"):

@@ -1,7 +1,7 @@
 # Dependencies
 
 Everything `imac-patcher` and its helper scripts need, per module and distro.
-Package names are given for **Arch/Omarchy/EndeavourOS/CachyOS** (pacman) and **Fedora** (dnf)
+Package names are given for **Arch/Omarchy/EndeavourOS/CachyOS** (pacman), **Fedora** (dnf), and **Debian/Ubuntu** (apt-get)
 where they differ.
 
 ## Core (imac-patcher itself)
@@ -27,7 +27,9 @@ present. Otherwise it names the missing commands and packages and offers to
 install them. Declining, reaching EOF, a failed package-manager command, or a
 command still missing after installation stops startup with a nonzero status.
 The confirmation is visible with terminal input and with piped input. Fedora
-uses DNF even if pacman is also installed.
+uses DNF even if pacman is also installed. Debian and Ubuntu use APT even if another
+package manager is present. Their core packages have the same names as above;
+the optional `gum` command is not needed.
 
 Before the menu, and during `--status`, the patcher also lists missing commands
 and kernel development files for modules that are not fully applied. This
@@ -100,6 +102,74 @@ sudo dnf install kernel-devel-$(uname -r) gcc make binutils bc dwarves \
 
 `kernel-devel` must match the running kernel exactly; if it is unavailable,
 update Fedora, reboot, and retry. Fedora Kinoite/Atomic is not supported.
+
+### Debian 13 (`scripts/debian-imac5k`, see docs/debian.md)
+
+```bash
+sudo apt-get update
+sudo apt-get install "linux-headers-$(uname -r)" build-essential binutils \
+  bc pahole flex bison patch xz-utils curl ca-certificates tar python3 \
+  libelf-dev libssl-dev initramfs-tools grub-common mokutil
+```
+
+APT (`apt-get`), dpkg (`dpkg-query`, `dpkg-deb`), Perl, findutils and
+diffutils are also checked. The installer downloads the exact
+`linux-source-<series>` version recorded in the installed headers' source
+metadata; `deb-src` is unnecessary. A missing version is a hard failure;
+update Debian and reboot before retrying. The Debian backend accepts 6.12,
+7.1 and 7.2 with the lean stack. At least 10 GiB free is required.
+
+GRUB and initramfs-tools are required. The installer builds an image with
+`mkinitramfs`, checks it with `lsinitramfs`, and adds a separate GRUB entry for
+that kernel. It does not use mkinitcpio, dracut or grubby. Signing requires an
+enrolled key and DER certificate under Secure Boot/kernel lockdown; see the
+[Debian guide](docs/debian.md#secure-boot).
+
+### Ubuntu 26.04 LTS (`scripts/ubuntu-imac5k`, see docs/ubuntu.md)
+
+Uses the Debian APT package list above, with **bzip2** added for Ubuntu's
+source archive. Exact `linux-headers-$(uname -r)` are required. The builder
+reads both the source package and full source version from these headers,
+then downloads `linux-source-<base version>=<source version>`; for example,
+`linux-source-7.0.0=7.0.0-38.38` for `7.0.0-38-generic`.
+
+Official generic/HWE kernels in series 7.0, 7.1 and 7.2 are accepted; OEM,
+cloud, lowlatency, mainline PPA and third-party sources are refused. Linux
+6.8 needs a separate port. The GRUB/initramfs transaction and graphics
+signing variables are shared with Debian. Ubuntu DKMS normally uses
+`/var/lib/shim-signed/mok/MOK.der`; `IMAC5K_DKMS_CERT` overrides only the
+certificate enrollment check. See the [Ubuntu guide](docs/ubuntu.md#secure-boot).
+
+Debian and Ubuntu's other module package names:
+
+| Commands or purpose | Debian / Ubuntu package |
+|---|---|
+| gcc, g++, make | build-essential |
+| ld, strip, objcopy and other binutils | binutils |
+| dkms; matching headers | dkms; `linux-headers-$(uname -r)` |
+| modinfo, depmod, modprobe, lsmod | kmod |
+| xz | xz-utils |
+| iasl | acpica-tools |
+| pactl | pulseaudio-utils |
+| pw-cli, pw-dump | pipewire-bin |
+| wpctl | wireplumber |
+| kscreen-doctor | kscreen |
+| LSP LV2 plugins | lsp-plugins-lv2 |
+| Bankstown source build | git, cargo, build-essential |
+| udevadm | udev |
+| update-initramfs, mkinitramfs, lsinitramfs | initramfs-tools |
+| grub-mkconfig | grub-common |
+
+APT `audio` requires Linux 6.17+ and additionally checks patch, wget, git,
+tar, libelf-dev, libssl-dev and mokutil. Stock 6.12 reports `n/a` and retains
+its existing driver; Ubuntu 26.04's 7.0 kernel meets the version requirement.
+Ubuntu audio also installs bzip2 and the exact matching linux-source package;
+its DKMS pre-build guard checks this match on every rebuild. Both Ubuntu
+audio and the USB sleep fix install zstd for DKMS module compression.
+`suspend` checks DKMS, the running kernel's headers,
+build-essential, kmod, libelf-dev and mokutil; its s2idle drop-in requires
+systemd 256+. T2 models still need an independently installed T2 driver stack.
+Hardware and desktop restrictions remain in force.
 
 ## Audio module (safe tier)
 

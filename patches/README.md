@@ -23,6 +23,23 @@ Boot parameter once installed: `amdgpu.tiled_stitch=1`
 
 ## Installing without a second kernel
 
+**On Ubuntu 26.04 LTS**, run `../scripts/imac-patcher --apply 5k` as your
+normal user. Its Linux 7.0 lean port uses exact Ubuntu generic/HWE sources
+and headers with the shared APT/GRUB/initramfs-tools transaction. See
+[Ubuntu setup and recovery](../docs/ubuntu.md).
+
+**On Debian 13**, use `../scripts/imac-patcher --apply 5k` as your normal user.
+The Debian backend downloads the exact matching Debian source package and
+builds against its headers, then uses initramfs-tools and a separate GRUB entry.
+Linux 6.12 uses `imac5k-debian-6.12.patch`, a consolidated port of the entire
+current lean stack: core, stitch, link recovery, suspend guards and the four
+iMac Pro timing/panel fixes. It adapts 6.12's fbdev, raw EDID and scaling APIs;
+the connector retains its sink-owned EDID while only the published property
+gets the synthesized stitched EDID. Linux 7.1/7.2 uses the same lean patch list
+as Arch and Fedora. The Debian backend does not offer the verbose stack.
+See [Debian setup and recovery](../docs/debian.md). Debian hardware boot
+validation is still pending.
+
 **On Fedora KDE**, run `../scripts/imac-patcher --apply 5k` as your normal user
 instead. The Fedora backend builds from the matching Fedora source RPM and
 installs a module override through dracut and grubby; the Limine test-entry
@@ -83,6 +100,17 @@ slave-only (the unhealthy tile was the root, with lanes locked but sink status
 recovery handles. The *cause* of the post-enable loss is still unknown -- this
 repairs it after the fact. **Promoted to the default install stacks on
 2026-09-08** after the owner confirmed the passing boot.
+
+### Ubuntu 26.04 / Linux 7.0
+
+The APT backend selects `imac5k-ubuntu-7.0.patch` on Ubuntu 7.0. It
+consolidates the same thirteen-patch lean stack against Ubuntu's downstream
+source package, including its display backports. Link detection and DCE
+logging use the 7.0 interfaces. The installer applies at zero fuzz and builds
+against the exact matching generic/HWE headers; other kernel flavours and
+sources are refused. See [Ubuntu setup and recovery](../docs/ubuntu.md).
+Hardware boot validation is pending. The 7.1/7.2 path retains the existing lean
+stack; neither APT backend offers the verbose stack.
 
 ### Fedora 7.1.13 context
 
@@ -369,7 +397,8 @@ The entry is hash-pinned like the others.
 ## The rules
 
 - **RULE 1 — version gate.** The patch is verified against kernel **7.1.x and 7.2.x source** (same diff applies to both).
-  The script refuses to run on any other series, because the amdgpu display
+  The Debian 6.12 and Ubuntu 7.0 backends select their dedicated lean ports.
+  Each script refuses an unported series, because the amdgpu display
   code changes between kernel versions and a mis-applied patch means a broken
   GPU module. When Arch/Omarchy moves to 7.3+, the patch must be **re-ported
   by a human first** — re-running the script is not enough. (Check

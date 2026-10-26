@@ -121,7 +121,7 @@ All models below pass the model gate. Years and identifiers follow [Apple's mode
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,1` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 | iMac Retina 5K, 27-inch | 2020 | `iMac20,2` | ⚪ Untested | 🔴 Unsupported | ⚪ Untested | ➖ N/A | ⚪ Untested | `t2suspend`: ⚪ Untested; optional; needs `linux-t2` (`t2bce`) | ⚪ Untested; Limine only | ➖ N/A: unverified iGPU | ➖ N/A: no profile for its panel | ⚪ Untested: depends on its own dGPU and hidden iGPU |
 
-The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x**; its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. The independent experimental `igpu` module has the same model and bootloader limits as `macos`, and is covered in [its guide](docs/igpu.md). HDR is iMac18,3 only too, on Hyprland 0.56.2 started through uwsm, as Omarchy does. Select either sleep module only with a 5K module built from release 0.1.91-alpha or newer: the stitch-layer sleep fix is in its kernel patches.
+The 5K patch requires `amdgpu` and kernel **7.1.x or 7.2.x** (also **6.12.x on Debian** and **7.0 on Ubuntu 26.04 LTS**); its panel-ID checks still apply. The default lean stack includes the iMac Pro fixes; the verbose fallback does not support the iMac Pro. On the iMac Pro, Hyprland also needs the panel's 10 bpc. The bundled audio driver is specific to `iMac18,3`; other models keep their existing driver. EQ requires working four-channel speakers, and its tuning was measured upstream on `iMac17,1`. The iMac Pro's four-speaker channel map is the separate `t2speakers` module below, not EQ. KDE colour uses EDID; the Hyprland Display P3 preset excludes `iMac15,1`. Boot repair requires the Omarchy/Limine layout. macOS mode is iMac18,3 only, on Omarchy/Limine or Arch-family GRUB 2.12+ with mkinitcpio. The independent experimental `igpu` module has the same model and bootloader limits as `macos`, and is covered in [its guide](docs/igpu.md). HDR is iMac18,3 only too, on Hyprland 0.56.2 started through uwsm, as Omarchy does. Select either sleep module only with a 5K module built from release 0.1.91-alpha or newer: the stitch-layer sleep fix is in its kernel patches.
 
 ### Video codecs
 
@@ -152,10 +152,10 @@ Distribution status assumes compatible hardware from the table above. Arch and O
 | **EndeavourOS** | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Untested: pacman backend | ⚪ Untested: PipeWire + plugins | ⚪ Conditional: KDE or Omarchy Hyprland config | ⚪ Untested: systemd | ➖ N/A on GRUB | ⚪ Untested: same GRUB backend as CachyOS | ⚪ Conditional: as Arch |
 | **Omarchy** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified** | ✅ **Verified: Hyprland** | ✅ **Verified: repeated s2idle sleeps (iMac18,3)** | ✅ **Verified** | ✅ Brightness path verified; ⚪ iGPU-disabled boot untested | ⚪ **Experimental**: EDR verified (iMac18,3); module untested at login |
 | **Fedora** | ⚪ **Build-tested: GRUB/dracut** | ⚪ Untested: DNF/DKMS backend | ⚪ Conditional: Bankstown built manually | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd | ➖ N/A: GRUB backend | ➖ N/A: dracut and kernel-install | ➖ N/A: KDE |
-| **Debian** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
-| **Ubuntu** | 🔴 Unsupported: no kernel backend | 🔴 Unsupported: no APT installer | ⚪ Conditional: manual dependencies | ⚪ Conditional: KDE Wayland | ⚪ Untested: systemd | 🔴 Unsupported | 🔴 Unsupported | 🔴 Unsupported |
+| **Debian 13** | ⚪ **Build-tested: GRUB + initramfs-tools; Linux 6.12** | ⚪ Conditional: APT/DKMS; Linux 6.17+ only (n/a on stock 6.12) | ⚪ Conditional: APT + Bankstown source build; working four-channel audio | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd 256+; T2 needs its own kernel | ➖ N/A | ➖ N/A | ➖ N/A: Omarchy-specific |
+| **Ubuntu 26.04 LTS** | ⚪ **Build-tested: GRUB + initramfs-tools; Linux 7.0 generic** | ⚪ Build-tested: APT/DKMS; iMac18,3 | ⚪ Conditional: APT + Bankstown source build; working four-channel audio | ⚪ Untested: KDE Wayland | ⚪ Untested: systemd 256+; T2 needs its own kernel | ➖ N/A | ➖ N/A | ➖ N/A: Omarchy-specific |
 
-Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. The install-and-boot path is hardware-validated on CachyOS; the staged test entries and promotion are implemented and covered offline, but have not been exercised on hardware. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian and Ubuntu have no dedicated backend or automatic APT dependency installation: the conditional entries cover reusable modules with prerequisites installed manually, not full distribution support. Colour on their default GNOME desktops is not implemented.
+Omarchy uses pacman, kernel.org sources, Limine and mkinitcpio. Arch-family GRUB support also covers distributions whose `ID_LIKE` includes `arch`, including EndeavourOS and CachyOS. It uses matching installed kernel headers, the kernel’s compiler toolchain (including Clang), `/etc/default/grub`, `grub-mkconfig`, and mkinitcpio presets. The install-and-boot path is hardware-validated on CachyOS; the staged test entries and promotion are implemented and covered offline, but have not been exercised on hardware. Dracut and UKI-only Arch layouts are not supported by this backend. See the [Arch/GRUB guide](docs/arch-grub.md). Fedora uses DNF, matching Fedora kernel source RPMs, GRUB/BLS and dracut. Debian 13 uses APT, exact matching Debian headers and source packages, GRUB and initramfs-tools. Its Linux 6.12 display port carries the lean stack; the audio driver still needs Linux 6.17+. See the [Debian guide](docs/debian.md) for setup, module limits and recovery. Ubuntu 26.04 LTS shares the APT/GRUB/initramfs-tools integration with Debian, with its own exact generic/HWE source matching and Linux 7.0 lean port. See the [Ubuntu guide](docs/ubuntu.md). Both APT backends require hardware boot validation. GNOME colour settings are not implemented.
 
 Fedora specifics — dependencies, Secure Boot signing, recovery, and how the backend is wired in — are in the **[Fedora KDE guide](docs/fedora-kde.md)**. Fedora Kinoite/Atomic is not supported.
 
@@ -195,13 +195,14 @@ Install it without a second kernel — only the `amdgpu` module is rebuilt for y
 ./scripts/imac-patcher --remove 5k # full undo, any time
 ```
 
-**Read [`patches/README.md`](patches/README.md) first.** The patch is verified against kernel **7.1.x and 7.2.x only** and the installer refuses anything else, because a mis-applied patch means a broken GPU module.
+**Read [`patches/README.md`](patches/README.md) first.** The standard patch stack targets **7.1.x and 7.2.x**; Debian **6.12** and Ubuntu 26.04 **7.0** use dedicated lean ports. Each installer refuses an unported series, because a mis-applied patch means a broken GPU module.
 
 You don't need to supply source files — the patch ships in this repo. On
 Omarchy, the installer downloads the matching kernel source from kernel.org;
-Fedora uses its matching source RPM.
+Fedora uses its matching source RPM; Debian and Ubuntu use exact matching
+source packages from APT.
 
-The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md).
+The dependency and boot notes below describe **Omarchy/Arch**. Fedora builds against its matching source RPM and `kernel-devel` instead, and needs more disk — follow the [Fedora guide](docs/fedora-kde.md). Debian and Ubuntu use GRUB/initramfs-tools; follow their [Debian](docs/debian.md) and [Ubuntu](docs/ubuntu.md) guides.
 
 - 🛠️ **Build tools and kernel headers** — `base-devel bc pahole` plus the running kernel’s headers (`linux-headers`, `linux-lts-headers`, `linux-cachyos-headers`, etc., selected from its `pkgbase`). Clang-built kernels on either Arch bootloader also need `clang llvm lld`. See [DEPENDENCIES.md](DEPENDENCIES.md) for the complete tool list.
 - 💾 **At least 10 GiB free** for source preparation and compilation. Arch builds verify the source archive against kernel.org's published checksum and extract a fresh build tree each time.
@@ -229,9 +230,10 @@ stream setup, and EarPods play/pause and volume buttons. Re-run the command
 above to upgrade an older audio install. It uses a pinned source revision and
 a separate DKMS version, so the old `0.2` build cannot be mistaken for the fix.
 Linux **6.17+** is required; the headset changes were tested upstream on
-iMac18,3 with 7.1.9, and the driver has been compile-tested here on 7.2.3.
+iMac18,3 with 7.1.9, and the driver has been compile-tested here on 7.2.3 and Ubuntu 26.04's
+`7.0.0-38-generic`.
 This fork's integration has offline tests; physical
-headset validation on its other kernels and Fedora remains outstanding.
+headset validation on its other kernels, Fedora and Ubuntu remains outstanding.
 
 Upstream reports an unresolved high-pitched sound on jack insertion.
 See [headphone setup and checks](docs/headphones.md).
@@ -428,8 +430,8 @@ The sleep policy is the same as `suspend`'s: `suspend.target` unmasked, the hibe
 ## 📋 Requirements
 
 - A Retina 5K iMac from the [model table](#models-and-module-availability). Other Macs, including 21.5-inch 4K and 24-inch 4.5K iMacs, remain outside the normal model gate.
-- Kernel 7.1.x or 7.2.x for the 5K patch (everything else is version-independent)
-- Omarchy (Limine + Hyprland), Arch/EndeavourOS/CachyOS with GRUB + mkinitcpio, or Fedora KDE (GRUB/dracut + Plasma Wayland) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
+- Kernel 7.1.x or 7.2.x for the 5K patch, or 6.12.x on Debian / 7.0 on Ubuntu 26.04 LTS. The bundled audio driver requires Linux 6.17+; the iMac18,3 sleep policy requires systemd 256+.
+- Omarchy (Limine + Hyprland), Arch/EndeavourOS/CachyOS with GRUB + mkinitcpio, Fedora KDE (GRUB/dracut + Plasma Wayland), or Debian 13 / Ubuntu 26.04 LTS (GRUB/initramfs-tools; KDE Wayland for colour) — see [Distributions](#-distributions) above. The audio, tuning and colour pieces are largely distribution-agnostic; the boot-related pieces are not, and each backend refuses to touch the other's bootloader.
 - Nothing to install by hand: on startup the patcher checks the handful of basics it needs (`grep`, `sed`, `awk`, `findutils`, `coreutils`, `sudo`) and offers to install any that are missing. Each patch checks its own heavier dependencies when you run it. The full list is in [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ## 📦 Updating and removing the tool
@@ -458,7 +460,7 @@ replace yourself is preserved. Uninstall also removes the retained tool versions
 
 ## 🛟 Safety
 
-On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery). On Arch-family GRUB systems, use the [Arch/GRUB guide](docs/arch-grub.md#restore-and-recovery). The Limine recovery steps below apply to Omarchy.
+On Ubuntu, follow the [Ubuntu restore and recovery instructions](docs/ubuntu.md#restore-and-recovery). On Debian, follow the [Debian restore and recovery instructions](docs/debian.md#restore-and-recovery). On Fedora, follow the [Fedora restore and recovery instructions](docs/fedora-kde.md#restore-and-recovery). On Arch-family GRUB systems, use the [Arch/GRUB guide](docs/arch-grub.md#restore-and-recovery). The Limine recovery steps below apply to Omarchy.
 
 Use `--remove` to reverse an applied module, following its recovery instructions
 where manual steps are needed. Boot-related changes print their recovery steps

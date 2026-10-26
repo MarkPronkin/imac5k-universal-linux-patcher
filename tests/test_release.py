@@ -108,6 +108,11 @@ class ReleaseTests(unittest.TestCase):
                        "scripts/hypr-color.py", "scripts/t2-speakers.py", "scripts/lib/limine-config.py",
                        "scripts/imac-patcher", "scripts/lib/platform.sh",
                        "scripts/lib/grub.sh", "scripts/lib/arch-grub.sh", "docs/arch-grub.md",
+                       "scripts/debian-imac5k", "scripts/ubuntu-imac5k",
+                       "scripts/lib/debian.sh", "scripts/lib/ubuntu.sh", "scripts/lib/apt.sh",
+                       "scripts/lib/apt-platform.sh", "scripts/lib/apt-imac5k.sh",
+                       "scripts/lib/ubuntu-audio-pre-build.sh", "docs/debian.md", "docs/ubuntu.md",
+                       "patches/imac5k-debian-6.12.patch", "patches/imac5k-ubuntu-7.0.patch",
                        "patches/cs8409-headset-capture.patch", "docs/headphones.md",
                        "scripts/imac-audio-jack-switch",
                        # The suspend module installs its sleep hooks and s2idle

@@ -16,6 +16,8 @@ HARNESS = """
 set -uo pipefail
 HAVE_GUM=0
 imac_is_fedora() { return 1; }
+imac_is_debian() { return 1; }
+imac_is_ubuntu() { return 1; }
 say()  { printf '==> %s\\n' "$*"; }
 warn() { printf '!! %s\\n' "$*"; }
 """ + shell_function(PATCHER.read_text(), "confirm") + "\n" \

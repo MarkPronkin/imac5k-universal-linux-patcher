@@ -12,8 +12,12 @@ This also upgrades an existing audio installation. A driver replaced on disk
 does not change the one already loaded; status remains `partial` until the
 patched driver is running. On Arch, installed kernels with matching headers
 are built too, so a pending kernel update can boot with the fixes. Fedora
-builds for the running kernel and checks DKMS's Secure Boot key before
-refreshing its initramfs.
+and Debian/Ubuntu build for the running kernel and check DKMS's Secure Boot
+key before refreshing the initramfs. Debian's stock Linux 6.12 cannot use this driver;
+the module reports `n/a` there. Ubuntu 26.04's 7.0 kernel meets the version
+requirement; its DKMS build uses the exact matching Ubuntu `linux-source`
+package, with a persistent guard against a different ABI's sources. See the
+[Debian guide](debian.md) and [Ubuntu guide](ubuntu.md).
 
 The patch fixes headset microphone capture, reroutes an open recording when
 the jack changes, lets the internal microphone mixer control its actual gain,

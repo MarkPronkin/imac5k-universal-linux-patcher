@@ -30,7 +30,7 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_patcher_cli.py`, `test_patcher_driver.py`, `test_patcher_menu.py` | Argument validation, status probe reuse, fresh checks before actions, batch exit codes, and terminal input |
 | `test_models.py`, `test_deps.py` | Model and module restrictions, dependency prompts and failed installs |
 | `test_limine_helpers.py`, `test_patch_stacks.py` | Package-named default UKI protection, unidentified-image refusal, and matching lean stacks across installers |
-| `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF installs, terminal/pipe prompts, and symlink invocation |
+| `test_startup.py` | The full launcher with commands absent from an isolated filesystem, fake pacman/DNF/APT installs, terminal/pipe prompts, and symlink invocation |
 | `test_eq.py` | Speaker routing, volume restoration, tuning upgrades, all-rate asset installation and legacy selection |
 | `test_t2speakers.py` | T2 speaker identity, channel counts, live ports/mixer, ownership, apply rollback and removal recovery |
 | `test_t2speakers_audio.py` | Optional private PipeWire graph: reproduces silent rear channels and checks actual four-channel output from stereo, mono, and PulseAudio clients |
@@ -41,6 +41,8 @@ python3 -m unittest discover -s tests -p 'test_fedora.py' -v
 | `test_eq_audio.py` | Optional real PipeWire/LV2 test: current and legacy tuning render all four channels and link only to a private virtual speaker device |
 | `test_audio.py` | Pinned headset source, DKMS upgrades, failures and removal |
 | `test_fedora.py` | Module validation, install/restore, rollback, GRUB argument preservation and KDE colour settings |
+| `test_ubuntu.py` | Ubuntu 26.04 generic/HWE source metadata, flavour restrictions, signing, audio, plus the shared APT transaction cases |
+| `test_debian.py` | Exact Debian source metadata, 6.12/7.x stack selection, ABI/signing guards, per-kernel GRUB entries, transactional install/repair/remove and failed initramfs/GRUB rollback |
 | `test_grub.py`, `test_arch_grub.py`, `test_grub_helpers.py` | Arch-family GRUB configuration edits, rollback, entry paths and IDs, module overrides, GCC/Clang build dispatch, and staged test/promotion lifecycles with fake boot tools |
 | `test_igpu.py` | Independent iGPU opt-in on both backends, apply/removal in both orders with brightness, retained shared files, reboot status, model gates and failures |
 | `test_macos.py` | macOS mode's model and boot-path gates; the set_os hook on UKIs and on GRUB's `/boot` kernel, and its restore mode; apply, detect and remove on Limine and, end to end with the real hook and GRUB libraries, on GRUB; the brightness table's checks; the NVRAM writer; the headless VBT |
@@ -59,7 +61,7 @@ without downloading or compiling a kernel.
 The additional startup tests require `bubblewrap` and Linux user namespaces.
 They mount the host read-only, hide host commands, substitute test hardware and
 OS identifiers, and disable networking. These are full launcher tests with
-simulated Arch/Fedora environments and package managers, not distribution VM
+simulated Arch/Fedora/Debian/Ubuntu environments and package managers, not distribution VM
 or hardware tests. If isolation is unavailable locally they report a skip;
 to require them and fail instead of skipping:
 
@@ -109,8 +111,10 @@ IMAC5K_REQUIRE_EQ_AUDIO_TESTS=1 python3 -m unittest discover -s tests -p 'test_e
 | `scripts/lib/igpu.sh` | Independent experimental Intel graphics apply/detect/remove, sharing firmware resources with the brightness module |
 | `scripts/lib/arch-grub.sh` | Arch-family GRUB module overrides; Limine boot repair is n/a |
 | `scripts/lib/fedora.sh` | Fedora module overrides using DNF, DKMS, dracut and GRUB |
+| `scripts/lib/debian.sh`, `scripts/lib/ubuntu.sh` | Select the APT distribution configuration |
+| `scripts/lib/apt.sh`, `scripts/lib/apt-platform.sh`, `scripts/lib/apt-imac5k.sh` | Shared APT module overrides and graphics transactions; distro-specific source/ABI and signing rules |
 | `scripts/lib/kde.sh`, `scripts/kde-display.py` | KDE colour handling through KScreen |
-| `scripts/patch-imac5k-amdgpu.sh`, `scripts/fedora-imac5k` | Platform-specific graphics builds, installation and restore |
+| `scripts/patch-imac5k-amdgpu.sh`, `scripts/fedora-imac5k`, `scripts/debian-imac5k`, `scripts/ubuntu-imac5k` | Platform-specific graphics builds, installation and restore |
 | `scripts/imac-alt-entry`, `scripts/imac-test-entry` | Isolated module test entries and promotion for Limine and Arch-family GRUB |
 | `scripts/95-limine-esp-hygiene` | Omarchy/Limine ESP maintenance |
 | `install.sh`, `scripts/make-release.sh` | Download/install a release and build its reproducible archive |
@@ -125,7 +129,9 @@ you do.
 
 
 Platform overrides load after the base definitions; KDE overrides load last.
-Backend precedence is Fedora, then Limine, then Arch-family GRUB. Bootloader
+Debian, Ubuntu and Fedora select their own backends before Arch boot paths; within Arch,
+Limine takes precedence over GRUB. Debian/Ubuntu graphics requires GRUB plus
+initramfs-tools and refuses a Limine configuration. Bootloader
 selection uses configuration presence, never installed commands. GRUB tests
 use temporary boot files and fake `grub-mkconfig`/`mkinitcpio` commands; they
 must not regenerate this development machine’s boot configuration.

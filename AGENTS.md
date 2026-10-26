@@ -1,5 +1,39 @@
 # Current work checkpoint
 
+**Ubuntu 26.04 LTS support (2026-10-26): on `debian-backend`, not released.**
+The owner selected Ubuntu 26.04 LTS. A new Ubuntu selector shares the Debian
+APT/GRUB/initramfs-tools transaction, with exact generic/HWE source metadata,
+Ubuntu MOK defaults and a consolidated lean port for its Linux 7.0 tree.
+Graphics, CS8409 headset audio and XHC1 compile for `7.0.0-38-generic` in
+isolated Ubuntu userspace; real graphics install/restore and signed/compressed
+DKMS audio install/remove pass there. Ubuntu audio installs exact matching
+sources and retains a source-version guard in DKMS; audio/sleep install zstd.
+The header ABI check uses generated UTS_RELEASE, because Ubuntu's installed
+Makefile reports the upstream stable version instead. **657 tests pass, no
+skips**, including all Debian regressions and required private audio/startup
+checks. No host packages, boot files or loaded modules were changed. Ubuntu
+hardware boot/display/audio/sleep validation is pending. Read the
+[validation record](notes/ubuntu-support-2026-10-26.md) and
+[Ubuntu guide](docs/ubuntu.md). The owner requested publication to GitHub.
+The support branch incorporates `main` after PR #15's merge, and its root-plane
+guard is also carried in both consolidated APT kernel ports. No new release
+was requested; Debian/Ubuntu hardware validation remains pending.
+
+**Debian support (2026-10-26): on `debian-backend`, not released.** The owner
+asked to build Debian support without running Debian on the host. New APT and
+GRUB/initramfs-tools backend, exact Debian source/header ABI matching, and a
+consolidated Linux 6.12 port of the lean 5K stack. Graphics and the XHC1 sleep
+module compile against real Debian `6.12.113+deb13-amd64` headers in isolated
+Debian userspace; actual depmod/initramfs installation and restoration pass
+there with simulated GRUB generation and hardware identity. The port applies
+at zero fuzz to 6.12.38 and 6.12.113. Stock 6.12 audio is n/a (the driver needs
+6.17+); other model/desktop/firmware restrictions remain. No host packages,
+boot files or loaded modules were changed. Read
+[the validation record](notes/debian-support-2026-10-26.md) for scope, source
+provenance, transactions and the pending Debian hardware checks. **625 tests
+pass with no skips**, including required startup and private audio tests. The
+subsequent Ubuntu follow-up and publication checks cover both distributions.
+
 **Release 0.3.1-alpha (2026-10-20): published from `main`** at 17:31:41
 UTC, tag at `11b95f2944d0e6ddae90835b71d8757286ed169e`. `macos` retains
 firmware brightness, ACPI range, SMBus and NVRAM while blocking `i915` by

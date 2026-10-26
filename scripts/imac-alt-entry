@@ -30,8 +30,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 source "${SCRIPT_DIR}/lib/platform.sh"
 source "${SCRIPT_DIR}/lib/grub.sh"
-if imac_is_fedora; then
-    echo "This helper is for Omarchy/Limine and Arch-family GRUB, not Fedora." >&2
+if imac_is_fedora || imac_is_debian || imac_is_ubuntu; then
+    echo "This helper is for Omarchy/Limine and Arch-family GRUB. On Debian, Ubuntu or Fedora use imac-patcher --apply/--remove 5k." >&2
     exit 1
 fi
 

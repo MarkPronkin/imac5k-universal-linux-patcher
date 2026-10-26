@@ -79,6 +79,10 @@ imac_hdr_supported() { [[ ${product:-$(imac_product_name)} == iMac18,3 ]]; }
 imac_panel_needs_10bpc() { [[ ${product:-$(imac_product_name)} == iMacPro1,1 ]]; }
 
 imac_is_fedora() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == fedora ]] ); }
+# Debian's kernel source packages and ABI names are specific to Debian. An
+# ID_LIKE=debian derivative (notably Ubuntu) needs its own kernel backend.
+imac_is_debian() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == debian ]] ); }
+imac_is_ubuntu() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == ubuntu ]] ); }
 imac_is_arch() { ( [[ -r /etc/os-release ]] && . /etc/os-release; [[ ${ID:-} == arch || ${ID:-} == archlinux || " ${ID_LIKE:-} " == *" arch "* || " ${ID_LIKE:-} " == *" archlinux "* ]] ); }
 imac_is_atomic() { [[ -e /run/ostree-booted ]]; }
 imac_is_kde() { local desktop=${XDG_CURRENT_DESKTOP:-}; [[ ${desktop,,} == *kde* ]]; }
@@ -89,7 +93,7 @@ imac_has_grub() { [[ -f /etc/default/grub ]]; }
 # Arch-family system booting GRUB (Arch, EndeavourOS, CachyOS, ...). Limine wins
 # when both configs exist, so an Omarchy install keeps its backend even with a
 # stale /etc/default/grub left over from another setup.
-imac_is_arch_grub() { ! imac_is_fedora && imac_is_arch && imac_has_grub && ! imac_has_limine; }
+imac_is_arch_grub() { ! imac_is_fedora && ! imac_is_debian && ! imac_is_ubuntu && imac_is_arch && imac_has_grub && ! imac_has_limine; }
 # The Arch-style kernel package base ("linux", "linux-lts", "linux-cachyos",
 # ...), from packaging metadata every such kernel ships. Headers for it are the
 # "<pkgbase>-headers" package.
@@ -113,8 +117,36 @@ imac_kernel_uses_clang() {
 }
 # One tool-to-package table for every module, so the startup installer and the
 # per-module preflights name the same packages. Names follow DEPENDENCIES.md;
-# anything unlisted is its own package name on both families.
+# Anything unlisted is its own package name on the selected distribution.
 imac_tool_package() {   # $1 = command name
+    if imac_is_debian || imac_is_ubuntu; then
+        case $1 in
+            gcc|g++|make)           echo build-essential ;;
+            ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
+            modinfo|depmod|lsmod|modprobe) echo kmod ;;
+            pahole)                 echo pahole ;;
+            xz)                     echo xz-utils ;;
+            pkg-config)             echo pkg-config ;;
+            iasl)                   echo acpica-tools ;;
+            pactl)                  echo pulseaudio-utils ;;
+            pw-cli|pw-dump)         echo pipewire-bin ;;
+            wpctl|wireplumber)      echo wireplumber ;;
+            kscreen-doctor)         echo kscreen ;;
+            udevadm)                echo udev ;;
+            systemctl)              echo systemd ;;
+            grub-mkconfig)          echo grub-common ;;
+            update-grub)            echo grub2-common ;;
+            mkinitramfs|update-initramfs|lsinitramfs) echo initramfs-tools ;;
+            dpkg-query)             echo dpkg ;;
+            dpkg-deb)               echo dpkg ;;
+            apt-get)                echo apt ;;
+            hyprctl)                echo hyprland ;;
+            ld.lld)                 echo lld ;;
+            llvm-*)                 echo llvm ;;
+            *)                      echo "$1" ;;
+        esac
+        return
+    fi
     if imac_is_fedora; then
         case $1 in
             ld|strip|objcopy|ar|nm|objdump|readelf) echo binutils ;;
@@ -158,9 +190,11 @@ imac_tool_package() {   # $1 = command name
     esac
 }
 # The install command for this distribution, as a word list for `read -ra`.
-# Fedora never falls back to a pacman that happens to be installed.
+# Debian, Ubuntu and Fedora never fall back to another installed package manager.
 imac_pkg_installer() {
-    if imac_is_fedora; then
+    if imac_is_debian || imac_is_ubuntu; then
+        command -v apt-get >/dev/null && { echo "sudo apt-get install -y"; return 0; }
+    elif imac_is_fedora; then
         command -v dnf >/dev/null && { echo "sudo dnf install -y"; return 0; }
     elif command -v pacman >/dev/null; then echo "sudo pacman -S --needed --noconfirm"; return 0
     elif command -v dnf >/dev/null; then echo "sudo dnf install -y"; return 0
@@ -171,13 +205,14 @@ imac_pkg_installer() {
 # own and so never shows up in the tool scan.
 imac_kernel_headers_package() {   # $1 = kernel release, default the running one
     local krel=${1:-$(uname -r)} pkgbase
+    if imac_is_debian || imac_is_ubuntu; then printf 'linux-headers-%s\n' "$krel"; return 0; fi
     if imac_is_fedora; then printf 'kernel-devel-%s\n' "$krel"; return 0; fi
     pkgbase=$(imac_kernel_pkgbase "$krel") || return 1
     printf '%s-headers\n' "$pkgbase"
 }
 imac_require_limine() {
-    if imac_is_fedora || [[ ! -f /etc/default/limine ]]; then
-        echo "This helper requires an Omarchy/Limine installation. On Fedora use imac-patcher --apply/--remove 5k." >&2
+    if imac_is_fedora || imac_is_debian || imac_is_ubuntu || [[ ! -f /etc/default/limine ]]; then
+        echo "This helper requires an Omarchy/Limine installation. On Debian, Ubuntu or Fedora use imac-patcher --apply/--remove 5k." >&2
         exit 1
     fi
 }
