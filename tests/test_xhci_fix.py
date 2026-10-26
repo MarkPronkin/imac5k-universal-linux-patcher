@@ -81,12 +81,15 @@ imac_product_name() {{ echo {model}; }}
                 self.assertEqual(result.returncode == 0, model == "iMac18,3")
 
     def test_startup_audit_lists_the_build_tools_only_where_the_fix_applies(self):
+        # This fixture models Arch/Limine, including on Ubuntu CI runners.
         audit = shell_function(PATCHER, "startup_deps_note") + '''
 declare -A MODULE_STATES=([suspend]=partial)
 MODULES=(suspend)
 KREL=7.2.3-test
 REPO_DIR=/nonexistent
 imac_is_fedora() { return 1; }
+imac_is_debian() { return 1; }
+imac_is_ubuntu() { return 1; }
 imac_is_kde() { return 1; }
 imac_is_arch_grub() { return 1; }
 xhci_fix_target_kernels() { :; }
@@ -97,8 +100,11 @@ echo "MISSING=${STARTUP_MISSING_TOOLS[*]} HEADERS=$STARTUP_NEEDS_HEADERS"
 '''
         result = self.run_shell("iMac18,3", audit)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
         self.assertIn("MISSING=systemctl dkms gcc make modinfo depmod modprobe HEADERS=1", result.stdout)
         result = self.run_shell("iMac17,1", audit)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
         self.assertIn("MISSING=systemctl HEADERS=0", result.stdout)
 
 

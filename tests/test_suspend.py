@@ -873,12 +873,15 @@ class T2SuspendTests(unittest.TestCase):
 
 class StartupAuditTests(unittest.TestCase):
     def audit(self, model, states):
+        # Select Omarchy explicitly rather than inheriting the test host's OS.
         code = shell_function(PATCHER, "startup_deps_note") + f'''
 declare -A MODULE_STATES=({" ".join(f"[{m}]={s}" for m, s in states.items())})
 MODULES=({" ".join(states)})
 KREL=7.2.3-test
 PRODUCT={model}
 imac_is_fedora() {{ return 1; }}
+imac_is_debian() {{ return 1; }}
+imac_is_ubuntu() {{ return 1; }}
 imac_is_kde() {{ return 1; }}
 imac_is_arch_grub() {{ return 1; }}
 imac_xhci_fix_supported() {{ [[ $PRODUCT == iMac18,3 ]]; }}
@@ -891,6 +894,7 @@ echo "MISSING=${{STARTUP_MISSING_TOOLS[*]}}"
 '''
         result = subprocess.run(["bash", "-c", code], text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
         return result.stdout
 
     def test_the_hibernation_remover_is_never_sent_to_the_package_manager(self):

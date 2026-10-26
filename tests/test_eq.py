@@ -80,10 +80,8 @@ class EqTests(unittest.TestCase):
         # One ordered log of what apply did, in the order it did it.
         self.trace = self.root / "trace.log"
         self.assets = self.root / "assets"
-        # The module picks its installer from what is on PATH, so the runner's
-        # own distribution must not decide which branch a test takes: a CI
-        # machine with neither pacman nor dnf reaches the "install them
-        # yourself" message and never prompts at all.
+        # run_eq selects Arch explicitly, so its fake pacman controls package
+        # installation regardless of the host distribution or package tools.
         self.stub("sudo", 'exec "$@"')
         self.stub("pacman", 'echo "PACMAN: $*"; exit 0')
         self.stub_systemctl()
@@ -194,6 +192,9 @@ esac
 set -uo pipefail
 export PATH="{self.bin}:$PATH"
 source "{ROOT}/scripts/lib/platform.sh"
+imac_is_fedora() {{ return 1; }}
+imac_is_debian() {{ return 1; }}
+imac_is_ubuntu() {{ return 1; }}
 product=iMac18,3
 SCRIPT_DIR="{ROOT}/scripts"
 IMAC5K_EQ_TUNING="{tuning}"
