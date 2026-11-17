@@ -121,6 +121,32 @@ apply at `--fuzz=0` to pristine 7.2.2 through 7.2.11 and to Fedora
 The lean stack's `amdgpu.ko` builds without warnings on Fedora `7.2.10-200`
 source with its config and `kernel-devel` `Module.symvers`. Not booted there.
 
+### 7.2.13+ context (NULL-sink guard in `link_set_dpms_off()`)
+
+Linux 7.2.13 ("drm/amd/display: Fix NULL sink dereference in USB4 bandwidth
+functions", upstream `55a67aa89342`) added `&& stream->sink` to the
+`should_use_dp_bw_allocation` condition in `link_set_dpms_off()`. That
+condition was the last trailing context line of the same stream-disable latch
+hunk, in the lean core and in `5k-latch-clear.patch`, so builds on 7.2.13
+through 7.2.15 stopped with `Hunk #4 FAILED` (issue #16).
+
+Below `blank_stream()` only the blank line is still common to all kernels, so
+both hunks now anchor on `dc->hwss.blank_stream(pipe_ctx);` and that blank
+line: one context line either side. The context has to stay symmetric: GNU
+patch pins a hunk with less trailing than leading context to the end of the
+file, so two lines before and one after never match. The `blank_stream()` call
+occurs once in `link_dpms.c` in every kernel checked.
+
+The patched code is unchanged. With only the `link_dpms.c` hunks applied, the
+file is byte-identical to before on 7.1.9, 7.1.13, 7.2.2, 7.2.5, 7.2.8, 7.2.9,
+7.2.11 and 7.2.12, and the hunks apply to 7.2.13, 7.2.14 and 7.2.15, where the
+call lands directly after `blank_stream()`. Both full stacks apply at
+`--fuzz=0` to pristine 7.2.11, with the same patched tree as before, and to
+pristine 7.2.15. The lean stack, without `5k-root-plane-zero-width-guard.patch`,
+was built and booted on an iMacPro1,1 with `7.2.15-arch1-1-t2`: 5120x2880 at
+60 Hz, `link-health PASS: both tiles healthy after 0 recovery attempts`. The
+verbose stack was not built on 7.2.15.
+
 ## Lean mainline candidate: `imac5k-lean-core-7.2.x.patch`
 
 The upstream candidate: taprobane99's mechanism, reworked. **+355 code / +89
